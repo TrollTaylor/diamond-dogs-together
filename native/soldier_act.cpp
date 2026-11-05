@@ -292,33 +292,36 @@ bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned 
 }
 
 unsigned TakeWait(bool plan, bool leg_match, bool take_near) noexcept {
-    if (!leg_match) return 1u;
-    return plan && !take_near ? 2u : 0u;  // red: the round 8 rules
+    (void)take_near;  // round 10 C: no 10 m rule (TakeNear stays for the record)
+    if (plan) return 0u;  // the plan walks him onto the host copy's path; beyond 15 m the take opens with the unpack's warp
+    return leg_match ? 0u : 1u;
 }
 
 PlanVerdict PlanCheckVerdict(bool path, bool end_near, unsigned tries) noexcept {
-    (void)tries;
-    return path ? (end_near ? PlanVerdict::ok : PlanVerdict::partial) : PlanVerdict::nopath;  // red: one check
+    if (path && end_near) return PlanVerdict::ok;
+    if (tries < kPlanRechecks) return PlanVerdict::again;
+    return path ? PlanVerdict::partial : PlanVerdict::nopath;
 }
 
 bool PartialHolds(bool partial, const float (&self)[3], const float (&end)[3]) noexcept {
-    (void)self;
-    (void)end;
-    return !partial;  // red: a partial path is never held
+    if (!partial) return true;
+    const float dx = end[0] - self[0], dz = end[2] - self[2];
+    return dx * dx + dz * dz > kPlanPartialM * kPlanPartialM;  // NaN: not held
 }
 
 ReleaseStep ReleaseChoose(unsigned dest_mode, std::uint16_t r19e, std::uint64_t slot_hash, std::uint16_t slot_handle,
                           std::uint16_t r19c) noexcept {
-    (void)dest_mode;
-    (void)r19e;
-    return ReleaseCancel(slot_hash, slot_handle, r19c) ? ReleaseStep::cancel : ReleaseStep::none;  // red: the round 8 release
+    const bool ours = ReleaseCancel(slot_hash, slot_handle, r19c);
+    if (dest_mode != 1u) return ours ? ReleaseStep::cancel : ReleaseStep::none;
+    if (ours) return ReleaseStep::keep;
+    if (PlanGate(dest_mode, r19c, r19e, true) && PlanSlot(slot_hash, slot_handle) == SlotStep::plan) return ReleaseStep::replan;
+    return ReleaseStep::none;
 }
 
 ReleaseWalk ReleaseWalkStep(bool ours_live, std::uint64_t near_ms, std::uint64_t age_ms) noexcept {
-    (void)ours_live;
-    (void)near_ms;
-    (void)age_ms;
-    return ReleaseWalk::finish;  // red
+    if (!ours_live) return ReleaseWalk::over;
+    if (near_ms >= kReleaseArriveMs || age_ms >= kReleaseWalkMs) return ReleaseWalk::finish;
+    return ReleaseWalk::walk;
 }
 
 bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
@@ -475,14 +478,26 @@ bool g_planHave[kMaxSoldiers]{}, g_planBad[kMaxSoldiers]{};
 std::uint16_t g_planOurs[kMaxSoldiers]{};
 unsigned char g_wireGait[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_cPlanHold{0};
+// Round 10 track C (act_plan, design 7.29; hook thread): the last check's partial path (its end) for the hold, and the
+// released walks (ReleaseChoose keep / replan) until ReleaseWalkStep ends them.
+bool g_planPartial[kMaxSoldiers]{};
+float g_planEnd[kMaxSoldiers][3]{};
+struct RelWalk {
+    bool on;
+    std::uint16_t handle;
+    std::uint64_t at, nearAt;
+};
+RelWalk g_rel[kMaxSoldiers]{};
+std::atomic<std::uint32_t> g_cRelKeep{0}, g_cRelReplan{0}, g_cRelEnd{0}, g_cRecheck{0};
 std::atomic<float> g_ownPos[kMaxSoldiers][3]{};  // each realized non-puppet guard's own position (OwnDests), for TakeNear
 Shadow g_shadow{};
 bool g_shadowBuilt = false;
 bool g_appliedNow[kMaxSoldiers]{};  // hook thread: requests unpacked in this update, before the original
 struct PlanCheck {
     bool pending;
+    unsigned tries;  // round 10 C: checks run again (PlanCheckVerdict)
     std::uint16_t handle;
-    std::uint64_t at;
+    std::uint64_t at, planAt;
     float dest[3], from[3];
 };
 PlanCheck g_planCheck[kMaxSoldiers]{};
@@ -1165,6 +1180,7 @@ bool HoldPlanned(const View& v, unsigned i, const unsigned char (&w)[0x70], cons
                       PlanLiveFor(g_planOurs[i], r19c, sl.hash, sl.handle, g_planBad[i]);
     float self[3]{}, dest[3]{};
     if (!live || !Pos(v, i, self)) return false;
+    if (!PartialHolds(g_planPartial[i], self, g_planEnd[i])) return false;  // round 10 C: near a partial path's end
     std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
     const unsigned now = (bits >> 1) & 7u, want = GaitCatchUp(AheadM(self, at, dest), g_wireGait[i]);
     return PlanHold(false, RequestChangedFar(planned, w), live, Warp15(self, at), now, want);
@@ -1260,7 +1276,7 @@ void FrameCensus(std::uint64_t now) noexcept {
     g_frameP95.store(p95, std::memory_order_relaxed);
     g_frames.store(g_frameN, std::memory_order_relaxed);
     // Round 6 (3): the line also prints payload_ids (the aim-target swaps), due and reapply (FormatFrameLine).
-    char line[768]{};
+    char line[1024]{};  // round 10 C: the worst case (10-digit counters) passed 768 (the round 9 land nit)
     if (FormatFrameLine(now, ReadCounters(), line, sizeof(line))) Emit(line);
     g_frameN = 0;
 }
@@ -1270,6 +1286,7 @@ void PlanCheckStep(const View& v, unsigned i, std::uint64_t now) noexcept {
     PlanCheck& pc = g_planCheck[i];
     if (!pc.pending || now - pc.at < kPlanCheckMs) return;
     pc.pending = false;
+    if (!pc.tries) pc.planAt = pc.at;
     Follower f{};
     bool has = false;
     std::uint32_t count = 0;
@@ -1278,19 +1295,143 @@ void PlanCheckStep(const View& v, unsigned i, std::uint64_t now) noexcept {
     Pos(v, i, p);
     const bool path = read && has && count;
     const bool ok = path && PlanEndNear(end, pc.dest);
+    // Round 10 C: a missing or far path is checked again (the query may still run); the last verdict is counted.
+    const PlanVerdict verdict = PlanCheckVerdict(path, ok, pc.tries);
+    if (verdict == PlanVerdict::again) {
+        ++pc.tries;
+        pc.at = now;
+        pc.pending = true;
+        g_cRecheck.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     (path ? (ok ? g_cPlanOk : g_cPlanFar) : g_cPlanNoPath).fetch_add(1, std::memory_order_relaxed);
-    if (!ok && g_planHave[i] && g_planOurs[i] == pc.handle) g_planBad[i] = true;  // round 9 C: no hold on this plan
+    if (g_planHave[i] && g_planOurs[i] == pc.handle) {
+        g_planBad[i] = verdict == PlanVerdict::nopath;  // no path at all: no hold on this plan
+        g_planPartial[i] = verdict == PlanVerdict::partial;  // a partial path: held while he is more than 3 m from its end
+        if (verdict == PlanVerdict::partial) std::memcpy(g_planEnd[i], end, sizeof(end));
+    }
     std::uint16_t r19c = 0, r19e = 0;
     Rd(Record(v, i) + c::r_handle, r19c);
     Rd(Record(v, i) + c::r_flags, r19e);
     char line[480]{};
     const int n = std::snprintf(line, sizeof(line),
         "soldier_act_plan; t=%llu; idx=%u; handle=0x%04x; r19c=0x%04x; r19e=0x%04x; ms=%llu; has=%u; n=%u; end=%.2f,%.2f,%.2f; "
-        "dest=%.2f,%.2f,%.2f; d_end=%.2f; ok=%u; from=%.2f,%.2f,%.2f; p=%.2f,%.2f,%.2f\r\n",
-        static_cast<unsigned long long>(now), i, pc.handle, r19c, r19e, static_cast<unsigned long long>(now - pc.at), has ? 1u : 0u, count,
+        "dest=%.2f,%.2f,%.2f; d_end=%.2f; ok=%u; from=%.2f,%.2f,%.2f; p=%.2f,%.2f,%.2f; tries=%u\r\n",
+        static_cast<unsigned long long>(now), i, pc.handle, r19c, r19e, static_cast<unsigned long long>(now - pc.planAt), has ? 1u : 0u, count,
         end[0], end[1], end[2], pc.dest[0], pc.dest[1], pc.dest[2], path ? Dist(end, pc.dest) : -1.0f, ok ? 1u : 0u, pc.from[0],
-        pc.from[1], pc.from[2], p[0], p[1], p[2]);
+        pc.from[1], pc.from[2], p[0], p[1], p[2], pc.tries);
     if (n > 0) Emit(line);
+}
+
+// The shadow plan (round 8 C): 0x1413725f0 with the shadow gate object for guard i (R r, his follower f): the handle it
+// left in R+0x19c (0xffff: refused), started = it returned 1. Arms the plan check.
+std::uint16_t PlanShadow(const View& v, unsigned i, std::uintptr_t r, std::uint32_t bits, const Follower& f, std::uintptr_t slots,
+                         std::uint64_t now, bool& started) noexcept {
+    started = reinterpret_cast<PlanStart>(g_base + c::plan_start_rva)(g_shadow.p, i, bits & 1u, reinterpret_cast<void*>(r),
+        reinterpret_cast<void*>(slots), reinterpret_cast<void*>(f.pair), reinterpret_cast<void*>(f.planner)) != 0;
+    std::uint16_t got = 0xffff;
+    if (!started) return got;
+    Rd(r + c::r_handle, got);
+    if (got == 0xffff) return got;
+    PlanCheck& pc = g_planCheck[i];
+    pc.pending = true;
+    pc.tries = 0;
+    pc.at = pc.planAt = now;
+    pc.handle = got;
+    std::memcpy(pc.dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(pc.dest));
+    Pos(v, i, pc.from);
+    return got;
+}
+
+// Round 10 track C (act_plan, design 7.29): one line per release step and per released walk's end.
+void ReleaseLine(const View& v, unsigned i, const char* step, std::uint16_t handle, const Slot& sl, std::uint64_t ms, std::uint64_t now) noexcept {
+    const std::uintptr_t r = Record(v, i);
+    std::uint16_t r19c = 0xffff, r19e = 0;
+    std::uint32_t bits = 0;
+    Rd(r + c::r_handle, r19c);
+    Rd(r + c::r_flags, r19e);
+    Rd(r + c::r_bits, bits);
+    float p[3]{}, dest[3]{};
+    Pos(v, i, p);
+    std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
+    const float dx = dest[0] - p[0], dz = dest[2] - p[2];
+    char line[360]{};
+    const int n = std::snprintf(line, sizeof(line),
+        "soldier_act_release; t=%llu; idx=%u; step=%s; handle=0x%04x; r19c=0x%04x; r19e=0x%04x; dm=%u; psh=0x%012llx; psl=0x%04x; "
+        "ms=%llu; d_dest=%.2f; p=%.2f,%.2f,%.2f; r80=%.2f,%.2f,%.2f\r\n",
+        static_cast<unsigned long long>(now), i, step, handle, r19c, r19e, (bits >> 9) & 0xfu,
+        static_cast<unsigned long long>(sl.hash & 0xffffffffffffull), sl.handle, static_cast<unsigned long long>(ms),
+        std::sqrt(dx * dx + dz * dz), p[0], p[1], p[2], dest[0], dest[1], dest[2]);
+    if (n > 0) Emit(line);
+}
+
+// Round 10 C: at his release a puppet whose R holds a walk walks it on to R+0x80 (77785f31's release freeze: the round 8
+// release cancelled our plan and left the host copy's walk in R, so five walkers stood 34-48 s with no path).
+void ReleaseOne(const View& v, unsigned i, std::uintptr_t slots, std::uint64_t now) noexcept {
+    Follower f{};
+    Slot sl{0, 0xffff, 0xffff};
+    const std::uintptr_t r = Record(v, i);
+    std::uint16_t h = 0xffff, r19e = 0;
+    std::uint32_t bits = 0;
+    Rd(r + c::r_handle, h);
+    Rd(r + c::r_flags, r19e);
+    Rd(r + c::r_bits, bits);
+    if (!FollowerFor(v, i, f) || !PlannerKnown(f.planner) || !PlannerSlot(f.planner, i, sl)) return;
+    const ReleaseStep step = ReleaseChoose((bits >> 9) & 0xfu, r19e, sl.hash, sl.handle, h);
+    std::uint16_t walk = 0xffff;
+    const char* name = "none";
+    if (step == ReleaseStep::cancel) {
+        CancelSlot(f.planner, i, h);
+        *reinterpret_cast<volatile std::uint16_t*>(r + c::r_handle) = 0xffff;
+        g_cPlanRelease.fetch_add(1, std::memory_order_relaxed);
+        name = "cancel";
+    } else if (step == ReleaseStep::keep) {
+        walk = h;
+        g_cRelKeep.fetch_add(1, std::memory_order_relaxed);
+        name = "keep";
+    } else if (step == ReleaseStep::replan && slots) {
+        bool started = false;
+        walk = PlanShadow(v, i, r, bits, f, slots, now, started);
+        if (walk != 0xffff) { g_cRelReplan.fetch_add(1, std::memory_order_relaxed); g_cPlan.fetch_add(1, std::memory_order_relaxed); }
+        else if (started) g_cPlanNone.fetch_add(1, std::memory_order_relaxed);
+        name = walk != 0xffff ? "replan" : "replan_none";
+    }
+    if (walk != 0xffff) g_rel[i] = RelWalk{true, walk, now, 0};
+    PlannerSlot(f.planner, i, sl);
+    ReleaseLine(v, i, name, walk, sl, 0, now);
+}
+
+// Round 10 C: a released walk until he stood at R+0x80 2 s (finish: our handle cancelled), 180 s, or our handle is gone.
+void ReleaseWalkOne(const View& v, unsigned i, std::uint64_t now) noexcept {
+    RelWalk& w = g_rel[i];
+    const std::uintptr_t r = Record(v, i);
+    std::uint16_t h = 0xffff;
+    Rd(r + c::r_handle, h);
+    Follower f{};
+    Slot sl{0, 0xffff, 0xffff};
+    if (!FollowerFor(v, i, f) || !PlannerKnown(f.planner) || !PlannerSlot(f.planner, i, sl)) {
+        w.on = false;
+        g_cRelEnd.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    float p[3]{}, dest[3]{};
+    std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
+    bool close = false;
+    if (Pos(v, i, p)) {
+        const float dx = dest[0] - p[0], dz = dest[2] - p[2];
+        close = dx * dx + dz * dz <= kReleaseArriveM * kReleaseArriveM;
+    }
+    if (!close) w.nearAt = 0;
+    else if (!w.nearAt) w.nearAt = now;
+    const ReleaseWalk step = ReleaseWalkStep(PlanLiveFor(w.handle, h, sl.hash, sl.handle, false), w.nearAt ? now - w.nearAt : 0, now - w.at);
+    if (step == ReleaseWalk::walk) return;
+    const bool orphan = (sl.hash & 0xffffffffffffull) == kMoveHash && sl.handle == w.handle;
+    if (step == ReleaseWalk::finish || orphan) CancelSlot(f.planner, i, w.handle);
+    if (step == ReleaseWalk::finish && h == w.handle) *reinterpret_cast<volatile std::uint16_t*>(r + c::r_handle) = 0xffff;
+    w.on = false;
+    g_cRelEnd.fetch_add(1, std::memory_order_relaxed);
+    PlannerSlot(f.planner, i, sl);
+    ReleaseLine(v, i, step == ReleaseWalk::finish ? "finish" : (orphan ? "over_cancel" : "over"), w.handle, sl, now - w.at, now);
 }
 
 // Round 8 track C (act_plan; hook thread, after the original manager update, so after the engine's own offline start of
@@ -1306,21 +1447,18 @@ void PlanStep(std::uintptr_t m) noexcept {
         Rd(v.s + c::s_slots, slots);
         for (unsigned i = 0; i < v.count && i < kMaxSoldiers; ++i) {
             PlanCheckStep(v, i, now);
-            // A released puppet: cancel a plan of ours that still holds his slot (his brain's next walk is not refused).
+            // A released puppet (round 10 C, ReleaseOne): a walk walks on to R+0x80 (our plan kept or planned again) until
+            // ReleaseWalkOne ends it; otherwise our live handle is cancelled (his brain's next walk is not refused).
             const std::uint64_t mat = g_mirAt[i].load(std::memory_order_relaxed);
-            if (g_planned[i] && (!mat || now - mat > kActFreshMs)) {
+            const bool mirrored = mat && now - mat <= kActFreshMs;
+            if (mirrored) g_rel[i].on = false;  // the mirror has him again
+            if (g_planned[i] && !mirrored) {
                 g_planned[i] = false;
                 g_planHave[i] = false;
-                Follower fr{};
-                Slot sr{};
-                std::uint16_t h = 0xffff;
-                const std::uintptr_t rr = Record(v, i);
-                Rd(rr + c::r_handle, h);
-                if (FollowerFor(v, i, fr) && PlannerKnown(fr.planner) && PlannerSlot(fr.planner, i, sr) && ReleaseCancel(sr.hash, sr.handle, h)) {
-                    CancelSlot(fr.planner, i, h);
-                    *reinterpret_cast<volatile std::uint16_t*>(rr + c::r_handle) = 0xffff;
-                    g_cPlanRelease.fetch_add(1, std::memory_order_relaxed);
-                }
+                g_planPartial[i] = false;
+                ReleaseOne(v, i, slots, now);
+            } else if (g_rel[i].on && !mirrored) {
+                ReleaseWalkOne(v, i, now);
             }
             if (!g_appliedNow[i]) continue;
             g_appliedNow[i] = false;
@@ -1347,23 +1485,16 @@ void PlanStep(std::uintptr_t m) noexcept {
                 CancelSlot(f.planner, i, sl.handle);
                 g_cPlanCancel.fetch_add(1, std::memory_order_relaxed);
             }
-            const char planned = reinterpret_cast<PlanStart>(g_base + c::plan_start_rva)(g_shadow.p, i, bits & 1u, reinterpret_cast<void*>(r),
-                reinterpret_cast<void*>(slots), reinterpret_cast<void*>(f.pair), reinterpret_cast<void*>(f.planner));
+            bool planned = false;
+            const std::uint16_t got = PlanShadow(v, i, r, bits, f, slots, now, planned);
             if (!planned) { g_cPlanSkip.fetch_add(1, std::memory_order_relaxed); continue; }
             g_planned[i] = true;
-            std::uint16_t got = 0xffff;
-            Rd(r + c::r_handle, got);
             if (got == 0xffff) { g_cPlanNone.fetch_add(1, std::memory_order_relaxed); continue; }
             g_cPlan.fetch_add(1, std::memory_order_relaxed);
             g_planHave[i] = true;  // round 9 C: the plan a re-apply may hold
             g_planOurs[i] = got;
             g_planBad[i] = false;
-            PlanCheck& pc = g_planCheck[i];
-            pc.pending = true;
-            pc.at = now;
-            Rd(r + c::r_handle, pc.handle);
-            std::memcpy(pc.dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(pc.dest));
-            Pos(v, i, pc.from);
+            g_planPartial[i] = false;
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_cPlanFault.fetch_add(1, std::memory_order_relaxed);
@@ -1723,20 +1854,11 @@ bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept {
     }
     unsigned char req[0x70];
     std::memcpy(req, act.req, sizeof(req));
-    if (!LegMatch(req, own, valid)) { g_cLegWait.fetch_add(1, std::memory_order_relaxed); return false; }
-    // Round 8 track C (act_plan): and only within kActTakeNearM (flat) of the owner copy (the order part's position).
-    if (g_planOn.load(std::memory_order_relaxed)) {
-        float self[3]{}, owner[3]{};
-        std::uint32_t flags = 0;
-        std::memcpy(&flags, act.order + 0x24, sizeof(flags));
-        std::memcpy(owner, act.order + 0x18, sizeof(owner));
-        if (idx < kMaxSoldiers)
-            for (int k = 0; k < 3; ++k) self[k] = g_ownPos[idx][k].load(std::memory_order_relaxed);
-        if (!TakeNear(req, self, owner, valid && act.order_valid && (flags & 1u) != 0)) {
-            g_cNearWait.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-    }
+    // Round 10 track C (TakeWait): with act_plan a walker is taken whatever his leg or distance (226fc789: 3 of 4 calm
+    // walkers waited on LegMatch and the 10 m rule and stayed 17-45 m off); without it LegMatch as round 6.
+    const unsigned wait = TakeWait(g_planOn.load(std::memory_order_relaxed), LegMatch(req, own, valid), true);
+    if (wait == 1u) { g_cLegWait.fetch_add(1, std::memory_order_relaxed); return false; }
+    if (wait == 2u) { g_cNearWait.fetch_add(1, std::memory_order_relaxed); return false; }
     return true;
 }
 
@@ -1763,6 +1885,7 @@ Counters ReadCounters() noexcept {
     k.plan_fault = g_cPlanFault.load(); k.plan_cancel = g_cPlanCancel.load(); k.plan_busy = g_cPlanBusy.load();
     k.plan_none = g_cPlanNone.load(); k.plan_release = g_cPlanRelease.load();
     k.plan_hold = g_cPlanHold.load();
+    k.rel_keep = g_cRelKeep.load(); k.rel_replan = g_cRelReplan.load(); k.rel_end = g_cRelEnd.load(); k.recheck = g_cRecheck.load();
     return k;
 }
 
@@ -1772,12 +1895,13 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
         "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
         "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u; payload_ids=%u; due=%u; reapply=%u; "
         "expired=%u; order_clear=%u; leg_wait=%u; plan=%u; plan_skip=%u; warp15=%u; plan_ok=%u; plan_far=%u; plan_nopath=%u; "
-        "near_wait=%u; gait_up=%u; plan_fault=%u; plan_cancel=%u; plan_busy=%u; plan_none=%u; plan_release=%u; plan_hold=%u\r\n",
+        "near_wait=%u; gait_up=%u; plan_fault=%u; plan_cancel=%u; plan_busy=%u; plan_none=%u; plan_release=%u; plan_hold=%u; "
+        "rel_keep=%u; rel_replan=%u; rel_end=%u; recheck=%u\r\n",
         static_cast<unsigned long long>(now), k.frames, k.frame_p95_us / 1000.0, k.mirrored, k.tx_parts, k.staged, k.rx, k.applied,
         k.orders, k.refuse_table, k.refuse_fault, k.remap_player, k.fire_dropped, k.noise_dropped, k.local_shots, k.same,
         k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear, k.leg_wait, k.plan, k.plan_skip, k.warp15,
         k.plan_ok, k.plan_far, k.plan_nopath, k.near_wait, k.gait_up, k.plan_fault, k.plan_cancel, k.plan_busy, k.plan_none,
-        k.plan_release, k.plan_hold);
+        k.plan_release, k.plan_hold, k.rel_keep, k.rel_replan, k.rel_end, k.recheck);
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 
