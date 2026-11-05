@@ -52,8 +52,8 @@ named, the same code head; later commits are docs and one comment line). Archive
   as round 9's no-key run: corrections 19/47 (28 `vehicle_local`), M3 host p90 7.17 m. partner_tick median 44 / 43 Hz,
   frame p95 30.3 / 29.4 ms (host / guest) against 25.0 / 25.6 ms in the named run.
 - **Checks**: the worker's audited CTest (340 tests) passed at this source in `ffd0248d`'s job; my full CTest at
-  f71305ca 354/355 (only the composed check, stale after a Lua edit during the compile); the final full CTest: see the
-  last line of this entry.
+  f71305ca 354/355 (only the composed check, stale after a Lua edit during the compile); the final full build and CTest
+  355/355 at 25005e2a (the code head plus one comment line); every contract `--check` as round 9 (known base failures).
 - **User decision (D-B10)**: turn `lrrp_follow` on with the gun profile in Afghanistan free roam (30010) although the
   "riders within 8 m while seated" row fails for a truck within 400 m of the guest at the pairing (it stays the guest's own
   copy, as in 0.15.2, until the guest is 400 m from it; ~54 s here)? Every other row passed. The flip is ready
