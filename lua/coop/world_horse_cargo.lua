@@ -53,7 +53,7 @@ function C.on()
  return W.active ~= false and W.paired == true and (W.eff or 0) >= 3 and (W.mission == 30010 or W.mission == 30020) and
   int(W.epoch, 1, 65535) and int(W.role, 1, 2) and type(W.downed) == "table" and C.keyOn()
 end
-function C.busy() return C.state == "loading" or C.state == "carrier" or C.state == "cargo" end
+function C.busy() return C.state == "loading" or C.state == "carrier" or C.state == "cargo" or C.state == "release" end
 local function mounted()
  if type(PlayerInfo) ~= "table" or type(PlayerInfo.OrCheckStatus) ~= "function" or type(PlayerStatus) ~= "table" then return false end
  local ok, yes = pcall(PlayerInfo.OrCheckStatus, {PlayerStatus.ON_HORSE})
@@ -122,11 +122,12 @@ local function held(key, now)
 end
 local function reset()
  C.state, C.heldSince, C.heldDone, C.claimAt, C.loadAt, C.gen, C.hgen, C.h, C.keepAt, C.keepPose = "off", nil, nil, nil, nil, nil, nil, nil, nil, nil
- C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt = nil, nil, nil, nil, nil
+ C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.releaseP, C.releaseAt = nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part. why: a CAUSE name (or a local refusal); place: lay the body down (at p, else beside the horse);
--- remote: the partner ended it (nothing is sent back).
-local function stop(now, why, place, remote, p)
+-- remote: the partner ended it (nothing is sent back). keep (a take-down on the carrier's copy): body 1 stays held at p
+-- until the take-down key is up, so the same R hold never starts a stock pickup of the body just laid down.
+local function stop(now, why, place, remote, p, keep)
  local s = C.state
  if s == "carrier" or s == "cargo" then
   local h = C.h
@@ -138,10 +139,27 @@ local function stop(now, why, place, remote, p)
   if not remote then send(UNLOADED, CODE[why] or 0, C.gen, p and p[1], p and p[2], p and p[3], p and p[4] * 1000) end
   log(fmt("step=unloaded;seat=2;why=%s;side=%s;placed=%d;x=%d;z=%d%s", why, s, (place and p) and 1 or 0, p and round(p[1] / 10) or 0,
    p and round(p[3] / 10) or 0, remote and ";from=partner" or ""))
- elseif s ~= "off" then
+ elseif s ~= "off" and s ~= "release" then
   log(fmt("step=refuse;why=%s;state=%s", why, s))
  end
+ if keep and s == "carrier" then
+  reset()
+  C.state, C.releaseP, C.releaseAt = "release", p, now
+  return
+ end
  if s ~= "off" then cargo(false, false, false) end
+ reset()
+end
+-- After a take-down: hold body 1 on the lay-down point while R or E stays down (at most 3 s), then hand it back.
+local function releaseTick(now)
+ local p = C.releaseP
+ if (held("R", now) or held("E", now)) and now - C.releaseAt < 3000 then
+  cargo(true, false, false)
+  if p then warp(1, p[1], p[2], p[3], p[4]) end
+  return
+ end
+ cargo(false, false, false)
+ log("step=released;seat=2")
  reset()
 end
 C.stop = stop
@@ -229,7 +247,7 @@ local function carrierTick(now)
  if C.takeSince and now - C.takeSince >= TAKE_MS then
   local side = (cos(a) * (x - cx) - sin(a) * (z - cz)) >= 0 and 1 or -1
   log(fmt("step=take_down;key=%s;side=%d", key, side))
-  return stop(now, "taken_down", true, false, beside(h, side, y))
+  return stop(now, "taken_down", true, false, beside(h, side, y), true)
  end
 end
 local function cargoTick(now)
@@ -327,6 +345,7 @@ function C.tick(now)
  if s == "loading" then return loadTick(now) end
  if s == "carrier" then return carrierTick(now) end
  if s == "cargo" then return cargoTick(now) end
+ if s == "release" then return releaseTick(now) end
 end
 function C.setTesting(on)
  if type(on) ~= "boolean" then return false end
