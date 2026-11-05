@@ -418,6 +418,44 @@ int main() {
         Check(!sa::FormatQuietLine(1270, 6, 1, 1, 0.0f, 0.0f, tiny, sizeof(tiny)), "the quiet line refuses a short buffer");
         Check(c::quiet_warp_rva == 0x136ece0, "the quiet warp is the pinned network-position warp");
     }
+    // Enemy round 9 track A (quiet_place, design 7.24): the quiet move only for a guard at rest in his own brain and in the
+    // realized list the warp reads (run 1befcef4: 1904171355 walked 9.4-14.1 m on after 22 of his 43 quiet moves; in 5 of
+    // the 8 off-target moves the body did not move while the slot table read the target).
+    {
+        const std::uint16_t list[4] = {3, 17, 40, 200};
+        Check(sa::ListHas(list, 4, 17) && !sa::ListHas(list, 4, 18) && !sa::ListHas(list, 3, 200) && !sa::ListHas(nullptr, 4, 3),
+              "the realized list: idx found only among the first count entries");
+        sa::RestView r{};
+        const float target[3] = {410.0f, 270.0f, 2130.0f};
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unknown, "rest: no view yet");
+        r.at = 9000;
+        r.realized = r.listed = true;
+        r.speed_mps = 0.1f;
+        r.pos[0] = 400.0f; r.pos[1] = 270.0f; r.pos[2] = 2130.0f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: standing, listed, no path: quiet");
+        Check(sa::QuietChoose(r, target, 10600) == sa::QuietWhy::stale, "rest: a view older than 1.5 s is stale");
+        r.listed = false;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unlisted, "rest: not in the realized list: the message");
+        r.listed = true;
+        r.realized = false;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unrealized, "rest: unrealized");
+        r.realized = true;
+        r.speed_mps = 1.4f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::moving, "rest: walking: the message");
+        r.speed_mps = 0.1f;
+        r.has = true;
+        r.end[0] = 400.5f; r.end[1] = 270.0f; r.end[2] = 2130.5f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: at the end of his path: quiet");
+        r.end[0] = 420.0f; r.end[2] = 2140.0f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::path, "rest: a path ahead of him: the message");
+        r.end[0] = 411.0f; r.end[2] = 2130.5f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: a path that ends at the target: quiet");
+        Check(std::strcmp(sa::QuietWhyName(sa::QuietWhy::moving), "moving") == 0 &&
+                  std::strcmp(sa::QuietWhyName(sa::QuietWhy::unlisted), "unlisted") == 0 &&
+                  std::strcmp(sa::QuietWhyName(sa::QuietWhy::ok), "ok") == 0,
+              "rest: the reason names");
+        Check(c::slots_list == 0x28 && c::slots_list_count == 0x44, "the realized list the warp reads (u16, count +0x44)");
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");

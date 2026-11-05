@@ -616,6 +616,19 @@ int main() {
         Check(fr.player[1] == fr.pos[1] && fr.player[0] == guest_p[0] && fr.player[2] == guest_p[2],
               "FlattenRange: Warp's range is then measured on the ground plane");
     }
+    // Enemy round 9 track A (bug 2, design 7.24): while the host hides the guest's body for range (partner_range=hide,
+    // beyond 200 m) the driver has no command and the pose was left unknown (run 8b581a26: 142 of 142 placements refused,
+    // the guest's position read 0); the guest's network pose sample, at most 1 s old, stands in for the nearer-player rules.
+    Check(sw::RemoteRangeSource(true, false, true, 50) == sw::RemoteSource::cmd, "pose: the driver's command when it has one");
+    Check(sw::RemoteRangeSource(true, true, true, 50) == sw::RemoteSource::cmd, "pose: the command first, hidden or not");
+    Check(sw::RemoteRangeSource(false, true, true, 400) == sw::RemoteSource::net, "pose: hidden for range: the network sample");
+    Check(sw::RemoteRangeSource(false, true, true, 1001) == sw::RemoteSource::none, "pose: hidden: a sample over 1 s old is unknown");
+    Check(sw::RemoteRangeSource(false, false, true, 100) == sw::RemoteSource::none, "pose: no command for another reason: unknown");
+    Check(sw::RemoteRangeSource(false, true, false, 0) == sw::RemoteSource::none, "pose: no sample: unknown");
+    Check(std::strcmp(sw::RemoteSourceName(sw::RemoteSource::net), "net") == 0 &&
+              std::strcmp(sw::RemoteSourceName(sw::RemoteSource::cmd), "cmd") == 0 &&
+              std::strcmp(sw::RemoteSourceName(sw::RemoteSource::none), "none") == 0,
+          "pose: the source names");
     std::printf("soldier_warp_tests: PASS %u checks\n", checks);
     return 0;
 }
