@@ -5,7 +5,7 @@ local function check(v, why) checks = checks + 1; if not v then error(checks .. 
 local HORSE, OP = 6656, 80
 local function fixture(o)
  o = o or {}
- local f = {now = 1000, tx = {}, logs = {}, cargo = {}, warps = {}, places = {}, hostage = false, mounted = false, role = 0,
+ local f = {now = 1000, tx = {}, logs = {}, cargo = {}, warps = {}, places = {}, holds = {}, hostage = false, mounted = false, role = 0,
   physical = {ready = true, carrying = false, carried = false, localCarried = false, peerCarrying = false},
   horse = {ready = true, id = HORSE, realized = true, occupied = false, pending = 0, x = 101000, y = 3000, z = 300000, yaw = 0, gen = 5},
   share = o.share ~= false, key = o.key ~= false}
@@ -24,6 +24,15 @@ local function fixture(o)
   if verb and verb:find("^read ") then
    if not f.horse then return {ready = false, reason = "unrealized"} end
    local r = {}; for k, v in pairs(f.horse) do r[k] = v end; return r
+  end
+  -- hold0 (round 2): this copy's body 0 moved natively; recorded as a body-0 warp (via hold0) unless refused.
+  if verb and verb:find("^hold0 ") then
+   local x, y, z, yaw, rs = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) ([0-3])$")
+   f.holds[#f.holds + 1] = verb
+   if f.holdOff or not x then return {ready = false, reason = f.holdOff or "request"} end
+   f.warps[#f.warps + 1] = {index = 0, x = tonumber(x) / 1000, y = tonumber(y) / 1000, z = tonumber(z) / 1000, rotY = tonumber(yaw) / 1000,
+    via = "hold0"}
+   return {ready = true, held = true}
   end
   if verb then
    local x, y, z, yaw = verb:match("^place %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) 0$")
@@ -120,8 +129,12 @@ f = fixture(); f.role = 1; f.D.records[2].down = false; f.hold("E", 600)
 check(f.C.state == "off" and f.logged("step=refuse;why=awake"), "a partner who is not down is never loaded")
 f = fixture(); f.role = 1; f.horse.x = 103000; f.hold("E", 600)
 check(f.C.state == "off" and f.logged("step=refuse;why=far;dist_cm=300"), "the horse 3 m away: far")
-f = fixture(); f.role = 1; f.env.vars.playerRotY = -90; f.hold("E", 600)
-check(f.C.state == "off" and f.logged("step=refuse;why=facing"), "the horse behind the carrier: facing")
+f = fixture(); f.role = 1; f.env.vars.playerRotY = -90; f.horse.x = 102000; f.hold("E", 600)
+check(f.C.state == "off" and f.logged("step=refuse;why=facing"), "the horse 2 m behind the carrier: facing")
+-- Round 2 (run 20aef564: the guest carrier 0.85 m from the horse's root, facing away, refused facing): within 1.2 m
+-- the carrier is against the horse and the facing check is skipped.
+f = fixture(); f.role = 1; f.env.vars.playerRotY = -90; f.horse.x = 100850; f.hold("E", 600)
+check(f.C.state == "loading", "within 1.2 m of the horse: loads whichever way the carrier faces")
 f = fixture(); f.role = 1; f.hostage = true; f.hold("E", 600)
 check(f.C.state == "off" and f.logged("step=refuse;why=npc_cargo"), "a guard already on the horse: npc_cargo")
 f = fixture(); f.role = 1; f.horse.occupied = true; f.hold("E", 600)
@@ -148,6 +161,18 @@ w = f.lastWarp(1)
 check(math.abs(w.x - (102.1 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3 and
  math.abs(w.y - (2.5 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
 check(f.logged("step=pin;how=rider;mounted=1"), "the pin stats line names the rider anchor")
+-- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low behind the rider at a gallop): while riding, body 1 leads by the
+-- rider's last per-tick move (it is drawn after this tick's own move), never by a jump over 0.6 m.
+f.env.vars.playerPosX = 102.4
+f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.x - (102.4 + 0.3 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3,
+ "riding: body 1 leads by the rider's last move (0.3 m a tick)")
+check(f.C.LEAD_MAX_MM == 600, "the lead is capped at 0.6 m")
+f.env.vars.playerPosX = 104.4
+f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.x - (104.4 - f.C.RIDE_BACK_MM / 1000)) < 1e-3, "a 2 m jump between ticks is no motion: no lead")
 f.env.vars.playerPosX, f.env.vars.playerPosY = 100, 2
 local keeps = f.count(6)
 for i = 1, 22 do f.tick(50) end
@@ -160,12 +185,14 @@ check(f.C.state == "carrier", "mounted: the take-down hold does nothing")
 f.mounted = false
 f.tick(50)
 f.env.vars.playerPosX, f.env.vars.playerPosZ, f.env.vars.playerPosY = 101.6, 301.2, 1.9
-f.hold("R", 300)
-check(f.C.state == "carrier", "R under 0.5 s: still on")
+-- Round 2 (run a49c4d76: the coop pickup shouldered them off the horse before a 0.5 s hold): the take-down is 0.3 s.
+check(f.C.TAKE_MS == 300, "the take-down hold is 0.3 s")
+f.hold("R", 150)
+check(f.C.state == "carrier", "R under 0.3 s: still on")
 f.tick(50)
-f.hold("R", 550)
+f.hold("R", 350)
 check(f.C.state == "off" and f.cargo[#f.cargo] == "000" and f.logged("step=take_down;key=r"),
- "R held 0.5 s: laid down at once (an R held on picks them up from the ground), the hold cleared (CARGO_V2 0 0 0)")
+ "R held 0.3 s: laid down at once (an R held on picks them up from the ground), the hold cleared (CARGO_V2 0 0 0)")
 local u = f.sent(5)
 check(u and u[6] == 4 and u[7] == 22, "UNLOADED cause taken_down (4) with the victim's generation")
 w = f.lastWarp(1)
@@ -178,6 +205,17 @@ check(not f.C.busy(), "not busy after the take-down")
 -- An E hold also takes them down (where E does not mount).
 f = fixture(); load(f); f.hold("E", 1100); f.tick(50)
 check(f.C.state == "off" and f.logged("step=take_down;key=e"), "an E hold 1 s takes them down too")
+-- Round 2 (run a49c4d76: the E hold that loaded them, held on, took them down 0.5 s later): after the load the
+-- take-down waits until E and R have been up once.
+f = fixture(); f.role = 1
+for i = 1, 10 do f.holdE(true); f.tick(50) end
+check(f.C.state == "loading", "one long E hold: loading")
+f.role, f.physical.carrying = 0, false
+for i = 1, 16 do f.holdE(true); f.tick(50) end
+check(f.C.state == "carrier" and not f.logged("step=take_down"), "the E that loaded them, held on 0.8 s: still on")
+f.holdE(false); f.tick(50)
+f.hold("E", 400)
+check(f.C.state == "off" and f.logged("step=take_down;key=e"), "released once, a new 0.3 s E hold takes them down")
 f = fixture(); load(f); f.hold("R", 2000)
 check(f.C.state == "off" and f.count(5) == 1 and f.cargo[#f.cargo] == "000", "R held on after the lay-down: one UNLOADED, nothing more here")
 -- On foot by the horse: an unridden census far over the carrier's ground is kept 1.45 m over that ground.
@@ -235,9 +273,14 @@ f.tick(50)
 check(#f.places == 1 and f.places[1].x == 150000 and f.places[1].z == 310000, "its own horse put on the carrier's pose (unridden)")
 w = f.lastWarp(0)
 check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.VICTIM_RISE_MM / 1000)) < 1e-6 and
- math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6 and math.abs(w.rotY - math.pi / 2) < 1e-6,
+ math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6 and math.abs(w.rotY - math.pi / 2) < 1e-3,
  "body 0 warped to its own horse's cargo point, a quarter turn (across the back)")
 check(f.C.busy(), "the victim's copy is busy too")
+-- Round 2: hold0 with no reset (a242d867, c2927350) or the A0 reset (8cfe8e97, 7f3155c8) kept body 0 with the horse but
+-- in the airborne pose, also on the carrier's screen; the Lua Warp keeps the lying pose. Default 4: the Lua Warp; the
+-- lab lever picks hold0 with a reset 0..3 (C0 alone untried).
+check(w.via == nil and #f.holds == 0, "by default body 0 moves by the Lua Warp")
+check(f.C.RESET == 4, "the default is the Lua Warp (reset 4)")
 check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
@@ -254,9 +297,52 @@ check(#f.warps == nw + 1 and math.abs(w.x - 170.0) < 1e-6 and math.abs(w.y - (2.
  math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6, "C.placed: body 0 over the pose M1 just wrote")
 f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
 check(#f.warps == nw + 1, "the tick after a post-placement pin leaves body 0 there")
+-- Round 2 (body 0 slips off at a gallop on the victim's screen): the next placement within 200 ms leads body 0 by the
+-- horse's last per-placement move (0.3 m here), capped at 0.6 m; a slower placement or a jump has no lead.
+f.C.placed(170300, 2400, 310000, 0)
+w = f.lastWarp(0)
+check(math.abs(w.x - (170.3 + 0.3)) < 1e-6, "C.placed: body 0 leads by the horse's last move")
+f.now = f.now + 50
+f.C.placed(172300, 2400, 310000, 0)
+check(math.abs(f.lastWarp(0).x - 172.3) < 1e-6, "a 2 m jump is no motion: no lead")
+f.now = f.now + 400
+f.C.placed(172600, 2400, 310000, 0)
+check(math.abs(f.lastWarp(0).x - 172.6) < 1e-6, "a placement 400 ms after the last: no lead")
+-- Round 2 (run a49c4d76: body 0 on the ground under the moving horse for a second or more at a time on the victim's
+-- screen, right after the mount and at a gallop): body 0's target never drops faster than 1 m/s (a sudden drop of
+-- the placed pose); a rise is immediate.
+local y0 = f.lastWarp(0).y
+f.now = f.now + 50
+f.C.placed(172700, 2000, 310000, 0)
+check(math.abs(f.lastWarp(0).y - (y0 - 0.05)) < 1e-6, "a 0.4 m drop of the placed pose: body 0 down 5 cm in 50 ms")
+f.now = f.now + 50
+f.C.placed(172800, 2600, 310000, 0)
+check(math.abs(f.lastWarp(0).y - (2.6 + f.C.VICTIM_PLACED_MM / 1000)) < 1e-6, "a rise: at once")
+check(f.C.DOWN_MMPS == 1000, "the drop rate is 1 m/s")
+-- The lab lever horse_probe cargo_pose: the placed / census heights, the offset behind the root, the drop rate.
+check(f.C.setVictimPose(1700, 1300, 200, 0, 2) and not f.C.setVictimPose(9000, 1300, 200, 0, 1) and
+ not f.C.setVictimPose(1700, 1300, 200, 0, 5), "setVictimPose: in range only (the reset 0..4, 4 the Lua Warp)")
+f.now = f.now + 50
+f.C.placed(172900, 2600, 310000, 0)
+w = f.lastWarp(0)
+check(math.abs(w.y - 4.3) < 1e-6 and math.abs(w.z - 309.8) < 1e-6, "setVictimPose: body 0 1.7 m over the placed pose, 0.2 m behind")
+check(f.holds[#f.holds]:find(" 2$"), "setVictimPose: the reset goes to hold0")
+check(f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET), "setVictimPose back to the defaults")
+check(f.logged("step=victim_pin;want_cm=") and f.logged(";lag_cm=") and f.logged(";src="),
+ "the victim_pin line carries the body's lag behind its last target and the target's source")
 f.W.horseShare = {}
 for i = 1, 25 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
 check(#f.places == 2, "unridden and drifted over 0.5 m from the KEEP pose: re-placed (at most 1 Hz)")
+-- A refused hold0 (an old native, the cargo key off while cargo_test runs it): the Lua Warp as before, one line a reason.
+f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, 1)
+f.tick(50)
+check(f.lastWarp(0).via == "hold0" and f.holds[#f.holds]:find(" 1$"), "the lever's reset 1: hold0 with the A0 reset")
+f.holdOff = "off"
+f.tick(50); f.tick(50)
+w = f.lastWarp(0)
+check(w.via == nil and f.count and f.logged("step=hold0_refused;reason=off"), "hold0 refused: body 0 by Lua Warp")
+f.holdOff = nil
+f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET)
 -- The take-down from the carrier: body 0 at the exact point.
 f.rx(5, 4, 33, 151000, 2400, 309000, 1571)
 check(f.C.state == "off" and f.called("000") and f.logged("step=unloaded;seat=2;why=taken_down;side=cargo;placed=1") and
@@ -283,6 +369,15 @@ f = loaded(); f.horse.x = 105000; f.tick(50)
 check(f.C.state == "off" and f.sent(5)[6] == 11, "the unridden horse 4 m from where it stood: call_away")
 f = loaded(); f.mounted = true; f.tick(50); f.horse.x = 140000; f.tick(50)
 check(f.C.state == "carrier", "ridden away: still on")
+-- Round 2 (run 883dc6ab: the horse still slowing from a gallop right after the dismount moved 3 m, call_away): for 2 s
+-- after a dismount the stand point follows the horse; after that a 4 m move is a call away.
+f.mounted = false; f.tick(50)
+f.horse.x = 143500; f.tick(50)
+check(f.C.state == "carrier", "the horse slides 3.5 m right after the dismount: still on")
+for i = 1, 45 do f.tick(50) end
+check(f.C.state == "carrier", "settled: still on")
+f.horse.x = 147500; f.tick(50)
+check(f.C.state == "off" and f.sent(5)[6] == 11, "settled, then 4 m away: call_away")
 f = loaded(); f.D.records[2].down = false; f.tick(50)
 check(f.C.state == "off" and f.sent(5)[6] == 1, "the victim up: awake")
 f = loaded(); f.D.records[2].generation = 23; f.tick(50)
@@ -313,6 +408,24 @@ check(f.C.state == "off" and f.sent(5) and f.sent(5)[6] == 6 and f.lastWarp(0), 
 f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
 f.rx(4, 0, 33, 101000, 2000, 300000, 0); f.D.records[2].generation = 34; f.tick(50)
 check(f.C.state == "off" and f.sent(5)[6] == 8, "the victim respawned: victim_gone")
+-- Round 2 (runs 83ac3950 / 547b431e: victim_gone left body 0 on the horse on the victim's own screen): a new downed
+-- generation lays body 0 beside its horse while it is still at the horse (within 5 m), never a body that is elsewhere.
+f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
+f.rx(4, 0, 33, 101000, 2000, 300000, 0); f.tick(50); f.tick(50)
+local nv = #f.warps
+f.env.vars.playerPosX, f.env.vars.playerPosY, f.env.vars.playerPosZ = 101.0, 3.4, 299.6
+f.D.records[2].generation = 34; f.tick(50)
+w = f.lastWarp(0)
+check(f.C.state == "off" and f.sent(5)[6] == 8 and #f.warps == nv + 1 and math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and
+ math.abs(w.x - (101.0 - f.C.SIDE_MM / 1000)) < 1e-6 and f.logged("why=victim_gone;side=cargo;placed=1"),
+ "victim_gone at the horse: body 0 laid beside it")
+f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
+f.rx(4, 0, 33, 101000, 2000, 300000, 0); f.tick(50); f.tick(50)
+nv = #f.warps
+f.env.vars.playerPosX, f.env.vars.playerPosZ = 160.0, 380.0
+f.D.records[2].generation = 34; f.tick(50)
+check(f.C.state == "off" and #f.warps == nv and f.logged("why=victim_gone;side=cargo;placed=0"),
+ "victim_gone with body 0 elsewhere (a respawn): left where it is")
 
 -- Wire hygiene.
 f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33

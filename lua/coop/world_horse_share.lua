@@ -4,8 +4,9 @@
 -- world_ride_pose.lua) and one final reliable RIDE_BODY (op 42, kind 1, rider 65534) at the dismount. The other copy
 -- renders the track 100 ms behind and places its 6656 every frame (place, anchored under body 1 once native shows it
 -- seated), so the partner rides in the saddle on this screen; the final pose leaves the horse where it was left, then
--- nothing moves it and the first E mounts it. Within 4 m of a horse the partner rides, an ACTION-only pad mask
--- (MgsCoopHorseHold, probe P5) stops a second native driver. A census generation change, a stale track, both players
+-- nothing moves it and the first E mounts it. Within 4 m of a horse the partner rides (2.5 m with M3's world_horse_pillion,
+-- where E claims its rear seat or the stock mount prompt shows), an ACTION-only pad mask (MgsCoopHorseHold, probe P5)
+-- stops a second native driver. A census generation change, a stale track, both players
 -- riding (two drivers; no new track until this copy's player is off) or a context change ends it; Travel / Bring partner here and the guest's checkpoint wait while anyone rides it. Both PCs must run
 -- the key (a copy without it drops 6656 from RIDE_FAST and refuses RIDE_BODY not_mirror, as before).
 do
@@ -17,8 +18,15 @@ W.horseShare = S
 local FAST, BODY = W.OP.RIDE_FAST or 44, W.OP.RIDE_BODY or 42
 local HORSE, FINAL, MASK = 6656, 65534, "MgsCoopHorseHold"
 local SEND_MS, CLOSED_MS, STATS_MS, HOLD_MM, FREE_MM, LEAP_MM = 50, 700, 2000, 4000, 4500, 300
+local PILLION_HOLD_MM, PILLION_FREE_MM = 2500, 2800
 local fmt, floor, sqrt = string.format, math.floor, math.sqrt
-S.HOLD_MM, S.FREE_MM, S.SEND_MS = HOLD_MM, FREE_MM, SEND_MS
+S.HOLD_MM, S.FREE_MM, S.SEND_MS, S.PILLION_HOLD_MM, S.PILLION_FREE_MM = HOLD_MM, FREE_MM, SEND_MS, PILLION_HOLD_MM, PILLION_FREE_MM
+-- The ride hold's radius: M1's, or M3's smaller one while world_horse_pillion is on (unproven for the default).
+local function holdRange()
+ local P = W.horsePillion
+ if type(P) == "table" and type(P.keyOn) == "function" and P.keyOn() == true then return PILLION_HOLD_MM, PILLION_FREE_MM end
+ return HOLD_MM, FREE_MM
+end
 local function log(s) if type(W.log) == "function" then W.log("event=horse_share;" .. s) end end
 local function now() return W.now and W.now() or 0 end
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
@@ -48,8 +56,9 @@ end
 -- The partner rides the shared horse (a live track) / anyone rides it (Travel, Bring, the guest's checkpoint).
 function S.partnerRides() return S.track ~= nil end
 function S.busy()
- local C = W.horseCargo
- return S.track ~= nil or S.sendId ~= nil or (type(C) == "table" and type(C.busy) == "function" and C.busy() == true)
+ local C, P = W.horseCargo, W.horsePillion
+ return S.track ~= nil or S.sendId ~= nil or (type(C) == "table" and type(C.busy) == "function" and C.busy() == true) or
+  (type(P) == "table" and type(P.busy) == "function" and P.busy() == true)
 end
 local function capped(kind, line)
  local c = (S.n[kind] or 0) + 1
@@ -111,7 +120,9 @@ function S.send(t)
  local h = (rides or S.sendId) and read() or nil
  if rides and h and h.occupied == true then
   if S.sendGen and h.gen ~= S.sendGen then log("step=end;why=generation;side=rider") end
-  if not S.sendId or S.sendGen ~= h.gen then S.sendId, S.sendGen, S.next = HORSE, h.gen, 0; log(fmt("step=ride;gen=%d", h.gen or 0)) end
+  if not S.sendId or S.sendGen ~= h.gen then S.sendId, S.sendGen, S.next, S.path = HORSE, h.gen, 0, 0; log(fmt("step=ride;gen=%d", h.gen or 0)) end
+  local q = S.lastPose
+  if q then S.path = (S.path or 0) + sqrt((h.x - q.x) ^ 2 + (h.z - q.z) ^ 2) end
   S.lastPose = h
   if t >= (S.next or 0) then
    S.next = t + SEND_MS
@@ -122,7 +133,8 @@ function S.send(t)
   if p then
    S.seq = S.seq % 65535 + 1
    local ok = W.tx(BODY, S.seq, 1, HORSE, p.x, p.y, p.z, p.yaw, 0, FINAL)
-   log(fmt("step=final_sent;ok=%d;sent=%d;x=%d;z=%d", ok and 1 or 0, S.sent, round(p.x / 10), round(p.z / 10)))
+   log(fmt("step=final_sent;ok=%d;sent=%d;path_cm=%d;x=%d;z=%d", ok and 1 or 0, S.sent, round((S.path or 0) / 10), round(p.x / 10),
+    round(p.z / 10)))
   end
   S.sendId, S.lastPose, S.sendGen = nil, nil, nil
  end
@@ -143,6 +155,9 @@ function S.apply(t)
  -- M2: a downed partner loaded on this horse follows the pose just written (world_horse_cargo.lua).
  local HC = W.horseCargo
  if r and r.ready == true and type(HC) == "table" and type(HC.placed) == "function" then pcall(HC.placed, r.x, r.y, r.z, yaw) end
+ -- M3: a passenger on this copy rides on the rear seat of the pose just written (world_horse_pillion.lua).
+ local HP = W.horsePillion
+ if r and r.ready == true and type(HP) == "table" and type(HP.placed) == "function" then pcall(HP.placed, r.x, r.y, r.z, yaw) end
  local s = S.stats
  if not r or r.ready ~= true then
   s.refused = s.refused + 1
@@ -169,14 +184,15 @@ function S.apply(t)
   S.last = {r.x, r.y, r.z}
  end
  if t - (s.at or t) >= STATS_MS then statsLine(t, "tick") end
- -- The ride hold (P5): within 4 m of the ridden horse the local E cannot mount it a second time.
+ -- The ride hold (P5): within 4 m (2.5 m with the pillion key) of the ridden horse the local E cannot mount it again.
  local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
  local L = S.last
  if L and type(px) == "number" and type(pz) == "number" then
   local d = sqrt((px * 1000 - L[1]) ^ 2 + (pz * 1000 - L[3]) ^ 2)
-  if not S.hold and d < HOLD_MM then
+  local hold, free = holdRange()
+  if not S.hold and d < hold then
    if setHold(true) and type(W.log) == "function" then W.log(fmt("event=horse_hold;step=action_masked;dist_cm=%d", round(d / 10))) end
-  elseif S.hold and d > FREE_MM then release("far") end
+  elseif S.hold and d > free then release("far") end
  end
 end
 local fastBase, bodyBase = W.handlers[FAST], W.handlers[BODY]
