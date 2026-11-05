@@ -10,7 +10,8 @@
 // rides the horse (rec+0x2DD: the rider beats the owner) or a call is pending, and checks every site and slot of
 // native/horse_drive_contract.hpp (tools/generate_horse_drive_contract.py) before the one engine call.
 // Verbs (Lua -> native, after "return 'MGS_COOP_HORSE_DRIVE_V1' -- "):
-//   cfg                                         -> {on=0|1,cargo=0|1}  (world_horse_share and M2's world_horse_cargo)
+//   cfg                                         -> {on=0|1,cargo=0|1,pillion=0|1}  (world_horse_share, M2's world_horse_cargo,
+//                                                  M3's world_horse_pillion)
 //   read <mission> <epoch>                      -> {ready=true,x,y,z,yaw,occupied,rider,gen} | {ready=false,reason}
 //   place <mission> <epoch> <x> <y> <z> <yaw> <anchor 0|1>
 //                                               -> {ready=true,bx,by,bz,byaw,x,y,z,anchored,gen} | refusal
@@ -21,6 +22,12 @@
 //     under the moving horse for a second or more at a time: runs a49c4d76 / 20aef564 / d2a5cafa. With no reset body 0
 //     stayed at its target but played the airborne pose (a242d867): reset bit 0 adds A0.vt+0x80(id), bit 1 C0.vt+0x90(id)
 //     after the move, C0 first as Warp, each only when body 0's A0 / C0 class and slot target equal body 1's.)
+//   pad <mission> <epoch>                       -> {ready=true,e=0|1,masked=0|1} | refusal  (M3, world_horse_pillion: the
+//     local E before the pad masks: (src+0x48 ?: PP+0x460) & ACTION without & ~PP+0x28. The ride hold's ACTION mask
+//     hides E from the downed poll (probe P5), so the rear-seat claim beside a partner-ridden horse reads it here.)
+//   seat1 <mission> <epoch> <back_mm> <up_mm>   -> {ready=true,seat=1} | refusal  (M3: this copy's player rides the
+//     shared horse with the partner behind; leases kSeatMs: the partner driver draws body 1 at RearSeat of this copy's
+//     own body 0 every tick, the DM overlay seating it, instead of the partner's stream.)
 // mm / mrad. anchor 1: when the partner driver shows body 1 as a horse rider (partner_mount_policy) and its body
 // sample is fresh, the horse goes under that body (HorseUnderRider), the yaw from the stream: the rider sits in the
 // saddle on this screen whatever the two streams' delays are.
@@ -44,13 +51,14 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
 
-enum class Verb : std::uint8_t { none, cfg, read, place, hold0 };
+enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1 };
 struct Request {
     Verb verb{};
     std::uint32_t mission{}, epoch{};
     std::int32_t x{}, y{}, z{}, yaw{};
     std::uint8_t anchor{};
     std::uint8_t reset{};  // hold0: bit 0 A0.vt+0x80, bit 1 C0.vt+0x90 after the move (Warp's resets, C0 first)
+    std::int32_t back{}, up{};  // seat1: the rear seat behind (0..1500 mm) and over (-500..1500 mm) the driver's root
 };
 // The text after the prefix. Missions 30010 / 30020 only (free roam; Mother Base has no horse), epoch 1..65535,
 // |x|,|y|,|z| <= 1e9 mm, |yaw| <= 31416 mrad, anchor 0 or 1.
@@ -65,8 +73,29 @@ const char* PlaceRefusal(const PlaceScope& s) noexcept;
 // census block and transform chain), mounted (this copy's player rides).
 struct HoldScope {
     bool share{}, cargo{}, pins{}, field{}, body{}, mounted{};
+    bool pillion{};  // M3: world_horse_pillion admits hold0 too (the passenger's body 0 at the rear seat)
 };
 const char* HoldRefusal(const HoldScope& s) noexcept;
+
+// Horse plan M3 (lab key world_horse_pillion): ride behind your partner. The prologue's rear rider sits about 0.4-0.5 m
+// behind the front rider at the same height (vehicles-companions-design 3.3); probe P2 put a guard 0.44 m behind the
+// census root. Lua's seat1 sends the offsets each tick; kRearBackMm / kRearUpMm are its defaults.
+inline constexpr std::int32_t kRearBackMm = 450, kRearUpMm = 0;
+inline constexpr std::uint32_t kSeatMs = 300;  // a seat1 lease
+// A seat1's refusal in order (nullptr: lease): off (world_horse_pillion), pins, scope, not_riding (this copy's player is
+// not the shared horse's rider).
+struct SeatScope {
+    bool pillion{}, pins{}, field{}, riding{};
+};
+const char* SeatRefusal(const SeatScope& s) noexcept;
+// The E (ACTION, 0x20) the PlayerPad's held getter (0x1205F00) would return without its button mask: the device word when
+// it is non-zero, else the keyboard word.
+bool RawAction(std::uint32_t src_held, std::uint32_t kb_held) noexcept;
+// The rear seat: back metres behind the rider root along yaw's forward (sin, cos) and up metres over it.
+void RearSeat(const float (&rider)[3], float yaw, float back, float up, float (&out)[3]) noexcept;
+void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, std::uint64_t now_ms) noexcept;
+// The live lease (kSeatMs after the last seat1) and its offsets in metres.
+bool SeatLease(std::uint64_t now_ms, float& back, float& up) noexcept;
 // hold0's two engine calls: the T vtable and its +0x70 / +0x68 targets, pinned in native/partner_player_contract.hpp
 // (vtable_slots {0x24c8ef0,0x70,0x1ad4450} / {0x24c8ef0,0x68,0x1ad56d0}, code_sites 0x1ad4450 / 0x1ad56d0: the partner
 // code gate checks them at start); HoldBody refuses any other vtable or target.

@@ -822,6 +822,9 @@ struct Mission {
         std::uint8_t transient_seat;
     } seat;
     bool ride_seated;      // the seat flow owns body 1 this tick (vehicle_attached gates)
+    // Horse plan M3: body 1 rides behind this copy's player this tick (horse_drive::SeatLease; pose = the rear seat).
+    bool pillion;
+    bool pillion_logged;
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
     // kRideCensusMs (the local one and the remote driver's copy), own cap.
     LogCap census_cap;

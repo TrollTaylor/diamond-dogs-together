@@ -265,6 +265,79 @@ void TestCargoKey() {
     Check(play.mode == mgscoop::LabMode::play && play.world_horse_cargo && play.play_refused == 0, "a named 1 runs in play too");
 }
 
+// Horse plan M3 (ride behind your partner, lab key world_horse_pillion): the raw E read, the seat1 lease and the rear seat.
+void TestPillion() {
+    hd::Request r{};
+    Check(Parse("pad 30010 7", r) && r.verb == hd::Verb::pad && r.mission == 30010 && r.epoch == 7, "pad");
+    Check(!Parse("pad 30050 7", r) && !Parse("pad 30010 0", r) && !Parse("pad 30010 7 1", r), "pad: free roam, epoch, exact grammar");
+    Check(Parse("seat1 30020 9 450 0", r) && r.verb == hd::Verb::seat1 && r.mission == 30020 && r.epoch == 9 && r.back == 450 &&
+              r.up == 0,
+          "seat1 with the default rear seat");
+    Check(Parse("seat1 30010 1 0 -500", r) && r.back == 0 && r.up == -500 && Parse("seat1 30010 1 1500 1500", r) && r.back == 1500 &&
+              r.up == 1500,
+          "seat1 bounds: back 0..1500, up -500..1500");
+    Check(!Parse("seat1 30010 1 1501 0", r) && !Parse("seat1 30010 1 -1 0", r) && !Parse("seat1 30010 1 450 -501", r) &&
+              !Parse("seat1 30010 1 450", r) && !Parse("seat1 30050 1 450 0", r),
+          "seat1: out of bounds, short, Mother Base");
+    Check(hd::kRearBackMm == 450 && hd::kRearUpMm == 0 && hd::kSeatMs == 300, "rear seat 0.45 m behind the rider, a 300 ms lease");
+    // The PlayerPad held getter's word choice without the mask (probe P5: the ACTION mask hides E from the downed poll).
+    Check(hd::RawAction(0x20, 0) && hd::RawAction(0, 0x20) && hd::RawAction(0x21, 0x0), "E on the device or the keyboard word");
+    Check(!hd::RawAction(0x1, 0x20) && !hd::RawAction(0, 0) && !hd::RawAction(0x10, 0), "the device word wins when non-zero, as the getter");
+    hd::SeatScope s{};
+    Check(std::strcmp(hd::SeatRefusal(s), "off") == 0, "seat1: the key first");
+    s.pillion = true;
+    Check(std::strcmp(hd::SeatRefusal(s), "pins") == 0, "seat1: then the contracts");
+    s.pins = true;
+    Check(std::strcmp(hd::SeatRefusal(s), "scope") == 0, "seat1: then the scope");
+    s.field = true;
+    Check(std::strcmp(hd::SeatRefusal(s), "not_riding") == 0, "seat1: only while this copy's player rides the shared horse");
+    s.riding = true;
+    Check(hd::SeatRefusal(s) == nullptr, "seat1: lease");
+    hd::Reset();
+    float back = -1.f, up = -1.f;
+    Check(!hd::SeatLease(1000, back, up), "no lease yet");
+    hd::NoteSeat(450, 100, 1000);
+    Check(hd::SeatLease(1000, back, up) && Near(back, 0.45f) && Near(up, 0.1f), "a lease carries the offsets in metres");
+    Check(hd::SeatLease(1000 + hd::kSeatMs, back, up) && !hd::SeatLease(1001 + hd::kSeatMs, back, up), "live for kSeatMs");
+    Check(!hd::SeatLease(999, back, up), "a clock that went back has no lease");
+    hd::NoteSeat(450, 0, 2000);
+    hd::Reset();
+    Check(!hd::SeatLease(2000, back, up), "reset ends the lease");
+    const float rider[3] = {10.f, 5.f, 20.f};
+    float seat[3]{};
+    hd::RearSeat(rider, 0.f, 0.45f, 0.1f, seat);
+    Check(Near(seat[0], 10.f) && Near(seat[1], 5.1f) && Near(seat[2], 19.55f), "facing +Z: 0.45 m behind along -Z, 0.1 m up");
+    hd::RearSeat(rider, 1.5707963f, 0.45f, 0.f, seat);
+    Check(Near(seat[0], 9.55f) && Near(seat[1], 5.f) && Near(seat[2], 20.f), "facing +X: behind along -X");
+    // hold0 for the passenger's body 0: world_horse_pillion admits it without world_horse_cargo.
+    hd::HoldScope h{};
+    h.share = h.pillion = true;
+    Check(std::strcmp(hd::HoldRefusal(h), "pins") == 0, "hold0: the pillion key passes the key step");
+    h.share = false;
+    Check(std::strcmp(hd::HoldRefusal(h), "off") == 0, "hold0: never without world_horse_share");
+}
+void TestPillionKey() {
+    const auto lab = [](const char* text) {
+        mgscoop::LabConfig c{};
+        (void)mgscoop::ParseLabConfig(text, std::strlen(text), c);
+        return c;
+    };
+    const auto def = lab("enabled=1\nrole=host\n");
+    const auto on = lab("enabled=1\nrole=guest\nworld_horse_pillion=1\n");
+    const auto off = lab("enabled=1\nrole=guest\nworld_horse_pillion=0\n");
+    const auto bad = lab("enabled=1\nrole=host\nworld_horse_pillion=2\n");
+    Check(!def.world_horse_pillion && !def.world_horse_pillion_given, "world_horse_pillion: off unless named");
+    Check(on.world_horse_pillion && on.world_horse_pillion_given && on.unknown_keys == 0 && on.invalid_values == 0, "a named 1 turns it on");
+    Check(!off.world_horse_pillion && off.world_horse_pillion_given, "a named 0 is the off switch");
+    Check(!bad.world_horse_pillion && bad.invalid_values == 1, "an invalid value stays off");
+    const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
+    Check(!gun.world_horse_pillion && !gun.world_horse_pillion_given && gun.world_horse_share, "before its gate: off with the gun profile");
+    const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                          "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
+                          "world_horse_pillion=1\n");
+    Check(play.mode == mgscoop::LabMode::play && play.world_horse_pillion && play.play_refused == 0, "a named 1 runs in play too");
+}
+
 } // namespace
 
 int main() {
@@ -278,6 +351,8 @@ int main() {
     TestRideKindShows();
     TestLabKey();
     TestCargoKey();
+    TestPillion();
+    TestPillionKey();
     std::printf("%u horse drive checks passed: call-enter matrix, saddle anchor, receipt grammar, refusals, shared state, "
                 "shared-horse rider visibility, lab key\n",
                 checks);

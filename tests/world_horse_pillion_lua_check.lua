@@ -1,0 +1,288 @@
+-- Horse plan M3, ride behind your partner (lua/coop/world_horse_pillion.lua on world_horse_share.lua and world_ride_pose.lua).
+-- No game process. Usage: lua51 world_horse_pillion_lua_check.lua <world_ride_pose.lua> <world_horse_share.lua> <world_horse_pillion.lua>
+local checks = 0
+local function check(value, why)
+    checks = checks + 1
+    if not value then error(checks .. ': ' .. why, 2) end
+end
+local HORSE, OP = 6656, 80
+local function fixture(o)
+    o = o or {}
+    local f = {now = 1000, tx = {}, logs = {}, places = {}, masks = {}, warps = {}, holds = {}, seats = {}, stances = {}, rides = false,
+        key = o.key ~= false, pillion = o.pillion ~= false, gen = 5, e = false, padOk = true, seatOk = true,
+        horse = {x = 10000, y = 2000, z = 30000, yaw = 0, occupied = false}}
+    local W = {OP = {}, handlers = {}, startHooks = {}, unpairedHooks = {}, paired = true, eff = 3, mission = 30010, epoch = 7,
+        host = o.host ~= false, role = o.host == false and 2 or 1, active = true, downed = {records = {}}}
+    W.get = function(t, k) if t == nil then return nil end return t[k] end
+    W.now = function() return f.now end
+    W.tick32 = function(t) return math.floor(t) % 4294967296 end
+    W.tx = function(...) f.tx[#f.tx + 1] = {...}; return true end
+    W.log = function(s) f.logs[#f.logs + 1] = s end
+    W.tick = function() end
+    W.travel = {blocked = function() return nil end}
+    W.receipt = function(text)
+        local verb = text:match("MGS_COOP_HORSE_DRIVE_V1' %-%- (.*)$")
+        if not verb then return nil end
+        if verb == "cfg" then return {on = f.key and 1 or 0, cargo = 0, pillion = f.pillion and 1 or 0} end
+        local h = f.horse
+        if verb:find("^read ") then
+            return {ready = true, id = HORSE, realized = true, occupied = h.occupied, rider = 0, pending = 0, x = h.x, y = h.y, z = h.z, yaw = h.yaw, gen = f.gen}
+        end
+        if verb:find("^pad ") then
+            if not f.padOk then return {ready = false, reason = "off"} end
+            return {ready = true, e = f.e and 1 or 0, masked = 1}
+        end
+        local sb, su = verb:match("^seat1 30010 7 (%d+) (%-?%d+)$")
+        if sb then
+            f.seats[#f.seats + 1] = {tonumber(sb), tonumber(su)}
+            if not f.seatOk then return {ready = false, reason = "not_riding"} end
+            return {ready = true, seat = 1}
+        end
+        local hx, hy, hz, hyaw, hr = verb:match("^hold0 30010 7 (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d)$")
+        if hx then
+            f.holds[#f.holds + 1] = {tonumber(hx), tonumber(hy), tonumber(hz), tonumber(hyaw), tonumber(hr)}
+            return {ready = true, held = true}
+        end
+        local m, e, x, y, z, yaw, a = verb:match("^place (%d+) (%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d)$")
+        if m then
+            f.places[#f.places + 1] = {x = tonumber(x), y = tonumber(y), z = tonumber(z), yaw = tonumber(yaw)}
+            return {ready = true, placed = true, anchored = tonumber(a), bx = h.x, by = h.y, bz = h.z, byaw = h.yaw, x = tonumber(x),
+                y = tonumber(y), z = tonumber(z), gen = f.gen}
+        end
+    end
+    local env = setmetatable({e = {MgsCoopWorld = W}, vars = {playerPosX = 11, playerPosY = 1.1, playerPosZ = 30},
+        PlayerInfo = {OrCheckStatus = function(s) return s[1] == 25 and f.rides end}, PlayerStatus = {ON_HORSE = 25},
+        PlayerPad = {ACTION = 0x20, STICK_L = 1}, PlayerStance = {SQUAT = 2, STAND = 0},
+        Player = {SetPadMask = function(q) f.masks[#f.masks + 1] = {"set", q}; return true end,
+            ResetPadMask = function(q) f.masks[#f.masks + 1] = {"reset", q}; return true end,
+            RequestToSetTargetStance = function(s) f.stances[#f.stances + 1] = s end},
+        GameObject = {SendCommand = function(who, c) if c.id == "Warp" then f.warps[#f.warps + 1] = {who.index, c.pos, c.rotY} end end}},
+        {__index = _G})
+    for i = 1, 3 do
+        local chunk = assert(loadfile(assert(arg[i])))
+        setfenv(chunk, env)
+        chunk()
+    end
+    f.W, f.env, f.S, f.P = W, env, W.horseShare, W.horsePillion
+    function f.tick(dt) f.now = f.now + (dt or 33); W.tick() end
+    function f.fast(t, x, y, z, yaw) W.handlers[44]({t, 3, HORSE, x, y, z, yaw}) end
+    function f.final(x, y, z, yaw) W.handlers[42]({9, 1, HORSE, x, y, z, yaw, 0, 65534}) end
+    function f.logged(s) for _, l in ipairs(f.logs) do if l:find(s, 1, true) then return true end end return false end
+    function f.count(s) local n = 0; for _, l in ipairs(f.logs) do if l:find(s, 1, true) then n = n + 1 end end return n end
+    -- The partner rides here: a live track placing this copy's horse every frame.
+    f.t = 5000
+    function f.ride(n)
+        for _ = 1, n or 1 do f.t = f.t + 50; f.fast(f.t, f.horse.x, f.horse.y, f.horse.z, f.horse.yaw); f.tick(50) end
+    end
+    -- The HORSE_SEAT messages this copy sent since index i.
+    function f.seatTx(i)
+        local out = {}
+        for k = (i or 1), #f.tx do if f.tx[k][1] == OP then out[#out + 1] = f.tx[k] end end
+        return out
+    end
+    return f
+end
+-- Deliver a sent HORSE_SEAT message (W.tx(OP, seq, seat, role, action, cause, token, x, y, z, yaw)) to the other copy.
+local function deliver(to, t) to.W.handlers[OP]({t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]}) end
+local function lastSeat(f) local s = f.seatTx(); return s[#s] end
+
+-- Binds after world_horse_share.lua; HORSE_SEAT seat 1 on op 0x50.
+local g = fixture({host = false})
+check(type(g.P) == "table" and g.W.OP.HORSE_SEAT == OP, "W.horsePillion on HORSE_SEAT 0x50")
+check(g.P.keyOn() and g.P.on(), "both keys on, paired, free roam: on")
+local off = fixture({host = false, pillion = false})
+check(not off.P.on(), "world_horse_pillion off: off")
+
+-- (a) The host drives, the guest claims the rear seat with E beside the ridden horse (the raw pad read before the masks).
+local h = fixture()
+g = fixture({host = false})
+g.ride(4)
+check(g.S.track ~= nil and #g.places > 0, "the guest's copy places the host's ride")
+g.e = true
+g.ride(2)
+check(#g.seatTx() == 0, "an E held on entering the zone is no press")
+g.e = false
+g.ride(1)
+g.e = true
+g.ride(1)
+local claim = lastSeat(g)
+check(claim and claim[3] == 1 and claim[4] == 2 and claim[5] == 1 and claim[7] == 1, "E edge within 2.5 m: CLAIM seat 1, role 2, token 1")
+check(g.P.state == "claim" and g.logged("event=horse_pillion;step=claim;seat=1;"), "step=claim")
+-- Off: no claim; far: no claim.
+off = fixture({host = false, pillion = false})
+off.ride(2); off.e = true; off.ride(1); off.e = false; off.ride(1); off.e = true; off.ride(1)
+check(#off.seatTx() == 0, "key off: E claims nothing")
+local far = fixture({host = false})
+far.env.vars.playerPosX = 13.1
+far.ride(2); far.e = false; far.ride(1); far.e = true; far.ride(1)
+check(#far.seatTx() == 0 and far.P.state == "off", "3 m from the ridden horse: E is not a claim (it acts normally)")
+-- The host grants while it rides the shared horse and drives with the guest behind.
+h.rides, h.horse.occupied = true, true
+deliver(h, claim)
+local grant = lastSeat(h)
+check(grant and grant[5] == 2 and grant[6] == 0 and grant[7] == 1 and h.P.state == "driver", "the host grants (cause 0) and drives")
+check(h.logged("event=horse_pillion;step=grant;seat=1;token=1") and h.logged("step=driver;seat=1;how=grant"), "step=grant, step=driver")
+h.tick(33)
+check(#h.seats >= 1 and h.seats[#h.seats][1] == 450 and h.seats[#h.seats][2] == 0, "the driver leases seat1 450 0 every tick")
+check(h.logged("step=seat1;ok=1;back_mm=450;up_mm=0"), "step=seat1 ok")
+deliver(g, grant)
+check(g.P.state == "seated" and g.logged("step=seated;seat=1;how=grant;token=1"), "the guest is seated")
+local mask = g.masks[#g.masks]
+check(mask[1] == "set" and mask[2].settingName == "MgsCoopPillion" and mask[2].buttons == 0xFFFFFFA7 and mask[2].sticks == 1,
+    "the pillion pad mask: everything but aim, fire and reload; the move stick; the camera free")
+check(g.stances[#g.stances] == 2, "the passenger squats")
+g.ride(1)
+local hold = g.holds[#g.holds]
+local pl = g.places[#g.places]
+check(hold and hold[1] == pl.x and hold[2] == pl.y + 600 and hold[3] == pl.z - 350 and hold[5] == 1,
+    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 0.6 m up), hold0 with the A0 reset")
+check(g.P.busy() and g.S.busy(), "seated: busy (Travel / Bring wait)")
+-- KEEP both ways at 1 Hz.
+local n0 = #g.tx
+g.ride(25)
+local keeps = 0
+for _, t in ipairs(g.seatTx(n0 + 1)) do if t[5] == 6 then keeps = keeps + 1 end end
+check(keeps >= 1, "the passenger sends KEEP at 1 Hz")
+for _ = 1, 25 do h.tick(50) end
+for _, t in ipairs(h.seatTx()) do if t[5] == 6 then deliver(g, t) end end
+for _, t in ipairs(g.seatTx()) do if t[5] == 6 then deliver(h, t) end end
+check(h.P.state == "driver" and g.P.state == "seated", "KEEP holds both sides")
+g.ride(10)
+check(g.logged("step=seat_pin;"), "step=seat_pin every 2 s")
+-- Hop off: E pressed again, after a release.
+g.e = false
+g.ride(1)
+g.e = true
+g.ride(1)
+check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=passenger;side=passenger;placed=1"), "E again: hop off")
+local w = g.warps[#g.warps]
+check(w and w[1] == 0 and math.abs(w[2][1] * 1000 - (pl.x - 1300)) < 2, "laid on the horse's left (yaw 0: -x), body 0 warped once")
+check(g.masks[#g.masks][1] == "reset" and g.masks[#g.masks][2].settingName == "MgsCoopPillion" and g.stances[#g.stances] == 0,
+    "the pad mask released, standing")
+local un = lastSeat(g)
+check(un[5] == 5 and un[6] == 1, "UNSEATED cause passenger")
+deliver(h, un)
+check(h.P.state == "off" and h.logged("step=unseated;seat=1;why=passenger;side=driver;"), "the driver's side ends")
+local leases = #h.seats
+h.tick(33)
+check(#h.seats == leases, "no seat1 after the end")
+
+-- (b) Both off when the driver gets off.
+local function seatBoth(hh, gg)
+    gg.ride(1); gg.e = false; gg.ride(1); gg.e = true; gg.ride(1)
+    deliver(hh, lastSeat(gg))
+    deliver(gg, lastSeat(hh))
+    gg.ride(1)
+end
+h, g = fixture(), fixture({host = false})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+check(h.P.state == "driver" and g.P.state == "seated", "seated again")
+h.rides = false
+h.tick(33)
+check(h.P.state == "off" and h.logged("step=unseated;seat=1;why=driver_off;side=driver"), "the driver gets off: driver_off")
+deliver(g, lastSeat(h))
+check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=driver_off;side=passenger;placed=1;"), "the passenger is laid off too")
+-- The ride's end on the passenger's copy (the final pose) lays them off as well.
+h, g = fixture(), fixture({host = false})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+g.final(g.horse.x, g.horse.y, g.horse.z, 0)
+g.tick(33)
+check(g.P.state == "off" and g.logged("why=track_end;side=passenger;placed=1"), "the track's end: laid off")
+-- Link drop: no KEEP for 3.5 s on either side.
+h, g = fixture(), fixture({host = false})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+g.ride(75)
+check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=stream_lost;side=passenger;placed=1"), "no KEEP 3.5 s: the passenger is laid off")
+for _ = 1, 75 do h.tick(50) end
+check(h.P.state == "off" and h.logged("why=stream_lost;side=driver"), "no KEEP 3.5 s: the driver ends too")
+-- Downed while seated: off.
+h, g = fixture(), fixture({host = false})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+g.W.downed.records[2] = {down = true}
+g.ride(1)
+check(g.P.state == "off" and g.logged("why=passenger_downed"), "a downed passenger is laid off")
+-- Context change (mission end): off.
+h, g = fixture(), fixture({host = false})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+g.W.epoch = 8
+g.tick(33)
+check(g.P.state == "off" and g.logged("why=context") and g.masks[#g.masks][1] == "reset", "a context change lays them off, the mask released")
+-- Unpaired: off.
+h, g = fixture(), fixture({host = false})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+g.W.paired = false
+g.tick(33)
+check(g.P.state == "off" and g.masks[#g.masks][1] == "reset", "unpaired: off, the mask released")
+
+-- The host denies a claim while it does not ride.
+h, g = fixture(), fixture({host = false})
+g.ride(2); g.e = false; g.ride(1); g.e = true; g.ride(1)
+deliver(h, lastSeat(g))
+local deny = lastSeat(h)
+check(deny[5] == 3 and deny[6] == 7 and h.P.state == "off" and h.logged("step=deny;seat=1;why=not_riding"), "not riding: DENY not_riding")
+deliver(g, deny)
+check(g.P.state == "off" and g.logged("step=denied;seat=1;why=not_riding"), "the guest's claim ends")
+-- A claim without an answer times out.
+g = fixture({host = false})
+g.ride(2); g.e = false; g.ride(1); g.e = true; g.ride(1)
+for _ = 1, 50 do g.ride(1) end
+check(g.P.state == "off" and g.logged("why=claim_timeout"), "claim_timeout")
+
+-- (c) The guest drives, the host's own press commits (GRANT cause passenger) under the press lock.
+h, g = fixture(), fixture({host = false})
+g.rides, g.horse.occupied = true, true
+h.ride(2); h.e = false; h.ride(1); h.e = true; h.ride(1)
+local hg = lastSeat(h)
+check(hg[5] == 2 and hg[6] == 1 and h.P.state == "seated" and h.logged("step=seated;seat=1;how=host_press"), "the host sits behind at once")
+deliver(g, hg)
+check(g.P.state == "driver" and g.logged("step=driver;seat=1;how=host_press"), "the guest drives with the host behind")
+g.tick(33)
+check(#g.seats >= 1, "the guest's copy leases seat1")
+-- The press lock: a guest claim within 3 s of the host's own press is refused.
+local h2 = fixture()
+h2.rides, h2.horse.occupied = true, true
+h2.P.lockUntil = h2.now + 3000
+h2.W.handlers[OP]({1, 1, 2, 1, 0, 9, 0, 0, 0, 0})
+check(lastSeat(h2)[5] == 3 and lastSeat(h2)[6] == 11, "a guest claim inside the host's press lock: DENY locked")
+-- The guest is not riding when the host's press arrives: the host is laid off.
+h, g = fixture(), fixture({host = false})
+h.ride(2); h.e = false; h.ride(1); h.e = true; h.ride(1)
+deliver(g, lastSeat(h))
+local nr = lastSeat(g)
+check(nr[5] == 5 and nr[6] == 7 and g.P.state == "off", "the guest not riding: UNSEATED not_riding")
+deliver(h, nr)
+check(h.P.state == "off" and h.logged("why=not_riding;side=passenger;placed=1;"), "the host is laid off")
+
+-- The pad read refused: no claim, one line.
+g = fixture({host = false})
+g.padOk = false
+g.ride(3); g.e = true; g.ride(1)
+check(#g.seatTx() == 0 and g.count("step=pad_refused;reason=off") == 1, "pad refused: no claim, logged once")
+-- Seat 2 still reaches world_horse_cargo's handler.
+g = fixture({host = false})
+local got
+g.W.handlers[OP] = nil
+local base = function(v) got = v end
+g.W.handlers[OP] = base
+local chunk = assert(loadfile(arg[3]))
+setfenv(chunk, g.env)
+chunk()
+g.W.handlers[OP]({1, 2, 1, 4, 0, 5, 1, 2, 3, 0})
+check(got and got[2] == 2, "seat 2 goes on to world_horse_cargo")
+-- The lab lever's pose bounds.
+check(g.W.horsePillion.setPose(350, 600, 4, 450, 0) and not g.W.horsePillion.setPose(350, 600, 3, 450, 0) and
+    not g.W.horsePillion.setPose(350, 600, 2, 1600, 0), "setPose: mode 0 / 2 / 4, bounds")
+check(g.W.horsePillion.status():find("pillion;state=off;key=1;", 1, true) ~= nil, "status line")
+print("world_horse_pillion_lua_check: " .. checks .. " checks passed")

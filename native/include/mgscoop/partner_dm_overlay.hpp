@@ -146,6 +146,10 @@ struct In {
     // Horse plan M1 (lab key world_horse_share): body 1 is shown as the shared D-Horse's rider this tick
     // (partner_ride_wire Visibility::horse); the horse map (MapHorse) runs too, whatever `mode` says.
     bool horse;
+    // Horse plan M3 (lab key world_horse_pillion): body 1 rides behind this copy's player (the seat1 lease places it at
+    // the rear seat): seated in stateRideOnIdle whatever the remote's own act is (its copy pins it squatting), whatever
+    // `mode` says, also when body 1 already shows the remote's act natively.
+    bool pillion;
 };
 
 struct Out {

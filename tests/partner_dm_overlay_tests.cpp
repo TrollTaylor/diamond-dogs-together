@@ -602,6 +602,42 @@ void TestHorseMap() {
     Check(!pdo::Active(b.s) && b.plays == 0, "blocked: no seat");
 }
 
+// Horse plan M3 (lab key world_horse_pillion): body 1 rides behind this copy's player. Its own copy pins it squatting,
+// so the remote's act is a foot act (and body 1 may already show it natively): In::pillion seats it in stateRideOnIdle
+// anyway, whatever the overlay setting says, and the lease's end stops it.
+void TestPillionMap() {
+    const std::uint8_t ride = pdo::Find("stateRideOnIdle", 15);
+    Game g;
+    g.in.mode = PartnerNativeOverlay::off;
+    g.in.pillion = true;
+    g.in.remote_valid = true;
+    g.in.remote_act = 3;
+    g.in.body_valid = true;
+    g.in.body_act = 3;
+    g.Run(400);
+    Check(pdo::Active(g.s) && g.s.source == pdo::Source::map && g.s.index == ride && g.s.loop,
+          "pillion: the seated rider entry, also when body 1 already shows the remote's foot act");
+    g.Run(600);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1 && !g.Saw("stop:setting_off"), "pillion: playing with the overlay setting off");
+    g.Run(90000);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1 && !g.Saw("stop:timeout"), "pillion: a 90 s ride stays seated");
+    g.in.pillion = false;
+    g.Run(400);
+    Check(g.Saw("stop:map_exit") || g.Saw("stop:setting_off"), "the lease's end stops the seat");
+    Game n;
+    n.in.mode = PartnerNativeOverlay::off;
+    n.in.pillion = true;
+    n.in.remote_valid = false;
+    n.Run(600);
+    Check(pdo::Active(n.s) && n.s.index == ride, "pillion without an act sample: seated");
+    Game b;
+    b.in.mode = PartnerNativeOverlay::off;
+    b.in.pillion = true;
+    b.in.blocked = "range";
+    b.Run(2000);
+    Check(!pdo::Active(b.s) && b.plays == 0, "pillion blocked: no seat");
+}
+
 void TestSuspendTimeout() {
     Game g;
     g.stuck = true;
@@ -632,6 +668,7 @@ int main(int argc, char** argv) {
     TestMapFlow();
     TestFultonMap();
     TestHorseMap();
+    TestPillionMap();
     TestSuspendTimeout();
     std::printf("%u partner DM overlay checks passed: catalogue (verified graph-0 codes, clip paths, reply codes, Lua OVERLAY order%s), "
                 "remote-act map, debug flow (suspend, patch, play, confirm, timeout stop, release), stop/refusals, play gate (camera "

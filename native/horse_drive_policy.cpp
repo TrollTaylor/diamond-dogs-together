@@ -117,6 +117,12 @@ std::uint32_t Generation(std::uintptr_t records, std::uintptr_t receiver, std::u
     return g ? g : 1u;
 }
 
+const char* SeatRefusal(const SeatScope&) noexcept { return "off"; }
+bool RawAction(std::uint32_t, std::uint32_t) noexcept { return false; }
+void RearSeat(const float (&rider)[3], float, float, float, float (&out)[3]) noexcept { std::memcpy(out, rider, sizeof(out)); }
+void NoteSeat(std::int32_t, std::int32_t, std::uint64_t) noexcept {}
+bool SeatLease(std::uint64_t, float&, float&) noexcept { return false; }
+
 void NotePlaced(std::uint64_t now_ms) noexcept { g_placed_ms = now_ms ? now_ms : 1; }
 bool PlacedFresh(std::uint64_t now_ms) noexcept {
     return g_placed_ms && now_ms >= g_placed_ms && now_ms - g_placed_ms <= kFreshMs;
