@@ -2338,6 +2338,14 @@ int main() {
                   Lab("enabled=1\nrole=guest\ndrive_vert=0\n").drive_vert_given &&
                   Lab("enabled=1\nrole=host\ndrive_vert=2\n").invalid_values == 1,
                   "enemy gaps 3: drive_vert parses, off unless named");
+            // Enemy round 8 track C (docs/world-sync-design.md 7.23): act_plan (native only, no CFG bit) parses in lab and play
+            // and is off unless named: the far mirror's puppets plan their own path to the host copy's destination.
+            Check(!def.act_plan && !gunDefault.act_plan && !gunDefault.act_plan_given &&
+                  Lab("enabled=1\nrole=guest\npartner_native_profile=gun\nact_plan=1\n").act_plan &&
+                  !Lab("enabled=1\nrole=guest\npartner_native_profile=gun\nact_plan=0\n").act_plan &&
+                  Lab("enabled=1\nrole=guest\nact_plan=0\n").act_plan_given &&
+                  Lab("enabled=1\nrole=host\nact_plan=2\n").invalid_values == 1,
+                  "round 8 C: act_plan parses, off unless named");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a

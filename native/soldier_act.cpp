@@ -196,6 +196,16 @@ void PrefillEntry(unsigned char (&entry)[0x18], const float (&pos)[3], float yaw
     entry[0x14] = 1;
 }
 
+bool PlanGate(unsigned, std::uint16_t, std::uint16_t, bool) noexcept { return false; }
+void BuildShadow(Shadow& shadow) noexcept { std::memset(&shadow, 0, sizeof(shadow)); }
+bool ShadowGatePasses(const void*, unsigned) noexcept { return false; }
+unsigned GaitCatchUp(float, unsigned gait) noexcept { return gait; }
+float AheadM(const float (&)[3], const float (&)[3], const float (&)[3]) noexcept { return 0.0f; }
+float EntryYaw(const unsigned char (&)[0x70], float fallback) noexcept { return fallback; }
+bool TakeNear(const unsigned char (&)[0x70], const float (&)[3], const float (&)[3], bool) noexcept { return true; }
+bool Warp15(const float (&)[3], const float (&)[3]) noexcept { return false; }
+bool PlanEndNear(const float (&)[3], const float (&)[3]) noexcept { return false; }
+
 #ifdef _WIN32
 namespace {
 namespace c = mgscoop::soldier_act_contract;

@@ -288,6 +288,94 @@ int main() {
         char tiny[16]{};
         Check(!sa::FormatFrameLine(1, k, tiny, sizeof(tiny)), "the frame line refuses a short buffer");
     }
+    // Enemy round 8 track C (design 7.23, act_plan): the walk-request start 0x1413725f0 plans a path only for a FOB remote
+    // copy (S+0x2a4 bit 2, owner byte != S+0x2a8); offline it plans nothing and a puppet's legs follow his own brain's
+    // old path. The hook re-calls it after the engine's own start with a shadow gate object.
+    {
+        Check(sa::PlanGate(1, 0xffff, 0x0002, true) && sa::PlanGate(1, 0xffff, 0x0042, true),
+              "plan: dest mode 1, no handle, the offline start ran (R+0x19e & 3 == 2), applied now");
+        Check(!sa::PlanGate(0, 0xffff, 0x0002, true) && !sa::PlanGate(2, 0xffff, 0x0002, true), "plan: modes 0 / 2 not planned");
+        Check(!sa::PlanGate(1, 0x0012, 0x0002, true), "plan: a handle already out (FOB life cycle) is left alone");
+        Check(!sa::PlanGate(1, 0xffff, 0x0003, true) && !sa::PlanGate(1, 0xffff, 0x0001, true) && !sa::PlanGate(1, 0xffff, 0x0000, true),
+              "plan: only after the offline start (low bits 2)");
+        Check(!sa::PlanGate(1, 0xffff, 0x0002, false), "plan: only for a request applied this update");
+        // The shadow: 0x1413725f0 reads its first argument only at +0x70 (0x141372635) -> S' +0x2a4 bit 2, +0x18 -> +0x18
+        // the owner bytes [idx] against +0x2a8 (0x14137264a..0x141372664).
+        static sa::Shadow sh{};
+        sa::BuildShadow(sh);
+        Check(sa::ShadowGatePasses(sh.p, 0) && sa::ShadowGatePasses(sh.p, 246) && sa::ShadowGatePasses(sh.p, sa::kMaxSoldiers - 1),
+              "the shadow passes the gate for every guard");
+        std::uintptr_t s = 0;
+        std::memcpy(&s, sh.p + 0x70, sizeof(s));
+        std::uint32_t mode = 0;
+        if (s) std::memcpy(&mode, reinterpret_cast<const unsigned char*>(s) + 0x2a4, sizeof(mode));
+        Check(s == reinterpret_cast<std::uintptr_t>(sh.s) && mode == 4 && sh.s[0x2a8] == 0, "shadow layout: +0x70 -> S', +0x2a4 = 4, +0x2a8 = 0");
+        // A real offline S (census mode=0x782: bit 2 clear) does not pass; an online owner (owner byte == peer) does not.
+        alignas(16) static unsigned char p[0x78]{}, so[0x2b0]{}, slots[0x20]{}, owner[sa::kMaxSoldiers]{};
+        const std::uintptr_t ps = reinterpret_cast<std::uintptr_t>(so), pslots = reinterpret_cast<std::uintptr_t>(slots),
+                             powner = reinterpret_cast<std::uintptr_t>(owner);
+        std::memcpy(p + 0x70, &ps, 8);
+        std::memcpy(so + 0x18, &pslots, 8);
+        std::memcpy(slots + 0x18, &powner, 8);
+        const std::uint32_t offline = 0x782, online = 0x786;
+        std::memcpy(so + 0x2a4, &offline, 4);
+        Check(!sa::ShadowGatePasses(p, 5), "offline (bit 2 clear): the gate refuses (finding 1)");
+        std::memcpy(so + 0x2a4, &online, 4);
+        so[0x2a8] = 1;
+        owner[5] = 1;
+        Check(!sa::ShadowGatePasses(p, 5), "online, this peer owns him: the gate refuses");
+        owner[5] = 0;
+        Check(sa::ShadowGatePasses(p, 5), "online, a remote copy: the gate plans");
+        Check(!sa::ShadowGatePasses(nullptr, 5) && !sa::ShadowGatePasses(sh.p, sa::kMaxSoldiers), "no object / idx out of range: refused");
+    }
+    {
+        // The gait catch-up, as the unpack's mode 0 rule (2..5 m: + 1 capped at 3; beyond 5 m: 3), never lowered.
+        Check(sa::GaitCatchUp(0.0f, 1) == 1 && sa::GaitCatchUp(1.9f, 1) == 1, "gait: under 2 m ahead unchanged");
+        Check(sa::GaitCatchUp(2.5f, 1) == 2 && sa::GaitCatchUp(4.9f, 2) == 3 && sa::GaitCatchUp(3.0f, 3) == 3, "gait: 2..5 m + 1, cap 3");
+        Check(sa::GaitCatchUp(5.1f, 0) == 3 && sa::GaitCatchUp(12.0f, 1) == 3, "gait: beyond 5 m 3");
+        Check(sa::GaitCatchUp(8.0f, 5) == 5 && sa::GaitCatchUp(3.0f, 4) == 4, "gait: a faster gait is kept");
+        Check(sa::GaitCatchUp(-1.0f, 1) == 1 && sa::GaitCatchUp(std::nanf(""), 1) == 1, "gait: not ahead / NaN unchanged");
+        const float self[3] = {0.0f, 0.0f, 0.0f}, dest[3] = {20.0f, 0.0f, 0.0f}, ahead[3] = {3.0f, 5.0f, 4.0f}, behind[3] = {-3.0f, 0.0f, 4.0f};
+        Check(std::fabs(sa::AheadM(self, ahead, dest) - 5.0f) < 0.01f, "ahead: flat distance when the owner copy is nearer the destination");
+        Check(sa::AheadM(self, behind, dest) == 0.0f, "ahead: an owner copy behind is not ahead");
+        // The entry yaw: face mode 1 (wire +0x68) -> the facing (wire +0x50, big-endian int16 * pi/32767, 0x142338970).
+        unsigned char w[0x70]{};
+        w[0x68] = 1;
+        w[0x50] = 0x40;
+        w[0x51] = 0x00;  // 16384 -> ~pi/2
+        Check(std::fabs(sa::EntryYaw(w, 0.25f) - 1.5708f) < 0.001f, "entry yaw: face mode 1 -> the request's facing");
+        w[0x50] = 0xc0;  // -16384 -> ~-pi/2
+        Check(std::fabs(sa::EntryYaw(w, 0.25f) + 1.5708f) < 0.001f, "entry yaw: negative facing");
+        w[0x68] = 2;
+        Check(sa::EntryYaw(w, 0.25f) == 0.25f, "entry yaw: other face modes keep this copy's own yaw");
+        // A walker is taken only within 10 m (flat) of the owner copy (a take does not open with a visible jump).
+        unsigned char req[0x70]{};
+        req[0x63] = 1;
+        const float a[3] = {0.0f, 0.0f, 0.0f}, near9[3] = {6.0f, 30.0f, 6.7f}, far11[3] = {11.0f, 0.0f, 0.0f};
+        Check(sa::TakeNear(req, a, near9, true) && !sa::TakeNear(req, a, far11, true) && !sa::TakeNear(req, a, near9, false),
+              "take: a walker within 10 m (flat) of the owner copy only");
+        req[0x63] = 17;
+        Check(sa::TakeNear(req, a, far11, true) && sa::TakeNear(req, a, far11, false), "take: a guard who does not walk as before");
+        // warp15: the unpack's 15 m warp (225.0 squared, 3D) moves the copy.
+        const float e0[3] = {0.0f, 0.0f, 0.0f}, e15[3] = {10.0f, 10.0f, 5.0f}, e14[3] = {10.0f, 10.0f, 1.0f};
+        Check(sa::Warp15(e0, e15) && !sa::Warp15(e0, e14), "warp15: beyond 15 m (3D)");
+        const float d0[3] = {100.0f, 270.0f, 200.0f}, end1[3] = {100.6f, 270.5f, 200.6f}, end2[3] = {101.0f, 270.0f, 200.8f};
+        Check(sa::PlanEndNear(end1, d0) && !sa::PlanEndNear(end2, d0), "plan end: within 1 m (3D) of R+0x80");
+        Check(sa::kActTakeNearM == 10.0f && sa::kPlanEndM == 1.0f && sa::kPlanCheckMs == 300, "act_plan constants");
+        // The frame line prints the act_plan counters.
+        sa::Counters k{};
+        k.plan = 7; k.plan_skip = 2; k.warp15 = 1; k.plan_ok = 6; k.plan_far = 1; k.plan_nopath = 0; k.near_wait = 3;
+        char line[768]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) &&
+                  std::strstr(line, "; plan=7; plan_skip=2; warp15=1; plan_ok=6; plan_far=1; plan_nopath=0; near_wait=3"),
+              "the frame line prints plan / plan_skip / warp15 / plan_ok / plan_far / plan_nopath / near_wait");
+    }
+    // The planner sites pinned in the contract (round 8 track C).
+    Check(c::plan_start_rva == 0x13725f0 && c::plan_dist == 10.0f && c::s_planner == 0x30 && c::planner_follower == 0x20 &&
+              c::planner_plan == 0x0 && c::planner_cancel == 0x10 && c::follower_has == 0x90 && c::follower_path == 0xa0 &&
+              c::follower_reset == 0xd0 && c::r_handle == 0x19c && c::r_198 == 0x198 && c::r_dest == 0x80 && c::path_points == 0x8 &&
+              c::path_count == 0x20,
+          "the planner contract");
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");
