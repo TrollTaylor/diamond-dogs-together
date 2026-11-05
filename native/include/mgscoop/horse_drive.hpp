@@ -48,6 +48,7 @@ struct Request {
     std::uint32_t mission{}, epoch{};
     std::int32_t x{}, y{}, z{}, yaw{};
     std::uint8_t anchor{};
+    std::uint8_t reset{};  // hold0: bit 0 A0.vt+0x80, bit 1 C0.vt+0x90 after the move (Warp's resets, C0 first)
 };
 // The text after the prefix. Missions 30010 / 30020 only (free roam; Mother Base has no horse), epoch 1..65535,
 // |x|,|y|,|z| <= 1e9 mm, |yaw| <= 31416 mrad, anchor 0 or 1.

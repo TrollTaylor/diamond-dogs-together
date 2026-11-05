@@ -27,7 +27,7 @@ local function fixture(o)
   end
   -- hold0 (round 2): this copy's body 0 moved natively; recorded as a body-0 warp (via hold0) unless refused.
   if verb and verb:find("^hold0 ") then
-   local x, y, z, yaw = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)$")
+   local x, y, z, yaw, rs = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) ([0-3])$")
    f.holds[#f.holds + 1] = verb
    if f.holdOff or not x then return {ready = false, reason = f.holdOff or "request"} end
    f.warps[#f.warps + 1] = {index = 0, x = tonumber(x) / 1000, y = tonumber(y) / 1000, z = tonumber(z) / 1000, rotY = tonumber(yaw) / 1000,
@@ -278,7 +278,9 @@ check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.VICTIM_RI
 check(f.C.busy(), "the victim's copy is busy too")
 -- Round 2 (runs a49c4d76 / 20aef564 / d2a5cafa: body 0 on the ground under the moving horse with a per-tick Lua Warp):
 -- body 0 on the horse moves through the native hold0 (the partner driver's xform mover, no C0 / A0 reset), mm / mrad.
-check(w.via == "hold0" and f.holds[#f.holds]:find("^hold0 30010 7 150000 3400 309560 1571$"), "body 0 held natively (hold0, mm / mrad)")
+check(w.via == "hold0" and f.holds[#f.holds]:find("^hold0 30010 7 150000 3400 309560 1571 1$"),
+ "body 0 held natively (hold0, mm / mrad) with the A0 reset (run a242d867: no reset kept the airborne pose)")
+check(f.C.RESET == 1, "the default hold0 reset is A0 only")
 check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
@@ -318,12 +320,14 @@ f.C.placed(172800, 2600, 310000, 0)
 check(math.abs(f.lastWarp(0).y - (2.6 + f.C.VICTIM_PLACED_MM / 1000)) < 1e-6, "a rise: at once")
 check(f.C.DOWN_MMPS == 1000, "the drop rate is 1 m/s")
 -- The lab lever horse_probe cargo_pose: the placed / census heights, the offset behind the root, the drop rate.
-check(f.C.setVictimPose(1700, 1300, 200, 0) and not f.C.setVictimPose(9000, 1300, 200, 0), "setVictimPose: in range only")
+check(f.C.setVictimPose(1700, 1300, 200, 0, 2) and not f.C.setVictimPose(9000, 1300, 200, 0, 1) and
+ not f.C.setVictimPose(1700, 1300, 200, 0, 4), "setVictimPose: in range only (the reset 0..3)")
 f.now = f.now + 50
 f.C.placed(172900, 2600, 310000, 0)
 w = f.lastWarp(0)
 check(math.abs(w.y - 4.3) < 1e-6 and math.abs(w.z - 309.8) < 1e-6, "setVictimPose: body 0 1.7 m over the placed pose, 0.2 m behind")
-check(f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS), "setVictimPose back to the defaults")
+check(f.holds[#f.holds]:find(" 2$"), "setVictimPose: the reset goes to hold0")
+check(f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET), "setVictimPose back to the defaults")
 check(f.logged("step=victim_pin;want_cm=") and f.logged(";lag_cm=") and f.logged(";src="),
  "the victim_pin line carries the body's lag behind its last target and the target's source")
 f.W.horseShare = {}

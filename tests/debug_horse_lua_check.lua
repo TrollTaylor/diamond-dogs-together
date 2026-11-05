@@ -213,14 +213,14 @@ check(ok and msg:find("horse_probe=status;probe=none;hold=0;",1,true),"status af
 -- M2 round 2: cargo_pose sets the victim's body-0 pose on the horse (world_horse_cargo setVictimPose), lab only.
 c=F()
 local pose
-c.W.horseCargo={setVictimPose=function(p,q,b,d)pose={p,q,b,d};return true end}
-ok,msg=c:run("horse_probe","cargo_pose","1700","1300","200","800")
-check(ok and pose and pose[1]==1700 and pose[2]==1300 and pose[3]==200 and pose[4]==800 and
- msg=="horse_probe=cargo_pose;placed_mm=1700;census_mm=1300;back_mm=200;down_mmps=800","cargo_pose sets the victim pose")
-ok=c:run("horse_probe","cargo_pose","9000","1300","200","800")
+c.W.horseCargo={setVictimPose=function(p,q,b,d,r)pose={p,q,b,d,r};return true end}
+ok,msg=c:run("horse_probe","cargo_pose","1700","1300","200","800","2")
+check(ok and pose and pose[1]==1700 and pose[2]==1300 and pose[3]==200 and pose[4]==800 and pose[5]==2 and
+ msg=="horse_probe=cargo_pose;placed_mm=1700;census_mm=1300;back_mm=200;down_mmps=800;reset=2","cargo_pose sets the victim pose")
+ok=c:run("horse_probe","cargo_pose","9000","1300","200","800","2")
 check(not ok,"cargo_pose out of range: refused")
 c=F({mode=2});c.W.horseCargo={setVictimPose=function()return true end}
-ok=c:run("horse_probe","cargo_pose","1700","1300","200","800")
+ok=c:run("horse_probe","cargo_pose","1700","1300","200","800","2")
 check(not ok,"cargo_pose outside the lab: refused")
 
 print("debug_horse_lua_check: "..checks.." checks PASS")

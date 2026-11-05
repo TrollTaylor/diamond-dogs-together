@@ -64,12 +64,15 @@ void TestParse() {
     // M2 round 2 (runs a49c4d76 / 20aef564 / d2a5cafa: body 0 under the moving horse on the victim's screen with a
     // per-tick Lua Warp): hold0 moves this copy's own downed body 0 as the partner driver's xform mover moves body 1
     // (T.vt+0x70 then T.vt+0x68, no C0 / A0 reset), mm / mrad.
-    Check(Parse("hold0 30010 7 -656010 1200 877730 -3141", r) && r.verb == hd::Verb::hold0 && r.mission == 30010 && r.epoch == 7 &&
-              r.x == -656010 && r.y == 1200 && r.z == 877730 && r.yaw == -3141 && r.anchor == 0,
-          "hold0");
-    Check(!Parse("hold0 30010 7 0 0 0 0 1", r) && !Parse("hold0 30010 7 0 0 0", r) && !Parse("hold0 30050 7 0 0 0 0", r) &&
-              !Parse("hold0 30010 7 0 0 0 31417", r),
-          "hold0: six numbers, free roam, yaw bound");
+    // Run a242d867: with no reset body 0 stayed at its target but played the airborne pose; the last number picks
+    // Warp's resets after the move (bit 0 A0.vt+0x80, bit 1 C0.vt+0x90, C0 first as Warp).
+    Check(Parse("hold0 30010 7 -656010 1200 877730 -3141 1", r) && r.verb == hd::Verb::hold0 && r.mission == 30010 && r.epoch == 7 &&
+              r.x == -656010 && r.y == 1200 && r.z == 877730 && r.yaw == -3141 && r.reset == 1,
+          "hold0 with the A0 reset");
+    Check(Parse("hold0 30010 7 0 0 0 0 3", r) && r.reset == 3 && Parse("hold0 30010 7 0 0 0 0 0", r) && r.reset == 0, "hold0 resets 0..3");
+    Check(!Parse("hold0 30010 7 0 0 0 0 4", r) && !Parse("hold0 30010 7 0 0 0 0", r) && !Parse("hold0 30050 7 0 0 0 0 1", r) &&
+              !Parse("hold0 30010 7 0 0 0 31417 1", r),
+          "hold0: seven numbers, free roam, yaw and reset bounds");
 }
 
 void TestHoldRefusal() {
@@ -248,7 +251,12 @@ void TestCargoKey() {
     Check(!off.world_horse_cargo && off.world_horse_cargo_given, "a named 0 is the off switch");
     Check(!bad.world_horse_cargo && bad.invalid_values == 1, "an invalid value stays off");
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    Check(!gun.world_horse_cargo && gun.world_horse_share, "before its gate: off with the gun profile (the M1 key stays on)");
+    Check(gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share, "the gun profile turns world_horse_cargo on");
+    const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=0\n");
+    Check(!gunOff.world_horse_cargo && gunOff.world_horse_cargo_given, "with the gun profile a named 0 is the off switch");
+    const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
+    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_cargo && playGun.play_refused == 0, "on in play with the gun profile");
     const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
                           "world_horse_cargo=1\n");
