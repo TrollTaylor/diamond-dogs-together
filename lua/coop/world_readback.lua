@@ -6,7 +6,8 @@
 --   target), held=1 within 1 m, far_m his distance from this player when he was put there. Round 6 logged h=1 only.
 -- * drive_sink (moved here from world_snap.lua): a driven copy more than 1.5 m under its target (the reply's v) for 2 s
 --   in all; the time under is counted apart from snaps (round 6: a 1 s drive_vert snap reset the 2 s window, so a copy
---   that popped up and dropped again never counted); level for 2 s starts the count over.
+--   that popped up and dropped again never counted); level for 2 s starts the count over. Each gap between two low
+--   readings counts up to 2 s, so sparse readings count as in 0.15.1 (2 s from the first low one).
 -- * place_reach (W.reachOn): a copy beyond 60 m that a read-back finds more than 1.5 m under its target (and under the
 --   owner's newest sample of him, when one is at most 3 s old) is put back once (his placement queued again, or that
 --   newest sample), his force-realize ends when the put-back is done (or at once when nothing can put him back), and he
@@ -42,7 +43,7 @@ do
             local off = type(r.v) == "number" and r.v * 10 - (800 - P.LIFT) or nil
             if not off then return end
             local low = off < -1500
-            if dv.lowT then dv.lowMs = (dv.lowMs or 0) + min(500, now - dv.lowT) end
+            if dv.lowT then dv.lowMs = (dv.lowMs or 0) + min(2000, now - dv.lowT) end
             dv.lowT = low and now or nil
             if low then dv.upAt = nil
             else

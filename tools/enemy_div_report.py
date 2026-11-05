@@ -257,20 +257,45 @@ def analyse(host, guest):
     r['place_body_refused'] = sum(1 for l in host + guest if 'event=place_body' in l and 'fix=0' in l and 'why=' in l and
                                   'why=none' not in l)
     # Enemy round 7 track A (design 7.20, lua/coop/world_readback.lua): the y read-backs 0.5 s / 2 s after a vert snap,
-    # a held landing, a far placement or a put-back, per copy and source (held = within 1 m of where he was put); the
-    # guards that fell; the far put-backs; the drive_vert snaps and the no-thrash stops (native world_drive lines).
-    r['readback'], r['readback_fell_guards'], r['readback_fix'], r['vert_snaps'], r['vert_stop'] = {}, {}, {}, {}, {}
+    # a held landing, a far placement or a put-back, per copy and source (held = within 1 m of where he was put; a
+    # not-held line is under or above that spot: a copy driven on after it was put measures the ground he ran to, not
+    # a fall); the guards under / above; the 2 s read-backs (one slot per copy: a newer arm within 2 s cuts the older
+    # one's 2 s line); the far put-backs; the drive_vert snaps and the no-thrash stops (native world_drive lines).
+    r['readback'], r['readback_fix'], r['vert_snaps'], r['vert_stop'] = {}, {}, {}, {}
+    r['readback_under_guards'], r['readback_above_guards'], r['readback_2s'] = {}, {}, {}
     for side, lines in (('host', host), ('guest', guest)):
-        per, fell = {}, set()
+        per, under, above, pend = {}, set(), set(), set()
+        two = {'armed': 0, 'got': 0, 'cut': 0, 'open': 0}
         for l in lines:
             if 'event=readback;' in l or 'event=readback; ' in l:
                 f = fields(l)
-                row = per.setdefault(f.get('src', '?'), {'held': 0, 'fell': 0})
-                row['held' if f.get('held') == '1' else 'fell'] += 1
-                if f.get('held') != '1':
-                    fell.add(f.get('ent'))
+                row = per.setdefault(f.get('src', '?'), {'held': 0, 'under': 0, 'above': 0})
+                try:
+                    dy = float(f.get('dy_m', '0'))
+                except ValueError:
+                    dy = 0.0
+                if f.get('held') == '1':
+                    row['held'] += 1
+                elif dy < 0:
+                    row['under'] += 1
+                    under.add(f.get('ent'))
+                else:
+                    row['above'] += 1
+                    above.add(f.get('ent'))
+                ent = f.get('ent')
+                if f.get('at') == '500':
+                    two['armed'] += 1
+                    if ent in pend:
+                        two['cut'] += 1
+                    pend.add(ent)
+                elif f.get('at') == '2000':
+                    two['got'] += 1
+                    pend.discard(ent)
+        two['open'] = len(pend)
         r['readback'][side] = per
-        r['readback_fell_guards'][side] = sorted(fell)
+        r['readback_under_guards'][side] = sorted(under)
+        r['readback_above_guards'][side] = sorted(above)
+        r['readback_2s'][side] = two
         r['readback_fix'][side] = sum(1 for l in lines if 'event=readback_fix' in l and 'put=1' in l)
         r['vert_snaps'][side] = sum(1 for l in lines if 'world_drive=vert;' in l)
         r['vert_stop'][side] = sum(1 for l in lines if 'world_drive=vert_stop' in l)
@@ -355,9 +380,13 @@ def main(argv=None):
           'body_tx %d (max per body %d), body placements refused here %d' % (
               r['relayed_host'], r['backoff_host'], r['unrealized_host'], r['relayed_guest'], r['backoff_guest'],
               r['unrealized_guest'], r['body_tx'], r['body_tx_max'], r['place_body_refused']))
-    print('  read-backs (held / fell per source): host %s guest %s; fell: host %s guest %s; far put-backs %s; vert snaps %s, '
-          'vert stops %s' % (r['readback']['host'], r['readback']['guest'], r['readback_fell_guards']['host'] or 'none',
-                             r['readback_fell_guards']['guest'] or 'none', r['readback_fix'], r['vert_snaps'], r['vert_stop']))
+    print('  read-backs (held / under / above per source): host %s guest %s; under: host %s guest %s; above: host %s '
+          'guest %s; 2 s read-backs (armed / got / cut by a newer arm / open): host %s guest %s; far put-backs %s; '
+          'vert snaps %s, vert stops %s' % (
+              r['readback']['host'], r['readback']['guest'], r['readback_under_guards']['host'] or 'none',
+              r['readback_under_guards']['guest'] or 'none', r['readback_above_guards']['host'] or 'none',
+              r['readback_above_guards']['guest'] or 'none', r['readback_2s']['host'], r['readback_2s']['guest'],
+              r['readback_fix'], r['vert_snaps'], r['vert_stop']))
     print('  crossfire: terminal_win %d, REJECT 12 %d, not_attributed %d; host scan avg %s us, max %s us' % (
         r['terminal_win'], r['reject_12'], r['not_attributed'],
         None if r['scan_avg_us'] is None else round(r['scan_avg_us']), r['scan_max_us']))
