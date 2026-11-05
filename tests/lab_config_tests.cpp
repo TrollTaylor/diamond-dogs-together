@@ -2302,12 +2302,16 @@ int main() {
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=0\n").soldier_act &&
                   Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
                   "FM1: soldier_act parses, off unless named");
-            // Round 6 (docs/world-sync-design.md 7.19): soldier_act=calm is the phase lever (mirror only in calm / caution),
-            // carried in soldier_act's own value (no CFG bit); 1 keeps every phase (the current behaviour).
+            // Round 6 (docs/world-sync-design.md 7.19): the phase lever rides in soldier_act's own value (no CFG bit). The
+            // user's decision D-FM1 (a), 2026-11-05: the far mirror mirrors only in calm and caution, so 1 (and calm) is on with
+            // the calm / caution limit; all (research) keeps every phase (the behaviour of design 7.16).
             const auto calm = Lab("enabled=1\nrole=guest\nsoldier_act=calm\n");
-            Check(calm.soldier_act && calm.soldier_act_calm && calm.invalid_values == 0 &&
-                  !Lab("enabled=1\nrole=guest\nsoldier_act=1\n").soldier_act_calm && !def.soldier_act_calm && !gunDefault.soldier_act_calm,
-                  "FM1 round 6: soldier_act=calm is on with the calm / caution phase limit; 1 is every phase");
+            const auto one = Lab("enabled=1\nrole=guest\nsoldier_act=1\n");
+            const auto all = Lab("enabled=1\nrole=guest\nsoldier_act=all\n");
+            Check(calm.soldier_act && calm.soldier_act_calm && calm.invalid_values == 0 && one.soldier_act && one.soldier_act_calm &&
+                  all.soldier_act && !all.soldier_act_calm && all.invalid_values == 0 &&
+                  !Lab("enabled=1\nrole=guest\nsoldier_act=0\n").soldier_act,
+                  "FM1 round 6 (D-FM1 a): soldier_act=1 / calm is on in calm / caution only; all is every phase");
             // Enemy gaps 2 (docs/world-sync-design.md 7.17): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048) parse in
             // lab and play, both off unless named: place_reach is proven in the logs of runs 9023e5c6 / 8281b868 / 3c9d1250 /
             // b77e2104 but no frame shows the watched guard on the host's screen (terrain), so it stays off (design 7.17).
