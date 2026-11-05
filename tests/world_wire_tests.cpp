@@ -114,7 +114,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 77, "77 ops (enemy round 8 LRRP fast, FM1 act caps, FM1 soldier act, horse seat, world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 78, "78 ops (enemy round 10 LRRP step, enemy round 8 LRRP fast, FM1 act caps, FM1 soldier act, horse seat, world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
                        "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
                        "M3 place / ack / owner / engage, M4 soldier snap, M7 soldier hit, horse plan M2 horse seat, and local ops)");
