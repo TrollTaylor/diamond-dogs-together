@@ -46,8 +46,10 @@ C.LEAD_MAX_MM = LEAD_MAX_MM
 -- lever horse_probe cargo_pose sets the placed / census heights, the offset behind the root and the rate (V).
 -- Within FACE_MM of the root the carrier is against the horse: no facing check (run 20aef564 refused 0.85 m away).
 local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
--- hold0's reset (run a242d867: none kept body 0 at its target but in the airborne pose): bit 0 A0, bit 1 C0 (Warp's).
-local RESET = 1
+-- Body 0's mover: 4 the Lua Warp (the lying pose, with spells on the ground under the moving horse), 0..3 hold0 with
+-- Warp's resets (bit 0 A0, bit 1 C0): none (a242d867 / c2927350) and A0 (8cfe8e97 / 7f3155c8) kept it with the horse
+-- but in the airborne pose on both screens; C0 alone is untried (the lab lever horse_probe cargo_pose picks it).
+local RESET = 4
 C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
 local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
@@ -56,7 +58,7 @@ C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_M
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
 function C.setVictimPose(placed, rise, back, down, reset)
- if not (int(placed, 0, 3000) and int(rise, 0, 3000) and int(back, -1000, 1500) and int(down, 0, 20000) and int(reset, 0, 3)) then
+ if not (int(placed, 0, 3000) and int(rise, 0, 3000) and int(back, -1000, 1500) and int(down, 0, 20000) and int(reset, 0, 4)) then
   return false
  end
  V.placed, V.rise, V.back, V.down, V.reset = placed, rise, back, down, reset
@@ -189,6 +191,7 @@ local function warp0(x, y, z, a, src)
   if y < lo then y = lo end
  end
  C.want, C.wantAt = {x, y, z, src}, now
+ if V.reset == 4 then C.via = "warp"; return warp(0, x, y, z, a) end
  -- Round 2 (runs a49c4d76 / 20aef564 / d2a5cafa): the Lua Warp (with its C0 / A0 resets) left body 0 on the ground under
  -- the moving horse for a second or more at a time; hold0 moves it as the partner driver moves body 1 (no reset). A
  -- refused hold0 (the cargo key off while cargo_test runs it, an old native) keeps the Lua Warp, one line a reason.

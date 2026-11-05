@@ -1,7 +1,8 @@
 # Horse plan M2, the body-0 pose levers and the link drop (part 2 of the lab session after horse-cargo.txt; the lever and
 # worldtrigger are lab only). The host carries the downed guest onto the shared horse again and rides a left loop at a
-# gallop while the guest's copy tries hold0's resets (horse_probe cargo_pose <placed_mm> <census_mm> <back_mm> <down_mmps>
-# <reset>; frames h2p-<n>-* on the victim's screen: 1 A0 (the default), 0 none, 2 C0, 3 both as Warp); the host
+# gallop while the guest's copy tries body 0's movers (horse_probe cargo_pose <placed_mm> <census_mm> <back_mm> <down_mmps>
+# <reset>; frames h2p-<n>-* on the victim's screen: 4 the Lua Warp (the default), 2 hold0 + C0 (untried), 3 hold0 + both
+# resets, 1 hold0 + A0); the host
 # gets off, then the guest's world link goes off: both copies lay the body beside the horse (why=stream_lost on the
 # host; the guest's copy lays body 0 down when its world goes off). Frames h2c-loaded and h2c-dropped on both screens.
 logmark both
@@ -47,27 +48,27 @@ host press e 150
 wait 2500
 host run horse_status
 host expect localMounted=1
-guest run horse_probe cargo_pose 1300 900 440 1000 1
+guest run horse_probe cargo_pose 1300 900 440 1000 4
 host hold w+a 1500 nowait
 guest burst h2p-1-trot 3 250
 host hold w+shift+a 1500 nowait
 guest burst h2p-1-gallop 4 250
-guest run horse_probe cargo_pose 1300 900 440 1000 0
+guest run horse_probe cargo_pose 1300 900 440 1000 2
 host hold w+shift+a 1500 nowait
 guest burst h2p-2-gallop 4 250
 host hold w+shift+a 1500 nowait
 guest burst h2p-2-gallop-b 4 250
-guest run horse_probe cargo_pose 1300 900 440 1000 2
+guest run horse_probe cargo_pose 1300 900 440 1000 3
 host hold w+shift+a 1500 nowait
 guest burst h2p-3-gallop 4 250
 host hold w+shift+a 1500 nowait
 guest burst h2p-3-gallop-b 4 250
-guest run horse_probe cargo_pose 1300 900 440 1000 3
+guest run horse_probe cargo_pose 1300 900 440 1000 1
 host hold w+shift+a 1500 nowait
 guest burst h2p-4-gallop 4 250
 host release
 wait 2500
-guest run horse_probe cargo_pose 1300 900 440 1000 1
+guest run horse_probe cargo_pose 1300 900 440 1000 4
 guest capture h2p-stopped
 host press e 150
 wait 3000

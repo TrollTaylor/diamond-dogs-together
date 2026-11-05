@@ -971,8 +971,8 @@ struct LabConfig {
     bool world_horse_share_given = false;
     // world_horse_cargo=0|1 (horse plan M2, docs/mounts.md "Downed partner on the horse"; with world_horse_share): carry a
     // downed partner to the shared D-Horse and hold E: they lie across its back on both screens (HORSE_SEAT seat 2,
-    // lua/coop/world_horse_cargo.lua over the existing MGS_COOP_CARGO_V2 calls). Both PCs must run it. Follows the native
-    // gun profile in lab and play (M2 round 2); a named 0 is the off switch.
+    // lua/coop/world_horse_cargo.lua over the existing MGS_COOP_CARGO_V2 calls). Both PCs must run it. Off unless named
+    // in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
     bool world_horse_cargo = false;
     bool world_horse_cargo_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
