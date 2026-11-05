@@ -2296,12 +2296,13 @@ int main() {
                   "enemy gaps: place_lift follows the gun profile; a named 0 opts out");
             // Enemy sync M7 FM1 (far mirror, docs/world-sync-design.md 7.15): soldier_act (CFG r[19] bit 512) parses in lab
             // and play and stays off unless named until its gate run passes; an invalid value is named and off.
-            Check(!def.soldier_act && !gunDefault.soldier_act && !gunDefault.soldier_act_given &&
+            // Round 6 (design 7.19, D-FM1 a): soldier_act follows the gun profile, calm / caution only; a named 0 opts out.
+            Check(!def.soldier_act && gunDefault.soldier_act && gunDefault.soldier_act_calm && !gunDefault.soldier_act_given &&
                   Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=1\n").soldier_act &&
                   Lab("enabled=1\nrole=guest\nsoldier_act=1\n").soldier_act_given &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=0\n").soldier_act &&
                   Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
-                  "FM1: soldier_act parses, off unless named");
+                  "FM1: soldier_act parses; the gun profile turns it on (calm / caution), a named 0 off");
             // Round 6 (docs/world-sync-design.md 7.19): the phase lever rides in soldier_act's own value (no CFG bit). The
             // user's decision D-FM1 (a), 2026-11-05: the far mirror mirrors only in calm and caution, so 1 (and calm) is on with
             // the calm / caution limit; all (research) keeps every phase (the behaviour of design 7.16).
