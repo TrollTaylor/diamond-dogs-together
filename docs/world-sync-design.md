@@ -955,6 +955,36 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     +0.6 ms); `step=cost` avg 0.05 (host) / 0.15 (guest) ms per tick, max 2-3 ms (os.clock's 1 ms step).
   - Report: 0 latches / faults / game overs / drive_sank; M3 host p50 1.67 / p90 4.96 m; corrections 16/33.
   - Frames k-5 / k-6 (both binoculars west at the stop): rock and terrain, no truck in view on either screen.
+- **Session 2** `801cd90b` (`lrrp_follow=1`, a0d3f1dd; the same parts; all passed; first frames in gameplay) [O]:
+  - Truck error while followed p50 0.17 / p90 0.61 / max 4.62 m (708); 25606's seated crew p90 0.53 m; jumps within
+    400 m of the guest: 0; 0 latches / faults / game overs / drive_sank.
+  - 0 trucks moving with the host's crew aboard and the guest's copy empty (round 8 and session 1: 25606 for 123-191 s):
+    398 `crew_wait` lines for 25606. But its guest crew got out 66 s after the host's (5 s after the host's crew had boarded
+    again) and did not board in the rest of the run (~110 s): on the guest's PC that truck and its crew stayed at the
+    stop (-1643, 880) while the host's drove on.
+  - Crews 20-40 s after the host's get-out (step=crew on both copies, interpolated): 25605's 2305481811 p90 25.3 m and
+    3970963356 p90 42.3 m (the guest's copies still in the guest's own, deferred truck: they got out 51-70 s after the
+    host's); 25606's two 9.3 / 10.9 m (the guest's copies still seated in the pinned truck, the host's on foot).
+  - 25605's riders p90 427 m (deferred approach, as session 1); guest place error p90 13.32 m (these two guards),
+    corrections 13/23 (10 `vehicle_local`), M3 host p50 1.97 / p90 7.54 m.
+  - Frame proxy p95 on / off / on: host 23.8 / 23.3 / 22.2, guest 24.4 / 25.6 / 22.7 ms (session 1 24.4 / 22.7 / 23.3 on
+    both): within 2 ms of the off window (4 samples of 10 s each per window); `step=cost` avg <= 0.13 ms per tick.
+  - Frames k-8 (both binoculars aimed at 3970963356): the host's view SW with guard markers 38-95 m, the guest's W at a
+    rock: the rider is not in the same direction on both screens [I], no truck in view.
+- **Gate** (Afghanistan; Africa 30020 not run: seed `africa-jeep` exists and `enemy-lrrp-africa.txt` is ready) [O]: PASS
+  truck error while moving, no jump within 400 m, 0 driving empty on one screen (session 2), 0 latches / faults / game
+  overs, frame time (weak); FAIL riders within 8 m while seated (25605, deferred near the guest), crews within 5 m 20 s
+  after the get-out (9-42 m), the guest's crew boarding when the host's does (it boards on its own clock or not at all).
+  `lrrp_follow` stays off unless named.
+- **What blocks it** [O unless marked]: the guest's crews run their own LRRP clock and no command tried moves it:
+  `SetRelativeVehicle{rideFromBeginning=true}` seats nobody mid-mission (40 tries), `UnsetRelativeVehicle` shows no effect
+  apart from the crews' own get-out, `StartTravel ""` (round 8) gets them out but ends the plan. Near the guest the truck
+  waits (no visible jump), so the truck the players see is still the guest's own, ~72 s late, as in 0.15.2.
+- **Next**: (1) find the soldier's LRRP step in the exe (the travel plan cursor of SetLrrp / StartTravel) and set the
+  guest copy's to the host's at the pairing and at each get-out / boarding, instead of commanding seats; or (2) put the
+  guest's crew under the M1..M6 corrections as host-owned on foot for 60 s after the host's get-out (P.ownerOf from this
+  chunk) and seat them with the vehicle's own get-in action; (3) a jump hidden by the camera (outside the 100-degree view,
+  60 m+) instead of waiting within 400 m; then run `enemy-lrrp-africa.txt`.
 
 ### 8. Soldier transforms (W6)
 
