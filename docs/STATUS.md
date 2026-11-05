@@ -1,3 +1,33 @@
+## November 5, 2026: horse BODY0, a downed player's own body on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new at the defaults: the M2 gate did not pass in this round's four proof attempts, so
+`world_horse_cargo` stays off unless named (lab and play). With `world_horse_cargo=1` on both PCs it is now close: the
+downed partner lies across the horse's back on both screens while you walk, trot and gallop (play rides of 84-164 m),
+stays on when you get off, and the take-down and revive work; on the downed player's own screen they crouch on the horse
+once the carrier has got off (still down, still on the horse). Details: `docs/mounts.md` section 11. Markers [O]/[I]/[U].
+
+- **Built:** `native/horse_body_watch` (hardware write watches on the held body's transform on every thread, a first
+  vectored handler that records the writers and pins the body back to its target after the physics update; no code
+  patch; the contract pins T.vt+0x58), `hold0` / new `hold1` with reset 14 (C0 + watch + pin), `free0`, world_horse_cargo
+  holding body 0 on the victim's copy and body 1 on the carrier's, the Lua Warp only when the native has no hold, no ride
+  hold for the cargo; `pillion_pose` modes 3 and 6. Static [O]: Warp's C0 reset sets bit 0x20 of the 0x580 record's
+  +0x2C0, read only by C0.vt+0xD0 0x14128E010 ("no fall" for that frame), the pose fix; the A0 reset re-applies the
+  stance and drops the body.
+- **Found [O, run `911ce293`]:** what moves body 0 after the script tick: T's update 0x141AD2900 (called at 0x140B6C3CE)
+  writes the foot and centre at 0x141AD1F5E / 0x141AD1F7E right after the hold's own T.vt+0x58 write.
+- **Proven** (both logs, both role orders, frames looked at; lab and play `-WanSim bad`; runs `911ce293`, `dd0cd5d7`,
+  `144d99bb`, `7117d3ac`, `4585cc5a`): load, the first E mounting with the body on, lying on the horse on both screens at
+  walk / trot / gallop, the body kept on after the dismount, the R take-down at the same x,z on both copies, the revive,
+  the link drop laying them down on both (`144d99bb`), victim_pin lag 0 / drop 0, no horse knocked over during a ride
+  (`4585cc5a`, `7117d3ac`: no Unconscious line). M3 check `7c0b9e71`: with mode 6 the passenger squats on the horse behind
+  the driver on their own screen (seat_pin dy 0, was 1-2.3 m), no Unconscious line; the host-driven stall remains.
+- **What blocks the gate:** the downed player's own screen after the dismount (crouched on the horse, in both orders,
+  with or without the ride hold); the last lab session's (b) and link drop did not run (a placebehind fell through the
+  ground), and the lab (a) rides were 35-38 m.
+- **Next:** log body 0's action / posture words through the dismount on the victim's copy and keep the ridden height
+  while unridden; or the D-Horse cargo slot (route i, which the user now allows) for the engine's carried pose; then
+  M3 with mode 6 as its default.
+
 ## November 5, 2026: enemy gaps 2 - the stream's reach and the realize hold (`place_reach`) and dead body placements (`body_dead`): built, both off unless named (`wp/enemy-m7`, not merged, not pushed)
 
 The enemy5 gaps step: the M1-M6 gaps players still see (reinforcements far off, dead bodies apart, the M3 host gates,
