@@ -2313,6 +2313,13 @@ int main() {
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=0\n").body_dead &&
                   Lab("enabled=1\nrole=host\nbody_dead=2\nplace_reach=x\n").invalid_values == 2,
                   "enemy gaps 2: body_dead and place_reach parse, both off unless named");
+            // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert (native only, no CFG bit) parses in lab and play and
+            // stays off unless named until a run shows no drive_sink with it.
+            Check(!def.drive_vert && !gunDefault.drive_vert && !gunDefault.drive_vert_given &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\ndrive_vert=1\n").drive_vert &&
+                  Lab("enabled=1\nrole=guest\ndrive_vert=0\n").drive_vert_given &&
+                  Lab("enabled=1\nrole=host\ndrive_vert=2\n").invalid_values == 1,
+                  "enemy gaps 3: drive_vert parses, off unless named");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a
