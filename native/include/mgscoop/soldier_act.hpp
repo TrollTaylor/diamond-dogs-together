@@ -131,6 +131,17 @@ bool Warp15(const float (&self)[3], const float (&entry)[3]) noexcept;
 inline constexpr float kPlanEndM = 1.0f;
 inline constexpr std::uint64_t kPlanCheckMs = 300;
 bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept;
+// Session 1 (run fcfb3acc: the planner *(S+0x30) has vtable 0x23a1610; read-only decompile of vt[0] 0x140fa2430): the
+// per-guard slot *(planner+0x48)+idx*0x10 is {u48 type hash, u16 handle +8, u16 counter +0xa, u16 done +0xc}; vt[0]
+// refuses (0xffff) a request whose type hash (move +0x70) differs from a non-zero slot hash. The request manager's move
+// hash (0x141372694) is kMoveHash. A slot his own brain's walk holds with a live handle is cancelled first (vt[0x10] with
+// that handle, the engine's cancel: the query and the slot); one with another type and no handle is left alone (busy).
+inline constexpr std::uint64_t kMoveHash = 0x2c505bab2efcull;
+enum class SlotStep { plan, cancel_then_plan, busy };
+SlotStep PlanSlot(std::uint64_t slot_hash, std::uint16_t slot_handle) noexcept;
+// When a puppet is released, the slot is still ours (kMoveHash) and its live handle is the one R+0x19c holds: cancel it,
+// so his brain's next walk is not refused.
+bool ReleaseCancel(std::uint64_t slot_hash, std::uint16_t slot_handle, std::uint16_t r19c) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
@@ -185,6 +196,9 @@ struct Counters {
     // path; near_wait = walkers not taken beyond kActTakeNearM of the owner copy (TakeNear).
     std::uint32_t plan, plan_skip, warp15, plan_ok, plan_far, plan_nopath, near_wait;
     std::uint32_t gait_up, plan_fault;  // gait_up: requests whose gait the catch-up raised; plan_fault: PlanStep faults
+    // plan_cancel: a slot of another type cancelled before the plan; plan_busy: another type with no handle (not planned);
+    // plan_none: 0x1413725f0 ran but the planner refused (R+0x19c 0xffff); plan_release: our handle cancelled at a release.
+    std::uint32_t plan_cancel, plan_busy, plan_none, plan_release;
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the

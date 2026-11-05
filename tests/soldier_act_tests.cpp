@@ -377,6 +377,29 @@ int main() {
               c::follower_reset == 0xd0 && c::r_handle == 0x19c && c::r_198 == 0x198 && c::r_dest == 0x80 && c::path_points == 0x8 &&
               c::path_count == 0x20,
           "the planner contract");
+    // Session 1 (run fcfb3acc: the planner's vtable 0x23a1610; read-only decompile of its vt[0] 0x140fa2430): the per-guard
+    // slot *(planner+0x48)+idx*0x10 {u48 type hash, u16 handle, u16 counter, u16 done}; vt[0] refuses (0xffff) a request
+    // whose type hash differs from a non-zero slot hash, so a slot his own brain's walk holds is cancelled first (vt[0x10]
+    // with that handle, the engine's own cancel), and a slot of ours is cancelled when he is released.
+    {
+        Check(sa::kMoveHash == 0x2c505bab2efcull, "the request manager's move type hash (0x141372694)");
+        Check(sa::PlanSlot(0, 0xffff) == sa::SlotStep::plan && sa::PlanSlot(0x2c505bab2efcull, 0x0012) == sa::SlotStep::plan &&
+                  sa::PlanSlot(0xabcd2c505bab2efcull, 0x0003) == sa::SlotStep::plan,
+              "slot: free or ours (low 48 bits) -> plan");
+        Check(sa::PlanSlot(0x1234567890abull, 0x0007) == sa::SlotStep::cancel_then_plan, "slot: another type with a live handle -> cancel it, then plan");
+        Check(sa::PlanSlot(0x1234567890abull, 0xffff) == sa::SlotStep::busy, "slot: another type, no handle -> left alone (busy)");
+        Check(sa::ReleaseCancel(0x2c505bab2efcull, 0x0012, 0x0012) && !sa::ReleaseCancel(0x2c505bab2efcull, 0x0012, 0x0013) &&
+                  !sa::ReleaseCancel(0x1234567890abull, 0x0012, 0x0012) && !sa::ReleaseCancel(0x2c505bab2efcull, 0xffff, 0xffff),
+              "release: cancel only our live handle that R+0x19c still holds");
+        sa::Counters k{};
+        k.plan_cancel = 4; k.plan_busy = 1; k.plan_none = 2; k.plan_release = 3;
+        char line[900]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) && std::strstr(line, "; plan_cancel=4; plan_busy=1; plan_none=2; plan_release=3"),
+              "the frame line prints plan_cancel / plan_busy / plan_none / plan_release");
+        Check(c::planner_vtable_rva == 0x23a1610 && c::planner_slots == 0x48 && c::planner_records == 0x40 && c::planner_record_stride == 0xf0 &&
+                  c::planner_valid == 0x18,
+              "the planner layout");
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");

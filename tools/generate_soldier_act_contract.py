@@ -252,6 +252,44 @@ SITES = [
         (0x1354A10, 'mov', 'al, 1'),
         (0x1354A23, 'cmp', 'byte ptr [r8 + 0x2a8], cl'),
     ], 'owner test (S, idx): 1 offline (S+0x2a4 bit 2 clear), so dest mode 2 does not plan offline either'),
+    # Session 1 (run fcfb3acc): the planner *(S+0x30) has vtable 0x23a1610 (the follower pair's object too).
+    expect(0xFA2430, 0x86, [
+        (0xFA2451, 'mov', 'rsi, r8'),
+        (0xFA2454, 'movabs', 'r9, 0xffffffffffff'),
+        (0xFA2463, 'mov', 'rax, qword ptr [r8 + 0x70]'),
+        (0xFA2467, 'imul', 'rbx, rbx, 0xf0'),
+        (0xFA246E, 'add', 'rbx, qword ptr [rcx + 0x40]'),
+        (0xFA247F, 'mov', 'eax, 0xffff'),
+        (0xFA2499, 'mov', 'r15, qword ptr [rcx + 0x48]'),
+        (0xFA24A3, 'mov', 'rcx, qword ptr [r15 + r14*8]'),
+        (0xFA24AC, 'cmp', 'rcx, r8'),
+        (0xFA24B1, 'mov', 'eax, 0xffff'),
+    ], 'planner vt[0] (planner, idx, move): refuses a type hash (move +0x70, low 48 bits) other than the slot\'s *(planner+0x48)+idx*0x10; records +0x40 stride 0xf0'),
+    expect(0xFA23A0, 0x6C, [
+        (0xFA23B2, 'call', 'qword ptr [rax + 0x18]'),
+        (0xFA23C7, 'imul', 'rdi, rdi, 0xf0'),
+        (0xFA23CE, 'add', 'rdi, qword ptr [rsi + 0x40]'),
+        (0xFA23D2, 'test', 'byte ptr [rdi + 0xe0], 1'),
+        (0xFA23E4, 'call', 'qword ptr [rax + 8]'),
+        (0xFA23F0, 'call', 'qword ptr [rax + 0x10]'),
+        (0xFA2403, 'mov', 'eax, 0xffff'),
+        (0xFA2408, 'add', 'rbx, qword ptr [rsi + 0x48]'),
+    ], 'planner vt[0x10] cancel (planner, idx, handle): only a handle vt[0x18] accepts; cancels the query, clears the slot'),
+    expect(0xFA2350, 0x22, [
+        (0xFA2355, 'cmp', 'r8w, ax'),
+        (0xFA235B, 'mov', 'rax, qword ptr [rcx + 0x48]'),
+        (0xFA2364, 'cmp', 'r8w, word ptr [rax + rdx*8 + 8]'),
+    ], 'planner vt[0x18] (planner, idx, handle): the handle is the slot\'s +8'),
+    expect(0xFA2150, 0x28, [
+        (0xFA215C, 'add', 'r8, qword ptr [rcx + 0x48]'),
+        (0xFA2160, 'movzx', 'ecx, word ptr [r8 + 8]'),
+        (0xFA216F, 'cmp', 'word ptr [r8 + 0xc], cx'),
+    ], 'planner vt[0x90] has a path (planner, idx): the slot\'s handle is live and done (+0xc)'),
+    expect(0xFA2E60, 0x19, [
+        (0xFA2E60, 'mov', 'rax, qword ptr [rcx + 0x40]'),
+        (0xFA2E67, 'imul', 'r8, r8, 0xf0'),
+        (0xFA2E6E, 'movss', 'dword ptr [r8 + rax + 0xd0], xmm2'),
+    ], 'planner vt[0xd0] (planner, idx, float): record +0xd0 = the float (10.0 from the walk-request start)'),
 ]
 
 # (vtable rva, slot offset, expected target rva, description). Data qwords are absolute (no relocations).
@@ -262,6 +300,13 @@ SLOTS = [
     (0x23E9638, 0x08, 0x1381660, 'action codec vtable +0x08 = pack B'),
     (0x23E9638, 0x10, 0x13815B0, 'action codec vtable +0x10 = unpack A'),
     (0x23E9638, 0x18, 0x13815E0, 'action codec vtable +0x18 = unpack B'),
+    (0x23A1610, 0x00, 0xFA2430, 'planner vtable +0x00 = plan (session 1, run fcfb3acc)'),
+    (0x23A1610, 0x10, 0xFA23A0, 'planner vtable +0x10 = cancel'),
+    (0x23A1610, 0x18, 0xFA2350, 'planner vtable +0x18 = handle valid'),
+    (0x23A1610, 0x20, 0xFA1CC0, 'planner vtable +0x20 = the follower pair'),
+    (0x23A1610, 0x90, 0xFA2150, 'planner vtable +0x90 = has a path'),
+    (0x23A1610, 0xA0, 0xFA1ED0, 'planner vtable +0xa0 = the path'),
+    (0x23A1610, 0xD0, 0xFA2E60, 'planner vtable +0xd0 = record +0xd0 float'),
 ]
 for table, offset, target, description in SLOTS:
     value = q(table + offset)
@@ -327,6 +372,11 @@ lines = [
     'inline constexpr std::size_t s_planner=0x30, planner_plan=0x0, planner_cancel=0x10, planner_follower=0x20, planner_mode=0x38;',
     'inline constexpr std::size_t follower_has=0x90, follower_ready=0x98, follower_path=0xa0, follower_progress=0xa8, follower_reset=0xd0;',
     'inline constexpr std::size_t r_dest=0x80, r_198=0x198, r_handle=0x19c, path_points=0x8, path_count=0x20;',
+    '// Session 1 (run fcfb3acc): the planner\'s vtable; its slots +0x48 + idx*0x10 {u48 hash, u16 handle +8, counter +0xa,',
+    '// done +0xc}, records +0x40 stride 0xf0; vt[0x18] (planner, idx, handle) handle valid.',
+    'inline constexpr std::uintptr_t planner_vtable_rva=0x23a1610;',
+    'inline constexpr std::size_t planner_slots=0x48, planner_slot_stride=0x10, planner_records=0x40, planner_record_stride=0xf0,',
+    '                             planner_valid=0x18, slot_handle=0x8, slot_done=0xc;',
 ]
 for n, (rva, size, description) in enumerate(SITES):
     lines.append(f'// {description}')

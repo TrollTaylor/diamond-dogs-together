@@ -263,6 +263,9 @@ bool Warp15(const float (&self)[3], const float (&entry)[3]) noexcept {
     return dx * dx + dy * dy + dz * dz > 225.0f;  // 0x142329c00
 }
 
+SlotStep PlanSlot(std::uint64_t, std::uint16_t) noexcept { return SlotStep::busy; }
+bool ReleaseCancel(std::uint64_t, std::uint16_t, std::uint16_t) noexcept { return false; }
+
 bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
     const float dx = end[0] - dest[0], dy = end[1] - dest[1], dz = end[2] - dest[2];
     return dx * dx + dy * dy + dz * dz <= kPlanEndM * kPlanEndM;
