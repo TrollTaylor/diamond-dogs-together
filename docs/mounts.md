@@ -438,6 +438,61 @@ the shared D-Horse of section 10. It reaches the carry only through the existing
     moving horse for a second or more at a time (Lua Warp), or with the horse but in the airborne pose (hold0).
   - **Gate not passed:** the downed player's own view of their body on the horse.
 
+## 12. Ride behind your partner (horse plan M3, lab key `world_horse_pillion`, off unless named)
+
+`lua/coop/world_horse_pillion.lua` (a world chunk after `world_horse_share.lua`) seats a second player behind the
+partner who rides the shared D-Horse of section 10. Not finished: the gate did not pass (round 1, four attempts).
+- **Claim.** On foot within 2.5 m of the horse the partner rides on this copy (world_horse_share's track), an E edge claims
+  the rear seat. The ride hold masks ACTION there (probe P5), so E is read before the pad masks:
+  `MGS_COOP_HORSE_DRIVE_V1 pad <mission> <epoch>` returns the PlayerPad held word's E without `& ~PP+0x28`
+  (`(src+0x48 ?: PP+0x460) & 0x20`, `horse_drive::RawAction`; partner_player `ReadPad`, no new site). HORSE_SEAT (0x50,
+  `world-sync-protocol.md` section 32) seat 1: a guest's CLAIM is granted while the host rides the shared horse (else
+  DENY `not_riding` / `busy` / `locked`); the host's own press beside the guest's ride commits at once (GRANT with cause
+  passenger) and holds a 3 s press lock against a guest claim. KEEP at 1 Hz both ways; 3.5 s without it ends the seat.
+- **Passenger's copy.** Pad mask `MgsCoopPillion` (buttons 0xFFFFFFA7: everything but aim, fire and reload; the move
+  stick; the camera stays free), SQUAT, and body 0 every frame 0.35 m behind and 0.8 m over the placed census root
+  (world_horse_share calls `W.horsePillion.placed` right after each placement), by `hold0` with the A0 reset (the
+  pillion key admits hold0). Lab lever (debug_rules.lua, lab only): `pillion_pose <back> <rise> <mode 0|2|4|5> <dback>
+  <dup> [seat 0|1]` (mode 4 the Lua Warp, 5 both; seat 0 asks the driver's copy for no overlay seat, carried in the
+  CLAIM's and KEEP's cause).
+- **Driver's copy.** Every tick `MGS_COOP_HORSE_DRIVE_V1 seat1 <mission> <epoch> <back_mm> <up_mm> <pose 0|1>` (only
+  while this copy's player rides the shared horse) leases 300 ms on the partner driver's clock; the partner driver then
+  replaces body 1's pose with `horse_drive::RearSeat` of this copy's own body 0 (0.45 m behind, 0.3 m over its root, its
+  yaw) and, with pose 1, the DM overlay seats it (`partner_dm_overlay` In::pillion: stateRideOnIdle whatever the remote's
+  act, also when body 1 already shows it). Lines `partner_pillion=seat / end`, `horse_drive=seat1`.
+- **Endings.** E held 0.3 s again (after a release) hops off on the horse's left (run `ba6b4bb5`: a one-frame raw E at the
+  driver's space press ended a ride); the driver getting off (`driver_off`), the ride's end on the passenger's copy
+  (`track_end`), a census change, no KEEP (`stream_lost`), a downed passenger, unpairing or a context change lay the
+  passenger 1.3 m beside the horse at its claim-time ground offset. Travel / Bring partner here wait while seated.
+- **Ride hold.** With the pillion key the M1 hold shrinks from 4 m / 4.5 m to 2.5 m / 2.8 m (no second driver was seen
+  with an unmasked E about 3 m from the ridden horse in any run); without the key it stays 4 m (no pickup or revive at
+  3 m was shown: the `step=e_free` line, read from the downed poll, never logged).
+- **Not built.** The same-moment E tie at an unridden horse (the host drives, the guest behind): there is no local
+  dismount request (no Lua command, no named get-off code; M5's request by code at vt+0x190 is the lead).
+- **Log lines** (`world_lua=event=horse_pillion; ...`): `step=claim / grant / deny / denied / seated; how=grant|host_press
+  / driver / seat1; ok=..;pose=.. / seat_pin` (lag and height against body 0's target, 1 s) `/ drive; moved_cm=..` (the
+  driver's ridden path, 2 s) `/ pad; e=..` (the raw E's changes) `/ unseated; seat=1; why=..; side=passenger|driver`.
+- **Hidden runs, round 1** (`horse-pillion.txt` lab, `horse-pillion-play.txt` play `-WanSim bad`, `-SaveSeed afgh-ledge`;
+  slim archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`): `ba6b4bb5` / `b48f897b` (attempt 1), `306525db` /
+  `c4428efa` (2), `bdd49a57` / `a295d660` (3), `718b6411` (4, lab). On both logs in both role orders: the claim, the
+  grant (host_press for the host), seated / driver, the seat1 lease, the overlay seat on body 1, the hop-off, both off when
+  the driver gets off; attempts 3 and 4 ran every scripted step. Frames: the driver's screen shows two riders on the horse
+  at walk, trot and gallop (body 1 seated right behind the rider; it floats at 0.7 m).
+- **What blocks the gate:**
+  - the passenger's own screen: body 0 is never seated. hold0 keeps it with the horse in xz (seat_pin lag 4-13 cm) but
+    1-2.3 m under its target (dy), on the ground beside the horse or crouched / airborne over its rear, at every height
+    tried (0.6 / 0.8 / 1.0 / 1.2 m) and with the Lua Warp (mode 4) or both (5).
+  - the passenger's copy's horse falls unconscious during the ride (obs `m=Unconscious id=6656` in every run, often near
+    the driver's space press; attempt 4 had no space press and it still fell), and the passenger's next E finds it down.
+  - with the host driving and the guest behind, the host's horse stands still under the ride keys for about 16 s, then
+    rides the same gait sequence after the keys are released (step=drive moved_cm 0 x8, then 2-31 m per 2 s), in lab and
+    play, in every attempt; with the guest driving it rides at once. Not the bodies' collision (0.7 m / 1.2 m clear of the
+    horse changed nothing) and not the overlay seat (attempt 4: the stall outlasted the seat's stop by 10 s) [U].
+- **Next:** the passenger's body needs the engine to carry it (the D-Horse cargo slot, rec+0x10 / +0x2DE, message
+  0x5167C60042B5 kind 1, is the native rear-seat anchor; the plan reads it only, so writing it needs the user) or a write
+  after the player's physics update (a new pinned hook); the host-driven stall needs the host's census rider index and its
+  pad words logged through the stall.
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed

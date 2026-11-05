@@ -1,3 +1,32 @@
+## November 5, 2026: horse M3, ride behind your partner (`wp/horse`; lab key `world_horse_pillion`, off unless named)
+
+**Players get:** nothing new at the defaults. The M3 gate did not pass in this round's four proof attempts, so
+`world_horse_pillion` stays off unless named (lab and play), and the M1 ride hold keeps its 4 m without it. Details:
+`docs/mounts.md` section 12.
+
+- **Built** (`lua/coop/world_horse_pillion.lua`, a new world chunk; HORSE_SEAT seat 1, no new op): beside the horse your
+  partner rides, E claims the rear seat (read before the pad masks by the new `MGS_COOP_HORSE_DRIVE_V1 pad` verb, since
+  the ride hold's ACTION mask hides E from the downed poll); the host grants, its own press commits under a 3 s press
+  lock; the passenger's copy masks the pad (the camera stays free), squats and holds body 0 on its placed horse's rear
+  seat every frame (hold0); the driver's copy leases the new `seat1` verb so the partner driver draws body 1 at the rear
+  seat of its own ridden horse, seated by the DM overlay (In::pillion); E held again hops off; the driver getting off, the
+  ride's end, a link drop, a downed passenger or a context change lay the passenger beside the horse. With the key the
+  ride hold shrinks to 2.5 m. Not built: the same-moment E tie (no local dismount request exists).
+- **Proven** (both logs, both role orders, lab and play `-WanSim bad`; runs `ba6b4bb5`, `b48f897b`, `306525db`,
+  `c4428efa`, `bdd49a57`, `a295d660`, `718b6411`): the claim, the grant (and the host's own press), seated / driver, the
+  lease and the overlay seat, the hop-off on both copies, both off when the driver gets off, the first E at an unridden
+  horse mounting before and after (attempts 3 and 4 ran every scripted step). Frames: the DRIVER's screen shows two riders
+  on the horse at walk, trot and gallop, the passenger seated right behind.
+- **What blocks the gate:** (1) the passenger's own screen: their body is never seated; it stays with the horse in xz
+  (4-13 cm) but 1-2.3 m low, on the ground beside it or crouched / airborne over its rear, at every height tried and with
+  the Lua Warp too; (2) the passenger's copy's horse falls unconscious during the ride in every run; (3) when the host
+  drives with the guest behind, the host's horse stands still for about 16 s under the ride keys and then rides the gait
+  sequence after release (not the collision, not the overlay seat; cause unknown). No pickup or revive 3 m from the
+  ridden horse was shown, so the shrunken ride hold is pillion-key only.
+- **Next:** carry the passenger's body by the engine (the D-Horse cargo slot is the native rear-seat anchor; writing it
+  needs the user, the plan reads it only) or write it after the player's physics update (a new pinned hook); log the
+  host's census rider index and pad words through the stall.
+
 ## November 4, 2026 (round 2): horse M2 finish, a downed partner on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
 
 **Players get:** nothing new at the defaults. The M2 gate did not pass in this round's four proof attempts, so

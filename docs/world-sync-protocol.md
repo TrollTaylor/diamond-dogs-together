@@ -2303,3 +2303,10 @@ the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
   victim_gone, 9 load_timeout, 10 busy, 11 call_away, 12 mid_revive.
 - A partner without the op skips it by its length (unknown_op): nothing is loaded. It replaces CARGO (0x2B, the offset
   prototype's stream), which no Lua sends any more.
+- Seat 1 (horse plan M3, lab key `world_horse_pillion`, docs/mounts.md section 12; `lua/coop/world_horse_pillion.lua`):
+  the generation field is the passenger's claim token. Claim (guest passenger, cause 1 = no overlay seat, a lab flag) ->
+  grant (cause 0) or deny (6 busy, 7 not_riding, 11 locked); the host's own press is a grant with cause 1 (passenger) that
+  the guest driver answers by driving, or with unloaded cause 7 when it does not ride. Keep (action 6) 1 Hz both
+  ways (the passenger's cause 1 = no overlay seat). Unloaded (action 5) ends it with the cause (1 passenger, 2 driver_off,
+  3 horse_lost, 4 stream_lost, 5 context, 8 passenger_downed, 10 track_end) and the passenger's lay-off point. Actions 4
+  (loaded) is not used on seat 1. No new op or field.
