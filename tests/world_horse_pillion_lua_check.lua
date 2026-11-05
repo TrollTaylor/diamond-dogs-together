@@ -129,8 +129,10 @@ local grant = lastSeat(h)
 check(grant and grant[5] == 2 and grant[6] == 0 and grant[7] == 1 and h.P.state == "driver", "the host grants (cause 0) and drives")
 check(h.logged("event=horse_pillion;step=grant;seat=1;token=1") and h.logged("step=driver;seat=1;how=grant"), "step=grant, step=driver")
 h.tick(33)
-check(#h.seats >= 1 and h.seats[#h.seats][1] == 450 and h.seats[#h.seats][2] == 0, "the driver leases seat1 450 0 every tick")
-check(h.logged("step=seat1;ok=1;back_mm=450;up_mm=0"), "step=seat1 ok")
+-- Run ba6b4bb5 (lab): body 1 at the driver's own root height was drawn on the ground beside the horse (pushed out of the
+-- horse) and the host's horse stood still under the ride keys until the passenger left: 0.3 m over the rider's root.
+check(#h.seats >= 1 and h.seats[#h.seats][1] == 450 and h.seats[#h.seats][2] == 300, "the driver leases seat1 450 300 every tick")
+check(h.logged("step=seat1;ok=1;back_mm=450;up_mm=300"), "step=seat1 ok")
 deliver(g, grant)
 check(g.P.state == "seated" and g.logged("step=seated;seat=1;how=grant;token=1"), "the guest is seated")
 local mask = g.masks[#g.masks]
@@ -140,8 +142,9 @@ check(g.stances[#g.stances] == 2, "the passenger squats")
 g.ride(1)
 local hold = g.holds[#g.holds]
 local pl = g.places[#g.places]
-check(hold and hold[1] == pl.x and hold[2] == pl.y + 600 and hold[3] == pl.z - 350 and hold[5] == 1,
-    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 0.6 m up), hold0 with the A0 reset")
+-- Run ba6b4bb5: body 0 0.6 m over the root stood on the ground 1-1.8 m under its target (seat_pin dy_cm 99-176): 0.8 m.
+check(hold and hold[1] == pl.x and hold[2] == pl.y + 800 and hold[3] == pl.z - 350 and hold[5] == 1,
+    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 0.8 m up), hold0 with the A0 reset")
 check(g.P.busy() and g.S.busy(), "seated: busy (Travel / Bring wait)")
 -- KEEP both ways at 1 Hz.
 local n0 = #g.tx
@@ -154,13 +157,19 @@ for _, t in ipairs(h.seatTx()) do if t[5] == 6 then deliver(g, t) end end
 for _, t in ipairs(g.seatTx()) do if t[5] == 6 then deliver(h, t) end end
 check(h.P.state == "driver" and g.P.state == "seated", "KEEP holds both sides")
 g.ride(10)
-check(g.logged("step=seat_pin;"), "step=seat_pin every 2 s")
--- Hop off: E pressed again, after a release.
+check(g.logged("step=seat_pin;"), "step=seat_pin every second")
+check(g.logged("event=horse_pillion;step=pad;e=1;"), "the raw E's changes are logged (capped)")
+-- Hop off: E held 0.3 s again, after a release (run ba6b4bb5: a stray raw E for a frame ended a ride at a gallop).
 g.e = false
 g.ride(1)
 g.e = true
 g.ride(1)
-check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=passenger;side=passenger;placed=1"), "E again: hop off")
+check(g.P.state == "seated", "a one-frame E does not hop off")
+g.e = false
+g.ride(1)
+g.e = true
+g.ride(8)
+check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=passenger;side=passenger;placed=1"), "E held 0.3 s again: hop off")
 local w = g.warps[#g.warps]
 check(w and w[1] == 0 and math.abs(w[2][1] * 1000 - (pl.x - 1300)) < 2, "laid on the horse's left (yaw 0: -x), body 0 warped once")
 check(g.masks[#g.masks][1] == "reset" and g.masks[#g.masks][2].settingName == "MgsCoopPillion" and g.stances[#g.stances] == 0,
@@ -288,7 +297,17 @@ chunk()
 g.W.handlers[OP]({1, 2, 1, 4, 0, 5, 1, 2, 3, 0})
 check(got and got[2] == 2, "seat 2 goes on to world_horse_cargo")
 -- The lab lever's pose bounds.
-check(g.W.horsePillion.setPose(350, 600, 4, 450, 0) and not g.W.horsePillion.setPose(350, 600, 3, 450, 0) and
-    not g.W.horsePillion.setPose(350, 600, 2, 1600, 0), "setPose: mode 0 / 2 / 4, bounds")
+check(g.W.horsePillion.setPose(350, 600, 4, 450, 0) and g.W.horsePillion.setPose(350, 800, 5, 450, 300) and
+    not g.W.horsePillion.setPose(350, 600, 3, 450, 0) and not g.W.horsePillion.setPose(350, 600, 2, 1600, 0),
+    "setPose: mode 0 / 2 / 4 / 5, bounds")
+-- Mode 5: hold0 with the A0 reset and the Lua Warp in the same frame.
+local m5h, m5g = fixture(), fixture({host = false})
+m5h.rides, m5h.horse.occupied = true, true
+m5g.ride(3); m5g.e = false; m5g.ride(1); m5g.e = true; m5g.ride(1)
+deliver(m5h, lastSeat(m5g)); deliver(m5g, lastSeat(m5h))
+m5g.P.setPose(350, 800, 5, 450, 300)
+local nh, nw = #m5g.holds, #m5g.warps
+m5g.ride(1)
+check(#m5g.holds == nh + 1 and #m5g.warps == nw + 1, "mode 5: hold0 and the Warp each frame")
 check(g.W.horsePillion.status():find("pillion;state=off;key=1;", 1, true) ~= nil, "status line")
 print("world_horse_pillion_lua_check: " .. checks .. " checks passed")
