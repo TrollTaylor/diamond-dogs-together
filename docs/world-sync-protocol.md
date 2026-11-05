@@ -2600,3 +2600,13 @@ crews keep their own clock (as section 42).
 - Guest: while steps for a truck arrived in the last 15 s, its crew is not unseated (no `UnsetRelativeVehicle`).
 - Lines: the guest's `step=follow` (and its riders line) 1 Hz while followed, 5 s at rest (were 4 Hz / 2 s); the host's
   `step=host` 4 Hz while its truck moves, 1 Hz manned at rest, 5 s empty.
+
+## 46. Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`; design 7.29)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native only, the puppet side, under `act_plan`.
+
+- `ACT_V1 q` (QueryFresh) no longer waits on `LegMatch` or the 10 m rule with `act_plan` (`leg_wait` / `near_wait` stay 0).
+- `soldier_act_plan` adds `tries` (rechecks, up to 4 at 300 ms); `ms` counts from the plan.
+- New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
+  planned puppet and at the end of a kept walk.
+- `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.

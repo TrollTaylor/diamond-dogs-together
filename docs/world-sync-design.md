@@ -1258,6 +1258,59 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
 - **Next**: hold a copy that is one step ahead for up to 20 s instead of setting it back; leave a guard whose host step
   never changes (the driver) alone; a pairing jump hidden from the guest's camera if the no-jump row allows it; Africa.
 
+#### 7.29 Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`)
+
+- **Why** (round 9, 7.26): 3 of 4 calm walkers were never taken (`leg_wait` 775, `near_wait` 53 in `226fc789`): walking at
+  take time, their copies were on another leg or more than 10 m off, and stayed 17-45 m off; 77785f31's five released
+  walkers stood 34-48 s: the release cancelled our plan and left the host copy's walk in R (guard 18: R+0x80 the host
+  copy's new caution walk 190 m away, R+0x19c 0xffff, slot empty, fh 0); 2-4 plans a run had no path yet at 300 ms.
+  The path step 0x141372b70 (decompiled, read only) acts only with (R+0x19e & 3) in {2, 3} and a follower path
+  (vt[0x90], vt[0xa0]); with no path it issues nothing, so a walk in R with no path never ends; at the path's end it
+  sets R+0x19e bit 2.
+- **Built** (native only, no CFG bit, no wire, no new contract site; under `act_plan`):
+  - `TakeWait(plan, leg, near)`: with `act_plan` a walker is taken whatever his leg or distance (the plan walks him onto
+    the host copy's path; beyond 15 m the take opens with the unpack's warp, `soldier_act_warp15 first=1`); without it
+    `LegMatch` as round 6. `TakeNear` stays for the record.
+  - `PlanCheckVerdict(path, end_near, tries)`: 300 ms after a plan and then every 300 ms up to 4 more times while the path
+    is missing or ends beyond 1 m of R+0x80; the last verdict is counted (`plan_ok` / `plan_far` / `plan_nopath`,
+    `recheck`; the `soldier_act_plan` line prints `tries`, `ms` from the plan). Only no path at all stops the hold.
+  - `PartialHolds(partial, self, end)`: a path whose last check ended beyond 1 m is held while he is more than 3 m (flat)
+    from its end; nearer, the next due re-apply plans again from where he stands.
+  - `ReleaseChoose(dm, r19e, slot, r19c)` at a release: a walk (dest mode 1) with our live plan is kept (`keep`); with no
+    handle, (R+0x19e & 3) == 2 and a free or own slot it is planned again (`replan`, the same shadow plan); not a walk:
+    our live handle cancelled as before (`cancel`); his brain's type in the slot: left alone. `ReleaseWalkStep` ends a
+    kept walk: `over` once R+0x19c or his slot no longer holds our handle (the engine's start of his brain's next request
+    cancelled it; an orphan of ours in his slot is cancelled), `finish` (our handle cancelled, R+0x19c 0xffff) after 2 s
+    stood within 1.5 m of R+0x80 or 180 s. Each step logs `soldier_act_release; step=keep|replan|replan_none|cancel|none|
+    finish|over|over_cancel`.
+  - The frame line adds `rel_keep`, `rel_replan`, `rel_end`, `recheck`; its buffer is 1024 bytes.
+- **Gate** (scaled to what a player can see at 95-300 m: 7.23's p50 1.0 / p90 2.5 m became p50 1.5 / p90 3.0 m, the frame
+  p95 + 0.5 ms became + 1 ms on capture-free seconds against the mirror-off part of the same run; per mirrored calm
+  walker with >= 20 moving samples): place error p50 <= 1.5 / p90 <= 3.0 m; >= 3 of the calm walkers in range mirrored;
+  15 m warps while a puppet <= 1 a run; 0 released guards frozen > 5 s; plans with the path end within 1 m >= 90 %
+  (rechecked); a matched host / guest frame pair of one mirrored guard walking; no ChangePhase started by a puppet; 0
+  faults / latches / game overs.
+- **Seen** (`15aa58cb`; docs/STATUS.md 2026-11-05 enemy round 10 track C): 4 of 4 calm walkers mirrored; 17 and 18 within
+  the gate (p50 0.55 / 1.18 m); plans 97.6 % within 1 m; 28 released walks kept (0 `finish`, 20 taken again within
+  about 1.5 s), 0 with round 9's freeze signature. Not reached: 5 released stands > 5 s (guard 246 29.9 s straight
+  after a keep release and 11.0 s after the mirror off, in calm); guard 15 leads by p50 3 m (the host copy walks the
+  route's line, the plan the straight line to the leg's end), guard 246's guest copy stood at the spot his 27.1 m take
+  warp put him (he walked 15 m and 28 m once released; cause [U]) and drew 2 held warps, frame p95 + 1.52 ms with 12
+  puppets, no matched frame pair. 5 take warps of 18-49 m (round 9: 1): `TakeWait` takes walkers at any distance. `689e654c` (spot A): 17 and 18 within the gate again, 246 walked
+  (1.57 / 3.13 m), 15 1.99 / 6.56 m; held warps 1; frame p95 + 0.20 ms on 20 s off / 20 s on with no capture; a matched
+  frame pair of guard 17 walking (`w17-2`); but 6 released stands of 10.5-26.2 s, 5 with no path: at the end of the
+  kept walk his brain set a new R+0x80 without a new request and planned nothing (guard 15, R+0x1a0 unchanged, R+0x19c
+  and slot cleared); guard 18 stood 20.1 s straight from a release with no walk (`step=none`, dm 0); 5 take warps of
+  18-49 m in calm and 5 at once (15.8-45.2 m) at the caution retake; 27 of 36 kept releases taken again within about
+  1.5 s. Mirrored 42-89 % of the host-moving samples per walker in both runs.
+- **Nits** (not fixed; `act_plan` only): `g_rel[]` / `g_planned[]` are not cleared on a mission or level change (a
+  reused index within 180 s could have a stale handle cancelled); `TakeWait`'s `take_near` is unused.
+- **Next**: plan a released copy's brain re-target that has no path (until his brain's own type shows in his slot); the
+  host copy's path on the wire (or a plan through the owner positions); no take of a copy that cannot walk; no far
+  take that opens with a warp in calm and no retake within 1.5 s of a release; clear the per-guard state on a mission
+  change; then one
+  named run, the flip per D-FM1 (a) and the no-key run.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
