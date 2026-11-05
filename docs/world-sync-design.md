@@ -522,11 +522,29 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   either copy. Failing rows in both: corrections applied 6/20 and 4/13 (`far` 5 / 6 and `vehicle_local` 8 / 3: the
   riders, 7.17 (a)), M3 host placements applied 3/11 and 9/12 (native `range` 8 / 3: a target more than 60 m from the
   nearer player, `near=host` [I: the guest's pose more than 1 s old]).
-- **Defaults**: `drive_vert` follows the gun profile since `617311eb`, `place_reach` since `617311eb` / `025fbb28`; a
-  named 0 opts out of either. No wire change: an older partner streams and drives within 60 m and ignores `b`.
-- **Not done**: the hold's retry ran once (no relays in `025fbb28`), so "lands within 8 s" rests on one hold [U for many];
-  `body_dead`'s stimulus; the riders' in-vehicle part (7.17); the guest discovered at 10 m crouched in calm (restrict
-  notice does not stop it, 7.14).
+- **The no-key run after the flips** `35d4074f` (both on by default then, d4d4cb65; join, quiet, integ-carry, alert): 0
+  latches, faults, game overs; guest place error p50 0.61 / p90 1.47 m (126); host M3 p50 1.09 / p90 2.67 m (940); the hold
+  [O]: host 39 holds (37 relayed, 2 backoff), 35 landed (30 by a drive step, 5 by a placement; 1.2-3.1 s, most 3.09 s,
+  i.e. at the 3 s backoff's end) and 4 timed out (within 2 s of each other mid-ALERT); guest 20, all landed (round 5: 8 of
+  26); two `drive_vert` snaps (2929558510, 2.41 m over and 1.84 m under). FAIL rows: `drive_sink` 1 and `place_sink` 1, the
+  host's copy of guest-owned 1179373153 about 150 m off: an M3 placement landed (`dy_m -0.01`, 329556708), a drive step
+  relayed 19 ms later and the hold force-realized him, 2 s later he stood 3.73 m lower (`place_sink`, moved 0.4 m), the
+  next landed drive step (329559830, 2.63 m planar, so a moving step at his target's y) logged him 5.10 m under, and 2 s
+  later the guest's sample still had him 5.4 m over the host's copy; a 10.5 m `fall` correction followed at 329630983.
+  [I] a copy realized far from the host's player drops through a floor whose collision that PC has not loaded (the same
+  `place_sink` came at the defaults in `41f2b07f`, without the hold); whether the force-realize causes it is [U]. Also
+  corrections applied 15/33 (`unrealized/backoff` 12: samples arriving inside the backoff) and M3 host placements 43/70
+  (unrealized 27). Frames looked at: c-b (the sleeping guard by the guest's character on both screens), al-9 (both alive).
+- **Defaults**: `drive_vert` follows the gun profile since `617311eb` / `025fbb28` (a named 0 opts out). `place_reach`
+  is off unless named again (6eb410a7 red, then green): its no-key run failed the `drive_sink` row. No wire change: an
+  older partner streams and drives within 60 m and ignores `b`. No run used the final head itself (place_reach off,
+  drive_vert on): `35d4074f` ran drive_vert unnamed with place_reach on [I: drive_vert's path is the same].
+- **What blocks place_reach and what to try next**: (1) the far-copy drop: after a landed placement of a copy 100-160 m
+  from this PC's player, read its y back at 2 s (as `P.sinkTick`) and, when it dropped more than 1.5 m under the owner,
+  place it again at the owner's y (or skip the force-realize beyond ~120 m); (2) a drive refusal clears a held
+  placement's pending retry (`P.hold` sets `r.c = c`, nil for a drive step): keep the placement (`r.c = c or r.c`);
+  (3) then one run with place_reach named, then the no-key run. Also not done: `body_dead`'s stimulus; the riders'
+  in-vehicle part (7.17); the guest is discovered at 10 m crouched in calm (restrict notice does not stop it, 7.14).
 
 ### 8. Soldier transforms (W6)
 

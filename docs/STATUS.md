@@ -1,3 +1,63 @@
+## November 5, 2026: enemy gaps 3 - a guard a storey off his copy is put back (`drive_vert` on); `place_reach` matched its frames but stays off (its no-key run failed the drive_sink row) (`wp/enemy-m7`, not merged, not pushed)
+
+Track A of the enemy6 round (design 7.18, protocol 35). Markers: [O] seen in a log line or a frame, [I] inferred, [U]
+unknown. Three hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge: `617311eb`
+(`place_reach=1, drive_vert=1`), `025fbb28` (`place_reach=1`; `drive_vert` at its new default) and `35d4074f` (no key
+named, at d4d4cb65, where both were on by default). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: one fix, on by default with the gun profile (`drive_vert`; a named 0 opts out):
+  - [O] a guard standing on a wall, a roof or a ledge on one screen is no longer left a storey off on the other: eight
+    copies 1.8-5.8 m above or below their target at 0.1-1.2 m planar were put on it (`world_drive=vert`, all landed:
+    1 / 5 / 2 in the three runs). At the defaults `6348f361`, `41f2b07f`, `31a799e3` and `b77e2104` each had such a
+    copy left 2.2-3.3 m under (`drive_sink`); `617311eb` and `025fbb28` had none. `35d4074f` had one `drive_sink` of a
+    different kind (below).
+  - `place_reach` (the guards the guest fights 60-160 m from the host stand where the guest's screen has them) stays
+    off unless named: [O] its frames now match, but its no-key run failed the `drive_sink` row.
+- **place_reach, the frames** [O, looked at]: from the ground point (488.53, 268.24, 2206.17) the host's binoculars on
+  guest-owned 1740692850 (`aim_ent`) show his body at the crosshair beside the guest's character 107.6 / 109.2 m away,
+  while the guest's crosshair is on him 5.1 / 10.1 m away (his legs; the analyzer's "Soviet Soldier") (`617311eb` /
+  `025fbb28` w-b; calm); the two aim readouts put the copies 0.11 / 1.40 m apart (w-a 1.00 / 1.38 m, w-c 0.57 / 0.68 m:
+  there the host's body is beside the crosshair or only his marker shows). The host's place error for the guest-owned
+  guards p90 2.5 / 1.99 / 2.67 m (`798b51dd` without the key 6.97 m).
+- **place_reach, what blocks it** [O]: in `35d4074f` the host's copy of guest-owned 1179373153, about 150 m away, landed
+  an M3 placement (`dy_m -0.01`), the next drive step relayed and the hold force-realized him, 2 s later he stood 3.73 m
+  lower (`place_sink`), at the next landed drive step 5.10 m under his owner (`drive_sink`, 2.63 m planar), 2 s later
+  still 5.4 m under the guest's sample; a 10.5 m `fall` correction followed 70 s later. [I] a copy realized far from the
+  host's player drops through a floor that PC has not loaded (a `place_sink` like it came at the defaults in `41f2b07f`,
+  without the hold); [U] whether the force-realize causes it. Next: read a far copy's y back 2 s after a placement and
+  place him again at the owner's y (or no force-realize beyond ~120 m), keep a held placement's retry when a drive step
+  is refused (`r.c = c or r.c`), then one named run and the no-key run.
+- **The realize hold** [O]: `3c9d1250`'s 14 host drive holds had all "timed out" only because a landed drive step never
+  released one (every relay `streak=1`: each guard moved between relays), and a backoff refusal never got one. Now a
+  relayed or backoff placement or drive step holds the guard, the receipts name the ms left of his backoff (`b`), a held
+  drive step waits for its end, a held placement is queued again then, and a landed drive step releases him. `35d4074f`:
+  host 39 holds, 35 landed (most 3.09 s after the hold: the 3 s backoff's end), 4 timed out; guest 20 of 20 landed
+  (round 5: 8 of 26); `617311eb` 1 of 1; `025fbb28` had no relay.
+- **drive_sink at the defaults, the cause** [O code + logs]: the soft follow's rest test is planar (a copy at rest moves
+  only beyond 1.5 m) and its y is set only on a moving step, so a copy within 1.5 m but a storey off its target was never
+  moved, and M1 / M3 corrections skip a driven guard; every such `drive_sink` had 0.14-1.05 m planar. [O frame]
+  `b77e2104` guest al-2: the guest's own copy of 2929558510 stood on top of a wall about 5 m over the guest. Fix:
+  `drive_vert` (native only, no CFG bit): a copy at rest more than 1.5 m above or below the target for 1 s is put on it.
+- **Failing rows** (every run): `617311eb` GAME OVER: in the watch part 1740692850 discovered the guest 6 m from him
+  after w-c, the CP's ALERT began 10 s before the ALERT part, the guest was downed 6 s into it and the host 93 s later
+  (the mod's shared game over, MISSION FAILED on the guest; the report counted 0 and now counts `step=shared_game_over`
+  / `game_over_applied`); the watch keeps the guest 10 m off and crouched since, and he was discovered again in
+  `025fbb28` (no downs). `35d4074f`: `drive_sink` 1, `place_sink` 1 (above). Corrections applied 6/20, 4/13, 15/33 (`far`
+  and `vehicle_local`: the LRRP riders, 7.17 (a); in `35d4074f` `unrealized/backoff` 12); M3 host placements applied
+  3/11, 9/12, 43/70 (native `range` 8 / 3: a target over 60 m from the nearer player, in `025fbb28` each within 1 s after
+  a guest goto; `unrealized` 27 in `35d4074f`); `025fbb28` guest place error max 350 m (the riders).
+- **Frames I looked at**: w-a / w-b / w-c on both copies of `617311eb` and `025fbb28`; `617311eb` guest al-4 (MISSION
+  FAILED); `35d4074f` c-b (the sleeping guard by the guest's character on both screens) and al-9 (both alive).
+- **Not shown**: no run used the final head (place_reach off, drive_vert on): `35d4074f` ran drive_vert unnamed with
+  place_reach on [I: drive_vert's path is the same within 60 m].
+- **Built** (red first each time): the hold's backoff retry, `b`, `drive_vert` (32f1cdc0 red, d470f1ec green), drive_vert
+  on by default and the report's game-over patterns (61470582 / cdfc3651), place_reach on (3255e43f / 61965742) and back
+  off (6eb410a7 / green); scenario `enemy-reach-watch.txt`; scratch `aimpos.py` (where each copy's aim target stood).
+  No wire change, no CFG bit.
+- **Checks**: full `tools/build.ps1 -Jobs 4` 355/355 at each green; every `generate_*_contract.py --check` identical to
+  the merge head (known failures only).
+
 ## November 5, 2026: enemy gaps 2 - the stream's reach and the realize hold (`place_reach`) and dead body placements (`body_dead`): built, both off unless named (`wp/enemy-m7`, not merged, not pushed)
 
 The enemy5 gaps step: the M1-M6 gaps players still see (reinforcements far off, dead bodies apart, the M3 host gates,
