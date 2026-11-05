@@ -3084,10 +3084,13 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
 // Reply: {e=<error_cm>,s=<0 rest|1 step|2 hard>,r=<out>,h=<0|1>,v=<cm>} or {refused="<reason>"}; v (enemy gaps, the
 // Lua drive_sink check) = this copy's y minus the rendered target's y, in cm.
 namespace drive {
-struct SlotState { bool active; std::uint64_t last_ms; std::uint64_t vert_ms; std::uint64_t vert_win; unsigned vert_n; bool vert_stopped; };
+struct SlotState {
+    bool active; std::uint64_t last_ms; std::uint64_t vert_ms; std::uint64_t vert_win; unsigned vert_n; bool vert_stopped;
+    mgscoop::soldier_warp::OwnerRestY oy; bool vert_waited;  // enemy round 10 track A: the owner copy's rest in y
+};
 SlotState slots[mgscoop::world::kSnapSlots]{};
 std::uint64_t stats_at = 0;
-unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0, vert_stops = 0;
+unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0, vert_stops = 0, vert_waits = 0;
 }
 const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -3117,9 +3120,10 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const bool have = mgscoop::world_link::SnapPair(slot, now, cur, prev);
     if (!drive::stats_at || now - drive::stats_at >= 10000) {
         drive::stats_at = now;
-        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u; vert_stop=%u\r\n",
+        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u; vert_stop=%u; "
+                  "vert_wait=%u\r\n",
                   drive::calls, drive::steps, drive::hard, drive::rest, drive::stale, drive::refused, soldier_warp_gate.anomalies,
-                  drive::vert, drive::vert_stops);
+                  drive::vert, drive::vert_stops, drive::vert_waits);
     }
     if (!have) { ++drive::stale; return refuse("stale"); }
     sw::DriveSample a{}, b{};
@@ -3139,6 +3143,22 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     // Enemy gaps 3 (drive_vert, design 7.18): the soft follow also moves a copy at rest in x/z that stood more than 1.5 m
     // above or below the target for 1 s onto the target's spot (s=3; drive_sink at the defaults).
     bool vert = labc.drive_vert && !mirror && !puppet && sw::DriveVertDue(target[1] - here[1], now, st.vert_ms);
+    // Enemy round 10 track A (design 7.27): only while the owner copy is at rest in y (the rendered target within 0.2 m
+    // for 1 s; round 7's snaps chased an owner on stairs or a ladder); a due snap waits for it, logged once per due spell.
+    const bool owner_rest = sw::OwnerYAtRest(target[1], now, st.oy);
+    if (!st.vert_ms) st.vert_waited = false;
+    if (vert && !owner_rest) {
+        vert = false;
+        if (!st.vert_waited) {
+            st.vert_waited = true;
+            ++drive::vert_waits;
+            if (drive::vert_waits <= 32)
+                LogFormat("world_drive=vert_wait; go=%u; slot=%u; gap_cm=%d; rest_ms=%llu; span_cm=%d\r\n", request.go_id,
+                          unsigned(slot), static_cast<int>((target[1] - here[1]) * 100.0f),
+                          static_cast<unsigned long long>(st.oy.valid && now >= st.oy.since_ms ? now - st.oy.since_ms : 0),
+                          static_cast<int>((st.oy.hi - st.oy.lo) * 100.0f));
+        }
+    }
     // Enemy round 7 track A (design 7.20): at most 2 snaps of a copy in 10 s (no thrash); the third due is logged once.
     if (vert && !sw::DriveVertAllow(now, st.vert_win, st.vert_n)) {
         vert = false;
@@ -3198,10 +3218,12 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
         st.vert_ms = 0;
         if (!st.vert_win || now - st.vert_win >= sw::kDriveVertWindowMs) st.vert_stopped = false;
         sw::DriveVertCount(now, st.vert_win, st.vert_n);
+        st.vert_waited = false;
         if (drive::vert <= 64)
-            LogFormat("world_drive=vert; go=%u; slot=%u; gap_cm=%d; e_cm=%d; r=%d; h=%u; n=%u\r\n", request.go_id, unsigned(slot),
-                      static_cast<int>((target[1] - here[1]) * 100.0f), static_cast<int>(step.error * 100.0f), result.out,
-                      unsigned(result.handled), drive::vert);
+            LogFormat("world_drive=vert; go=%u; slot=%u; gap_cm=%d; e_cm=%d; r=%d; h=%u; n=%u; rest_ms=%llu\r\n", request.go_id,
+                      unsigned(slot), static_cast<int>((target[1] - here[1]) * 100.0f), static_cast<int>(step.error * 100.0f),
+                      result.out, unsigned(result.handled), drive::vert,
+                      static_cast<unsigned long long>(st.oy.valid && now >= st.oy.since_ms ? now - st.oy.since_ms : 0));
     } else if (step.hard) ++drive::hard;
     else ++drive::steps;
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=%d,r=%d,h=%u,v=%d}", static_cast<int>(step.error * 100.0f),
