@@ -48,7 +48,7 @@ lrrp_follow on by default). Archives under `%USERPROFILE%\mgs-coop-run-archive\e
 - **Not done**: a crew that gets back in on the host's screen stays out on the guest's (25606 at 2 km); the unseat ends
   the guest copy's LRRP plan; Africa not run; the frame-time row. Incident: stopping my own red build left its CTest
   hung (0 CPU) with a live CTest-reader marker; the classifier refused Stop-Process, so I removed my own marker and renamed
-  three locked test exes in build/native to `*.stuck-70284`; the hung processes remain.
+  three locked test exes in build/native to `*.stuck-70284`; the hung processes have since exited.
 
 ## November 5, 2026: enemy round 7 track A - guards at the same height, the far fights: both gates not reached; `drive_vert` and `place_reach` stay off unless named (`wp/enemy-m7`, not pushed)
 
