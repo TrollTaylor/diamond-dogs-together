@@ -14,7 +14,8 @@ Three hidden play sessions over `-WanSim bad`, the gun profile, research build, 
   empty; a jump over 30 m waits while the guest stands within 400 m of either end, 5..30 m slides 1 m a frame; crew
   positions 1 Hz for 60 s after a seat change on both copies (`step=crew`), the module's cost (`step=cost`), and the lever
   `vehicle_state_status lrrp 0|1` for a key-off window in the same session. 99cf1044 / aed13563 / 43f25a8c red,
-  4f22843d / a0d3f1dd green.
+  4f22843d / a0d3f1dd green. Full build and CTest 355/355 at e57de763; every contract `--check` as round 8 (known base
+  failures only).
 - **Gate rows** (Afghanistan) [O]:
   - PASS truck error while followed: p50 0.16-0.17 / p90 0.57-0.61 m (1039 / 708 samples), |dy| p90 0.05 m.
   - PASS no truck jump within 400 m of the guest (0 in both; 25605 waited 13-22 times and jumped at 400-590 m).
