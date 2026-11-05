@@ -1,3 +1,9 @@
+# M2g attempt 2 (play bb7dde83: the carrier's rifle put the host's horse Unconscious before the load, the aim ray on
+# 6656, so the first E did not mount it): the victim stands 8 m behind the carrier at the horse and the carrier 4 m in
+# front of them, facing away from the horse.
+# M2g attempt 2 (lab f7e09c55: a guest capture refused mid-ride, sequence_expiry_or_busy, ended the session): single frames,
+# fewer of them (load, walk, trot, gallop, gallop4, stop, after the dismount, take-down, revive), and a riding leg
+# waits out its 1.5 s hold after its captures.
 # M2g: part 1 of 3 of the lab session (horse-cargo.txt, horse-cargo-b.txt, horse-cargo-drop.txt): order (a) only, the
 # host carrying the guest; (b) and the link drop are their own parts, each from the boot spot. world_horse_cargo is
 # named (off unless named); body 1 a quarter turn on the carrier's copy; cargo_relie 1 (the default) from the start.
@@ -59,14 +65,13 @@ logmark both
 # --- (a) the host downs and carries the guest, loads them on the horse.
 host run goto_horse
 wait 1000
-placebehind guest host 3 2
+placebehind guest host 8 2
 wait 2000
 stance host stand
 stance guest stand
-placebehind host guest 6 -0.7
+placebehind host guest -4 -0.7
 wait 3000
 guest debug godmode 0
-both capture h2-before
 host press 1 120
 wait 2000
 host hold rmb+lmb 1500
@@ -90,7 +95,6 @@ host run coop_carry_bodies
 host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
 host run goto_horse
 wait 1200
-host capture h2-carry-at-horse
 host hold e 900
 host release
 wait 3000
@@ -103,7 +107,6 @@ guest run cargo_status
 guest require cargo;state=cargo
 wait 1500
 both capture h2-loaded
-guest burst h2-loaded-victim 2 400
 # The host's first E mounts the loaded horse.
 logmark both
 host press e 150
@@ -112,31 +115,33 @@ host run horse_status
 host require localMounted=1
 # M2f: lab (a) rode 34-38 m in 911ce293 / 144d99bb / 47101768 (left turns into the rocks): the gallops go straight.
 waitlog guest 'world_lua=event=horse_share; step=placed;' 10
-host capture h2-mounted
-guest capture h2-mounted-victim
 host hold w 1500 nowait
-host burst h2-ride-walk 2 400
-guest burst h2-ride-walk-victim 2 400
+wait 300
+host capture h2-ride-walk
+guest capture h2-ride-walk-victim
+wait 600
 host hold w+a 1500 nowait
-host burst h2-ride-trot 2 400
-guest burst h2-ride-trot-victim 2 400
+wait 300
+host capture h2-ride-trot
+guest capture h2-ride-trot-victim
+wait 600
 host hold w+shift 1500 nowait
-host burst h2-ride-gallop 2 400
-guest burst h2-ride-gallop-victim 2 400
-host hold w+shift 1500 nowait
-host burst h2-ride-gallop2 2 400
-guest burst h2-ride-gallop2-victim 2 400
+wait 300
+host capture h2-ride-gallop
+guest capture h2-ride-gallop-victim
+wait 600
+host hold w+shift 1500
 host hold w+shift 1500
 host hold w+shift+d 1500
 host hold w+shift 1500 nowait
-host burst h2-ride-gallop4 2 400
-guest burst h2-ride-gallop4-victim 2 400
+wait 300
+host capture h2-ride-gallop4
+guest capture h2-ride-gallop4-victim
+wait 600
 host hold w+shift 1500
 host hold w+shift 1500
 host hold w+shift 1500
-host hold w+shift 1500 nowait
-host burst h2-ride-gallop6 2 400
-guest burst h2-ride-gallop6-victim 2 400
+host hold w+shift 1500
 host hold w+shift+d 1500
 host hold w+shift+d 1500
 host hold w+shift 1500

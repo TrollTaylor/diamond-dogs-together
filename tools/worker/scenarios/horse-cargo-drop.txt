@@ -1,3 +1,9 @@
+# M2g attempt 2 (play bb7dde83: the carrier's rifle put the host's horse Unconscious before the load, the aim ray on
+# 6656, so the first E did not mount it): the victim stands 8 m behind the carrier at the horse and the carrier 4 m in
+# front of them, facing away from the horse.
+# M2g attempt 2 (lab f7e09c55: a guest capture refused mid-ride, sequence_expiry_or_busy, ended the session): single frames,
+# fewer of them (load, walk, trot, gallop, gallop4, stop, after the dismount, take-down, revive), and a riding leg
+# waits out its 1.5 s hold after its captures.
 # Horse plan M2 (M2g): part 3 of 3 of the lab session (after horse-cargo.txt and horse-cargo-b.txt; worldtrigger is lab
 # only). From the boot spot the host carries the downed guest onto the shared horse again, the first E mounts, a walk and
 # a left trot (frames h2p-* on both screens), the stop, and the dismount with cargo_relie 1 (the default) from the start:
@@ -26,11 +32,11 @@ guest require cargo;state=off;key=1
 # --- (c) loaded again from the boot spot.
 host run goto_horse
 wait 1000
-placebehind guest host 3 2
+placebehind guest host 8 2
 wait 2000
 stance host stand
 stance guest stand
-placebehind host guest 6 -0.7
+placebehind host guest -4 -0.7
 wait 3000
 guest debug godmode 0
 host hold rmb+lmb 1500
@@ -69,11 +75,15 @@ host run horse_status
 host require localMounted=1
 waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 host hold w 1500 nowait
-guest burst h2p-walk 2 400
+wait 300
+guest capture h2p-walk
 host capture h2p-walk-carrier
+wait 600
 host hold w+a 1500 nowait
-guest burst h2p-trot 2 400
+wait 300
+guest capture h2p-trot
 host capture h2p-trot-carrier
+wait 600
 host release
 wait 2500
 both capture h2p-stopped
