@@ -560,6 +560,13 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.act_census);
         if (!ok) result.act_census = false;
     }
+    else if (Equals(key, "act_plan")) {
+        // Enemy round 8 track C (lab and play, native only, needs soldier_act); a named value records _given, an invalid
+        // one is named and off.
+        ok = ParseBool(value, result.act_plan);
+        result.act_plan_given = true;
+        if (!ok) result.act_plan = false;
+    }
     else if (Equals(key, "soldier_brain")) {
         ok = ParseBool(value, result.soldier_brain);
         result.soldier_brain_given = true;

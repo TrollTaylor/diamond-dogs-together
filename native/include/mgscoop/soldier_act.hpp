@@ -103,8 +103,61 @@ bool QuietBias(const float (&slot)[3], const float (&target)[3], float (&biased)
 bool FormatQuietLine(std::uint32_t go, std::uint16_t seq, unsigned moved, unsigned bias, float err_m, float dy_m, char* out,
                      std::size_t capacity) noexcept;
 
+// Enemy round 8 track C (docs/world-sync-design.md 7.23; native-only lab key act_plan, off unless named; no CFG bit, no
+// wire): the walk-request start 0x1413725f0 plans a path only for a FOB remote copy (S+0x2a4 bit 2 and the owner byte !=
+// S+0x2a8). Offline it only sets R+0x19e bit 1, and the path step 0x141372b70 drives the puppet along whatever path his
+// follower holds: his own brain's old one (the enemy7 C-fm1 plan, finding 1). With act_plan the hook, after the manager
+// update's original, calls 0x1413725f0 again for each puppet whose mode-1 request it applied this update, with a shadow
+// gate object, so the planner plans from where he stands to R+0x80 (the FOB life cycle: the next start cancels the
+// handle R+0x19c). Plan when: dest mode 1, R+0x19c holds no handle (0xffff), (R+0x19e & 3) == 2 (the offline start ran),
+// and the request was applied this update.
+bool PlanGate(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, bool applied_now) noexcept;
+// The shadow gate: 0x1413725f0 reads its first argument only at +0x70 -> S' (+0x2a4 bit 2 online; +0x2a8 this peer; +0x18
+// -> +0x18 the owner bytes, [idx] != +0x2a8 = a remote copy). BuildShadow links p -> s -> slots -> owner (all 1, peer 0).
+struct alignas(16) Shadow {
+    unsigned char p[0x80];
+    unsigned char s[0x2b0];
+    unsigned char slots[0x20];
+    unsigned char owner[kMaxSoldiers];
+};
+void BuildShadow(Shadow& shadow) noexcept;
+// What 0x1413725f0's gate (0x141372635..0x141372664) reads from a first argument p for guard idx: true = it plans.
+bool ShadowGatePasses(const void* p, unsigned idx) noexcept;
+// The gait catch-up (R+0xb0 bits 1..3) after the unpack, the unpack's own mode 0 rule (0x14136f810) for a mode 1 walk: the
+// owner copy ahead by 2..5 m: gait + 1 (cap 3); beyond 5 m: 3; never lowered; not ahead (<= 0, NaN): unchanged.
+unsigned GaitCatchUp(float ahead_m, unsigned gait) noexcept;
+// How far (flat) the owner copy is ahead of this copy toward dest: their distance when the owner copy is nearer dest, else 0.
+float AheadM(const float (&self)[3], const float (&owner)[3], const float (&dest)[3]) noexcept;
+// The lent entry's yaw (radians; the 15 m warp 0x14136ece0 writes it to the slot): face mode 1 (wire +0x68) -> the request's
+// facing (wire +0x50, big-endian int16 * pi/32767 as the unpack's 0x142338970), else `fallback` (this copy's own yaw).
+float EntryYaw(const unsigned char (&wire)[0x70], float fallback) noexcept;
+// A walker (action A kind 1) is taken only within kActTakeNearM (flat) of the owner copy (LegMatch tests destinations, not
+// positions; a take beyond 15 m opens with the unpack's warp). Unknown positions: not taken. Other kinds: as before.
+inline constexpr float kActTakeNearM = 10.0f;
+bool TakeNear(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept;
+// Whether the unpack's 15 m warp moves this copy: beyond 225.0 squared (3D) of the entry position.
+bool Warp15(const float (&self)[3], const float (&entry)[3]) noexcept;
+// A plan's path end within kPlanEndM (3D) of R+0x80; checked kPlanCheckMs after the plan (soldier_act_plan line).
+inline constexpr float kPlanEndM = 1.0f;
+inline constexpr std::uint64_t kPlanCheckMs = 300;
+bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept;
+// Session 1 (run fcfb3acc: the planner *(S+0x30) has vtable 0x23a1610; read-only decompile of vt[0] 0x140fa2430): the
+// per-guard slot *(planner+0x48)+idx*0x10 is {u48 type hash, u16 handle +8, u16 counter +0xa, u16 done +0xc}; vt[0]
+// refuses (0xffff) a request whose type hash (move +0x70) differs from a non-zero slot hash. The request manager's move
+// hash (0x141372694) is kMoveHash. A slot his own brain's walk holds with a live handle is cancelled first (vt[0x10] with
+// that handle, the engine's cancel: the query and the slot); one with another type and no handle is left alone (busy).
+inline constexpr std::uint64_t kMoveHash = 0x2c505bab2efcull;
+enum class SlotStep { plan, cancel_then_plan, busy };
+SlotStep PlanSlot(std::uint64_t slot_hash, std::uint16_t slot_handle) noexcept;
+// When a puppet is released, the slot is still ours (kMoveHash) and its live handle is the one R+0x19c holds: cancel it,
+// so his brain's next walk is not refused.
+bool ReleaseCancel(std::uint64_t slot_hash, std::uint16_t slot_handle, std::uint16_t r19c) noexcept;
+
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
+// Round 8 track C: lab key act_plan (the runtime thread, after ConfigureMirror).
+void SetPlan(bool on) noexcept;
+bool PlanOn() noexcept;
 // `base`/`span`: the image. Verifies every site and slot of soldier_act_contract.hpp and hooks the manager update (MinHook).
 // Logs soldier_act=installed | refused; reason=.... Idempotent. The hook does nothing but remember M until the census or
 // a probe is on.
@@ -147,6 +200,15 @@ struct Counters {
     // Round 6: due = request applies the rule asked for (first, changed, moving 1 s, still 5 s) on realized puppets;
     // reapply_moving = those that were a moving owner's 1 s re-apply; same / unrealized / expired as the frame line's.
     std::uint32_t due, reapply_moving, same, unrealized, expired, order_clear, leg_wait;  // order_clear: stale order targets cleared; leg_wait: walkers not taken (LegMatch)
+    // Round 8 track C (act_plan): plan = 0x1413725f0 called and returned 1; plan_skip = a mode-1 apply not planned (PlanGate
+    // false or no planner / follower); warp15 = unpacks whose 15 m warp moved the copy (soldier_act_warp15 line, read back);
+    // plan_ok / plan_far / plan_nopath = the path end kPlanCheckMs after a plan within / beyond kPlanEndM of R+0x80, or no
+    // path; near_wait = walkers not taken beyond kActTakeNearM of the owner copy (TakeNear).
+    std::uint32_t plan, plan_skip, warp15, plan_ok, plan_far, plan_nopath, near_wait;
+    std::uint32_t gait_up, plan_fault;  // gait_up: requests whose gait the catch-up raised; plan_fault: PlanStep faults
+    // plan_cancel: a slot of another type cancelled before the plan; plan_busy: another type with no handle (not planned);
+    // plan_none: 0x1413725f0 ran but the planner refused (R+0x19c 0xffff); plan_release: our handle cancelled at a release.
+    std::uint32_t plan_cancel, plan_busy, plan_none, plan_release;
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the
