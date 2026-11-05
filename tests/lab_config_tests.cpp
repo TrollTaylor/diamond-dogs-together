@@ -2303,18 +2303,18 @@ int main() {
                   Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
                   "FM1: soldier_act parses, off unless named");
             // Enemy gaps 2 / 3 (docs/world-sync-design.md 7.17, 7.18): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048)
-            // parse in lab and play; body_dead off unless named; place_reach follows the gun profile since runs 617311eb /
-            // 025fbb28 (named): the host's binoculars 108-109 m from guest-owned 1740692850 show his body at the crosshair
-            // beside the guest's character while the guest's crosshair is on him (copies 0.1-1.4 m apart by the aim readouts).
+            // parse in lab and play, both off unless named. place_reach's frames matched (runs 617311eb / 025fbb28), but the
+            // no-key run after its flip (35d4074f) failed the drive_sink row (a held far copy 5.1 m under its owner), so it
+            // stays off unless named (design 7.18).
             Check(!def.body_dead && !gunDefault.body_dead && !gunDefault.body_dead_given && !def.place_reach &&
-                  gunDefault.place_reach && !gunDefault.place_reach_given &&
+                  !gunDefault.place_reach && !gunDefault.place_reach_given &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nplace_reach=0\n").place_reach &&
                   Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=1\n").body_dead &&
                   Lab("enabled=1\nrole=guest\nplace_reach=1\n").place_reach &&
                   Lab("enabled=1\nrole=guest\nplace_reach=0\n").place_reach_given &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=0\n").body_dead &&
                   Lab("enabled=1\nrole=host\nbody_dead=2\nplace_reach=x\n").invalid_values == 2,
-                  "enemy gaps 2 / 3: body_dead off unless named; place_reach follows the gun profile, a named 0 opts out");
+                  "enemy gaps 2 / 3: body_dead and place_reach parse, both off unless named");
             // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert (native only, no CFG bit) follows the gun profile in lab
             // and play since run 617311eb (named: 0 drive_sink on both copies; the guest's copy of 1799112697, 5.64 m under
             // its target at 0.86 m planar, put on it and landed); a named 0 opts out, a named 1 runs without the profile.
