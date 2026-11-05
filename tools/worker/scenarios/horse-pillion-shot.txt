@@ -5,7 +5,8 @@
 #   (a) The host drives, the guest behind: the host's first E at the unridden horse mounts it (the host's godmode off
 #       first, so its life read means something); the guest claims the rear seat; cross-neck shots straight ahead along the
 #       horse (enemy_cam_turn 0), one while the horse walks; then the guest shoots the sleeping guard beside the horse
-#       (enemy_aim_nearest 0.3); the guest hops off, the host gets off.
+#       (enemy_aim_nearest 1.2 / 1.6 / 2.0: from the horse the camera sits higher than the lever's 1.5 m eye, so
+#       0.3 put the reticle 1.4 m short of the guard in run 28015a91); the guest hops off, the host gets off.
 #   (b) The guest drives, the host behind (host_press): seated, the host warps a second guard 5 m ahead of the horse (the
 #       passenger's own yaw is the horse's) and shoots it across the driver and the neck; then the guest (the driver) gets
 #       off with the host behind: both off (driver_off with the guest driving, never seen live before M4).
@@ -63,7 +64,6 @@ wait 3000
 host run enemy sleep nearest
 host expect ^enemy_sleep;ent=
 wait 4000
-both capture h4-guard
 host debug godmode 0
 wait 500
 host run status
@@ -119,8 +119,6 @@ guest hold rmb 1400 nowait
 wait 600
 guest press lmb 120
 wait 200
-guest capture h4-walk-shot
-host capture h4-walk-shot-host
 wait 800
 host release
 guest release
@@ -129,11 +127,11 @@ host run status
 host expect ^status;.*god=0;.*life=
 # The sleeping guard beside the horse.
 logmark both
-guest run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 1.2
 guest expect ^aim_nearest;ent=\d+;
 wait 800
 guest hold rmb 1500 nowait
-wait 700
+wait 1100
 guest capture h4-guard-aim
 host capture h4-guard-aim-host
 guest press lmb 120
@@ -142,12 +140,20 @@ guest capture h4-guard-shot
 host capture h4-guard-shot-host
 guest release
 wait 1200
-guest run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 1.6
 wait 800
 guest hold rmb 1500 nowait
-wait 700
+wait 1100
 guest press lmb 120
-wait 300
+wait 250
+guest release
+wait 1200
+guest run enemy_aim_nearest 2.0
+wait 800
+guest hold rmb 1500 nowait
+wait 1100
+guest press lmb 120
+wait 250
 guest release
 wait 1000
 waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=[0-9]+; state=[45];' 6
@@ -155,7 +161,6 @@ waitlog host 'world_lua=event=commit; ent=.*; actor=guest;' 8
 waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
 host run status
 host expect ^status;.*god=0;.*life=
-both capture h4-after-a
 # The passenger hops off, the driver gets off.
 logmark both
 guest hold e 500
@@ -170,7 +175,6 @@ host require localMounted=0
 host debug godmode 1
 guest run horse_status
 guest require localMounted=0
-both capture h4-end-a
 # --- (b) the guest drives, the host behind shoots a guard ahead of the horse -----------------------------------------
 wait 2000
 logmark both
@@ -203,11 +207,11 @@ host expect ^enemy_sleep;ent=
 wait 4000
 both capture h4b-seated
 logmark both
-host run enemy_aim_nearest 0.3
+host run enemy_aim_nearest 1.2
 host expect ^aim_nearest;ent=\d+;
 wait 800
 host hold rmb 1500 nowait
-wait 700
+wait 1100
 host capture h4b-pillion-aim
 guest capture h4b-pillion-aim-guest
 host press lmb 120
@@ -216,12 +220,20 @@ host capture h4b-pillion-shot
 guest capture h4b-pillion-shot-guest
 host release
 wait 1200
-host run enemy_aim_nearest 0.3
+host run enemy_aim_nearest 1.6
 wait 800
 host hold rmb 1500 nowait
-wait 700
+wait 1100
 host press lmb 120
-wait 300
+wait 250
+host release
+wait 1200
+host run enemy_aim_nearest 2.0
+wait 800
+host hold rmb 1500 nowait
+wait 1100
+host press lmb 120
+wait 250
 host release
 wait 1000
 waitlog host 'partner_seat_shot=shot; result=shift; vehicle=6656; seat=1; apply=1;' 5
@@ -231,7 +243,6 @@ waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=[45];' 8
 waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
 guest run status
 guest expect ^status;.*god=0;.*life=
-both capture h4b-after
 # The driver (the guest) gets off with the host behind: both off.
 logmark both
 guest press e 150
@@ -272,4 +283,3 @@ host press e 150
 wait 3000
 host run horse_status
 host expect localMounted=0
-both capture h4-end
