@@ -776,7 +776,7 @@ struct LabConfig {
     bool place_reach_given = false;
     // Enemy gaps 3 (docs/world-sync-design.md 7.18, native DriveReceipt only, no CFG bit): the soft follow also puts a copy
     // at rest in x/z that stands more than 1.5 m above or below the owner's for 1 s on the owner's spot (drive_sink at the
-    // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; follows the gun profile since run 617311eb (a named 0 opts out).
+    // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
     bool drive_vert = false;
     bool drive_vert_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
