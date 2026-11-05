@@ -789,7 +789,8 @@ Markers [O]/[I]/[U].
   hop-off to the E match `28015a91`'s, and none of the holds acts on the driver's own E [I code]; cause [U]. In
   `53af6597` the driver was in a downed cycle from the awake guards (`event=downed step=abandoned` 2 s after the
   hop-off) [I]. With no play pass of the get-off, the defaults keep 0.15.2's seat rules
-  (`SeatHold.grace`, `In.pillion_reseat`, the Lua track wait all follow the shot key).
+  (`SeatHold.grace`, `In.pillion_reseat`, the Lua track wait all follow the shot key; since step S they follow
+  `world_horse_pillion`, section 14).
   - `d935beae`: a frame capture stalled the driver's game past the 300 ms seat1 lease; the overlay seat stopped, and
     because the lease was back before the stop completed, `finish()` kept stateRideOnIdle as the remote episode's done
     entry and never seated body 1 again (`partner_pillion=stats; dy_cm=-190` for the rest of the ride: body 1 on the
@@ -904,6 +905,61 @@ Markers [O]/[I]/[U].
   guards quiet after a kill in play (b), the Dying state of a seat hit on the driver's copy (and a scenario check on
   the host's apply, not only its commit), a downed rider getting off the horse, then the flip with a run not named; the
   seat holds to the pillion default with a run not naming the shot key.
+## 14. Step S: the rear seat's holds at the defaults; the downed rider (not fixed)
+
+Round `wp/horse` step S (code head `9ac40a64`; markers [O] / [I] / [U]). Since this step the three seat holds that M4
+found (section 13) come with `world_horse_pillion` (on with the gun profile), no longer with `world_horse_shot`:
+`partner_driver` `Settings.horse_seat_holds = world_horse_pillion && world_horse_share` sets `horse_drive::SeatHold.grace`
+(a lease live on the previous tick kept 2 more ticks) and the DM overlay's `In.pillion_reseat` (a stopped pillion seat
+re-entered once idle); `world_horse_pillion.lua` holds a track ended by `stream_lost` 2 s (`step=track_wait`) whatever
+the shot key. A named `world_horse_pillion=0` (or `world_horse_share=0`) turns them off with the seat. Red / green:
+`43362ee7` / `9b808c5f` (partner_driver_tests Configure, pillion Lua check). Their condition (the driver's E after a
+hop-off in play `-WanSim bad`, both orders, with them in) was met by `22926dbf` (shot key named).
+- **Hidden runs, no horse key named** (`pillion_status` `key=1; mode=6; shot=0` on both copies; scenarios
+  `horse-seat-a.txt` / `horse-seat-play-a.txt` (a), `horse-seat-b.txt` (b), `horse-down.txt` (lab); `-WanSim bad`, the gun
+  profile, afgh-ledge). Lab `1c2a6b0a` (its first job refused before the game, `Worker qualification ownership receipt
+  mismatch`, not counted) and play `79287a27`: parts (a) and (b) passed every require in both [O both logs]:
+  - The first E at the unridden horse mounted in every part (the driver's in (a) and (b), the guest's at the end of (a)).
+  - The driver's E (held 400 ms) after the passenger's hop-off got the driver off in all four orders: `step=driver_e`
+    2536 / 2553 ms (lab a / b), 2769 / 2895 ms (play a / b) after the seat ended, `driver_e_off` 16-25 ms later,
+    `localMounted=0` [O both logs]; frame `host-s-both-off-host` (play (a)): both on the ground beside the horse [O].
+  - The passenger's copy (`step=seat_pin`, 25-26 windows per order): every window 0/0 except the second (the seating:
+    lag 32-52 cm, dy 20-23 cm, as in `22926dbf`) and one lab (a) window dy 65 cm [O].
+  - The driver's copy (`partner_pillion=stats`): after the seating second (body 1 beside the horse, the known limit)
+    under 0.55 m, except 8 windows of 0.87-5.26 m, 6 of them with 5-29 ticks in the second (game hitches): lab (a)
+    165 / 233 / 499 / 87 cm at n = 29 / 27 / 13 / 13, play (a) 526 / 182 / 91 cm at n = 7 / 13 / 38, play (b) 142 / 102 cm
+    at n = 5 / 36; each back under 0.4 m within 2 s; one
+    `partner_pillion=seat` and one `end` (the hop-off) per order, no seat end inside a ride [O]. That a hold acted in
+    those windows is [I] (the grace and the re-entry log nothing); no `track_wait` line in any run [U live].
+  - Frames looked at: the driver's screen shows the passenger on the horse behind the driver at walk / trot / gallop
+    (play `host-h3-walk-host-02`, `-trot-host-02`, `-gallop-host-02`; two riders side on in `host-h3-stopped-side-host`
+    and in (b) `guest-h3b-idle-side-guest`, `guest-h3b-gallop2-guest-02`; lab sheet `l1-h3-host`) [O]. NEW: in play (b),
+    after the horse ran into the rock and stalled (`step=stall` 2077 ms), the driver's screen shows body 1 STANDING on the
+    horse's back and the driver leaning on its neck (`guest-h3b-gallopfree-guest-02`, `guest-h3b-stopped-side-guest`)
+    while the overlay kept playing stateRideOnIdle (one `partner_overlay=play`, the stop only at the hop-off) [O]; cause
+    [U] (none of the holds acted there by the logs [I]).
+  - Not met: order (b) did not start on open ground. Both players were teleported to the boot spot and both horses were
+    called (`horse_spawn`), but the horse stayed where (a) ended (play seat at 692.9 / 1656.5 m against (a)'s final 692.6 /
+    1656.7; lab 864.1 / 1740.5 against 864.6 / 1740.7), by a rock wall: (b)'s rides were 28 m (play) and 6 m (lab), each
+    with a stall [O].
+- **The downed rider** (`2b9552f6` (b): a driver downed by guards kept `localMounted=1` after E). Static cause [I from
+  code]: a wounded cycle needs the prone request (stance 3, `downed_player.cpp`); a mounted body never takes it, so the
+  cycle waits `controls_pending_prone` and after `kControlsAcquireMs` (6 s) ends `controls_timeout_prone` (a new
+  generation: `event=downed; step=abandoned`). While it waits, world_downed's `MgsCoopDowned` mask (buttons
+  `0xFDDFFFFF`) holds ACTION, so E is masked (`driver_e; e=1; masked=1`); the guards' fire restarted cycles (generations
+  3 to 9). A passenger who is downed is laid off by `world_horse_pillion` (`stop("passenger_downed")`) [I code; never seen
+  live]. The repro at the defaults (`horse-down.txt`, lab `1c2a6b0a` part 3) did not down the rider: the host's three
+  rifle bursts from beside the horse hit the HORSE on the host's copy (`horse_hit; m=Unconscious; life=5400`, Conscious at
+  6020 3.5 s later; frame `host-s-down-shot`: the horse lying, the shooter at its flank) while the guest kept 6600 / 6600,
+  `down=0`, and the guest's E got off [O]. Ghidra (comment at `0x14122F3F0`, static [I]): the RideHorse get-off check
+  returns true for ACTION (bit 5 of the pad word) or a byte `*(rec+0x18)+0x16E` (a forced get-off flag; writer unknown),
+  and its callers then set the ride record's next state (+0x11 = 3).
+- **Next:** (b) from open ground (a way to move the horse after (a): it does not answer the call after M1's final, or
+  end (a) away from rock); the standing pose after a stall; the downed rider: a repro that downs the rider (the shooter
+  5-8 m off with the aim on the rider, not the horse, or a guard), then on the rider's copy a downed and mounted rider
+  reported as a held posture (no prone timeout) and the native get-off: the `+0x16E` flag's writer, or ACTION left
+  unmasked for the get-off and pressed by the mod (a new pinned site either way).
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed

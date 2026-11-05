@@ -1,3 +1,30 @@
+## November 5, 2026: horse step S - riding behind your partner keeps its seat through a game hitch at the defaults (`wp/horse`; the seat holds now come with `world_horse_pillion`); a rider downed on the horse still stays on (not reproduced this round)
+
+**Players get:** riding behind your partner (on by default since 0.15.2), a short game stutter no longer drops you off
+the seat on your partner's screen: the three seat holds M4 found (the 2-tick lease grace, the overlay's re-entry, the
+2 s wait after a dropped ride stream) now come with the rear seat instead of the lab key `world_horse_shot`. Hidden
+two-copy runs with no horse key named, `-WanSim bad`, lab `1c2a6b0a` and play `79287a27` (code head `9ac40a64`), both
+role orders: every first E at an unridden horse mounted, the driver's E got them off after the passenger hopped off in
+all four orders (2.5-2.9 s after, the ride's end 16-25 ms later), the passenger stayed on the seat on the driver's screen
+through each ride (one seat and one end per order; 8 windows of 0.9-5.3 m, most in game hitches of 5-29 ticks a second,
+came back under 0.4 m within 2 s),
+frames at walk / trot / gallop show both riders [O both logs + frames]. Still not fixed: a rider downed while riding stays
+on the horse and E does not get them off (the repro this round hit the horse, not the rider); new [O]: after the horse ran
+into a rock and stopped, the driver saw the passenger standing on the horse's back (play (b)). docs/mounts.md section 14.
+
+- **Code:** `43362ee7` red (partner_driver_tests: does not compile; pillion Lua check 317) / `9b808c5f` green
+  (`Settings.horse_seat_holds = world_horse_pillion && world_horse_share` -> `SeatHold.grace`, `In.pillion_reseat`; Lua
+  `track_wait` without the shot key); `47389594` scenarios; `9ac40a64` merge of dev `fa7ad427` (clean). Full build
+  355/355 at `9ac40a64`; every `--check` passes but the base four (carry_info, sleep_plugin differ; native_ui,
+  teammate_targeting no local evidence).
+- **Gaps:** order (b) started where (a) ended, by a rock wall (the horse did not come to the call): rides of 28 m (play)
+  and 6 m (lab), each with a 2 s stall; no `track_wait` fired in any run [U live]; that a hold acted in the hitch windows is
+  [I]. The downed rider: cause [I from code] (a mounted body never takes the downed prone request, the cycle waits 6 s with
+  ACTION masked, then times out and restarts under fire); the fix needs a native get-off (Ghidra `0x14122F3F0`: ACTION or a
+  forced flag `*(rec+0x18)+0x16E`, writer unknown). Never seen live: a downed passenger laid off (`passenger_downed`).
+- Archives `%USERPROFILE%\mgs-coop-run-archive\horse\79287a27`, `...\1c2a6b0a` (full session observer logs, slices,
+  JPEG frames, sheets). Nothing pushed.
+
 ## November 5, 2026: enemy round 10 track B - nothing new for players at the defaults; with `lrrp_follow` named, the crews of the 2 patrol trucks (of 6) the host saw manned run on the host's travel clock: they get in and out within about 1 s of the host's and stand within 2 m of them 20-40 s later; the other 4 trucks' crews are on no clock (the host sends no step for them and the guest unseats them), and one gate row fails (a truck near the guest at the pairing waits as its own copy for ~54 s), so `lrrp_follow` stays off unless named and the flip is a user decision (`wp/enemy-lrrp`, not pushed)
 
 Design 7.28, protocol section 45 (new op LRRP_STEP 0x5E). Markers: [O] seen in a log line or a frame, [I] inferred, [U]
