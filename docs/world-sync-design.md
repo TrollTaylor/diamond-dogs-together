@@ -1171,7 +1171,7 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   launcher timing check; not this change), counted as one session; `ffd0248d` (`lrrp_follow=1`, a8c615a4; join,
   `enemy-lrrp-crew10.txt`, `enemy-lrrp-alert3.txt`; all parts passed; first frames of both copies in gameplay); the run
   with no key named at the same code head (below). [O]:
-  - The clock: 24 `StartTravel{travelPlan, step, keepInAlert}`, each read back on the host's step at the next 1 s read
+  - The clock: 24 `StartTravel{travelPlan, step, keepInAlert}`, 23 read back on their target step at the next 1 s read
     (25606's crew 0 -> 1 -> 2 -> 3 ...; plans `travelArea1_01` / `travelArea1_02`); the guest on the host's step after a
     host change p50 1.5 / p90 3.6 / max 12.7 s (21 changes). The svars rows matched (0 `tstep_miss`).
   - Get-outs and boardings within 0.03-1.1 s of the host's (25605 2 -> 1 -> 0; 25606 2 -> 0 -> 1 -> 2), 0 trucks moving

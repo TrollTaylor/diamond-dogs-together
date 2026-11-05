@@ -22,7 +22,8 @@ named, the same code head; later commits are docs and one comment line). Archive
   only); no new native read, patch or hook (stock Lua calls only).
 - **Gate rows** (`ffd0248d`, Afghanistan) [O]:
   - PASS moving truck place error p50 0.15 / p90 0.55 / max 4.93 m (314 samples; 25605 p90 0.66, 25606 p90 0.48 m).
-  - PASS the clock: 24 `StartTravel` sent, each read back on the host's step 1 s later (e.g. 25606's crew 0 -> 1 -> 2 -> 3);
+  - PASS the clock: 24 `StartTravel` sent, 23 read back on their target step at the next 1 s read (e.g. 25606's crew
+    0 -> 1 -> 2 -> 3; the 24th, a set back 6 -> 5, was not seen);
     the guest on the host's step after a host change p50 1.5 / p90 3.6 / max 12.7 s (21 changes).
   - PASS get-outs and boardings: host 25605 riders 2 -> 1 -> 0 at 369222147 / 369228596, guest 369221276 / 369228631;
     host 25606 2 -> 0 -> 1 -> 2 at 369225044 / 369282187 / 369287735, guest 369225275 / 369282283 / 369287596 (0.03-1.1 s
