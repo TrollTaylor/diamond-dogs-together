@@ -84,9 +84,13 @@ void TestLocal() {
     sp::SetLocalMode(2);
     Check(sp::LocalMode() == sp::kLocalPerSoldier, "per soldier");
     sp::SetLocalMode(3);
+    Check(sp::LocalMode() == sp::kLocalAll, "every caller (research)");
+    sp::SetLocalMode(4);
     Check(sp::LocalMode() == -1, "any other value turns it off");
     sp::SetLocalMode(-7);
     Check(sp::LocalMode() == -1, "negative: off");
+    Check(sp::LocalAnswer(sp::kLocalAll, false, -1) == 1 && sp::LocalAnswer(sp::kLocalAll, true, 0) == 1,
+          "every caller, scoped or not, reads body 1");
     Check(sp::LocalAnswer(-1, true, 1) == -1 && sp::LocalAnswer(1, false, 1) == -1 && sp::LocalAnswer(0, false, 1) == -1,
           "off or unscoped: stock");
     Check(sp::LocalAnswer(1, true, -1) == 1 && sp::LocalAnswer(1, true, 0) == 1 && sp::LocalAnswer(0, true, 1) == 0,
@@ -416,8 +420,13 @@ int main() {
     Check(mo == 0xCB && mm == 0x01, "slot 0: +0xCB bit 0");
     sp::BodyMask(1, mo, mm);
     Check(mo == 0xC4 && mm == 0x20, "slot 1: +0xC4 bit 5");
-    Check(!sp::SetBodyMask(2, 0xC0, 1) && !sp::SetBodyMask(0, 0xBF, 1) && !sp::SetBodyMask(0, 0xCC, 1) && !sp::SetBodyMask(0, 0xC0, 0x100),
+    Check(!sp::SetBodyMask(2, 0xC0, 1) && !sp::SetBodyMask(0, 0xBF, 1) && !sp::SetBodyMask(0, 0xE0, 1) && !sp::SetBodyMask(0, 0xC0, 0x100),
           "slot and offset bounds");
+    // P13 L3 (run 29e389d7): body 1 alone carries status 138 (+0xD1 bit 2); the mask reaches the whole bitset.
+    Check(sp::SetBodyMask(0, 0xD1, 0x04), "+0xD1 (status 138) is in range");
+    sp::BodyMask(0, mo, mm);
+    Check(mo == 0xD1 && mm == 0x04, "slot 0: +0xD1 bit 2");
+    Check(sp::SetBodyMask(1, 0xDF, 0x80) && sp::SetBodyMask(0, 0xC0, 0) && sp::SetBodyMask(1, 0xC0, 0), "+0xDF is the last byte");
     Check(!sp::BodyMaskSets(0) && sp::SetBodyMask(0, 0xC0, 0x88, true) && sp::BodyMaskSets(0), "a set mask");
     sp::BodyMask(0, mo, mm);
     Check(mo == 0xC0 && mm == 0x88, "slot 0: set +0xC0 bits 0x88");

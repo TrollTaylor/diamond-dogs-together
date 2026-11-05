@@ -3325,14 +3325,17 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         } else if (pending.id && std::strncmp(pending.text, "perceive_local ", 15) == 0) {
             // M7 step 1 probe P13 (soldier_perceive.hpp InstallLocal): perceive_local <0|1|pick|off> answers the LOCAL
             // accessors (record, index) for callers in the soldier / notice code with that player (pick: each soldier's
-            // target); perceive_local census <0|1> counts the callers (logged by perceive_status).
+            // target); perceive_local all: every caller reads body 1 (research); perceive_local census <0|1> counts the
+            // callers (perceive_status logs the top 40, perceive_local dump all of them).
             namespace sp=mgscoop::soldier_perceive;
             const char* arg=pending.text+15;
             const bool on=sp::LocalInstalled();
             bool ok=false;
             if(std::strncmp(arg,"census ",7)==0 && (arg[7]=='0' || arg[7]=='1') && arg[8]==0) {sp::SetLocalCensus(arg[7]=='1');ok=on;}
+            else if(std::strcmp(arg,"dump")==0) {sp::LogLocal(Log,sp::kLocalCensus);ok=on;}
             else {
-                const int want=std::strcmp(arg,"0")==0?0:std::strcmp(arg,"1")==0?1:std::strcmp(arg,"pick")==0?sp::kLocalPerSoldier:-1;
+                const int want=std::strcmp(arg,"0")==0?0:std::strcmp(arg,"1")==0?1:std::strcmp(arg,"pick")==0?sp::kLocalPerSoldier:
+                               std::strcmp(arg,"all")==0?sp::kLocalAll:-1;
                 ok=on && (want>=0 || std::strcmp(arg,"off")==0);
                 if(ok) sp::SetLocalMode(want);
             }
@@ -3397,7 +3400,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             LogFormat("soldier_perceive_leaf; %s\r\n",line);
             debug::Result(pending.id,any||stock?1u:0u,line);
         } else if (pending.id && std::strncmp(pending.text, "perceive_mask ", 14) == 0) {
-            // P12d research: perceive_mask <slot 0|1> <offset hex c0..cb> <mask hex> (mask 0 = off), applied before the
+            // P12d research: perceive_mask <slot 0|1> <offset hex c0..df> <mask hex> (mask 0 = off), applied before the
             // leaf snapshot's getter call to body 1's player record; perceive_mask off clears both.
             namespace sp=mgscoop::soldier_perceive;
             const char* arg=pending.text+14;

@@ -183,9 +183,10 @@ inline constexpr std::size_t kBankStride = 0xE0;
 std::uintptr_t BodyRecord(std::uintptr_t image, std::int32_t sel, unsigned idx) noexcept;
 
 // P12d research (debug command perceive_mask; never on unless commanded): before the leaf snapshot's getter call (ret
-// kLeafRet, once a frame on the AI thread) clear (or, with `set`, set) `mask` in byte +offset (0xC0..0xCB) of body 1's
-// record in both banks, up to two pairs. A pair with mask 0 is off. Run 37c9604c: body 0 / body 1 differ only in +0xC0
-// (0x9e / 0x16 in one bank: bits 0x80 and 0x08).
+// kLeafRet, once a frame on the AI thread) clear (or, with `set`, set) `mask` in byte +offset (0xC0..0xDF, the whole
+// status bitset) of body 1's record in both banks, up to two pairs. A pair with mask 0 is off. Run 37c9604c: body 0 /
+// body 1 differ only in +0xC0 (0x9e / 0x16 in one bank: bits 0x80 and 0x08) of +0xC0..+0xCB; run 29e389d7 (P13 L3, the
+// whole bitset): body 1 alone has +0xD1 bit 2 (status 138, no Lua PlayerStatus name).
 inline constexpr unsigned kBodyMasks = 2;
 bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask, bool set = false) noexcept;  // false: out of range
 void BodyMask(unsigned slot, unsigned& offset, unsigned& mask) noexcept;
@@ -193,7 +194,8 @@ bool BodyMaskSets(unsigned slot) noexcept;
 std::uint32_t BodyMaskWrites() noexcept;
 
 #ifdef _WIN32
-// "bodies;sel=<n>;b0=<x>,<y>,<z>;s0=<12 hex bytes>;b1=...;s1=...;o0=<+0xC0..+0xC3 of body 0 in the other bank>;o1=..."
+// "bodies;sel=<n>;b0=<x>,<y>,<z>;s0=<32 hex bytes +0xC0..+0xDF, dotted every 4>;b1=...;s1=...;o0=<+0xC0..+0xC3 of body 0
+// in the other bank>;o1=..."
 // read with ReadProcessMemory (no game call).
 bool BodiesLine(const void* base, char* out, std::size_t capacity) noexcept;
 // Verifies every pinned window (soldier_perceive_contract.hpp) and installs the getter stub hook and the per-soldier
@@ -239,12 +241,14 @@ std::uint32_t LocalCaller(LocalKind kind, std::uint32_t entryRet, std::uint32_t 
 // Pure. The caller lies in the soldier / notice code.
 bool LocalScoped(std::uint32_t caller) noexcept;
 // Redirect mode: -1 off (stock), 0 or 1 every scoped caller reads that player, 2 per soldier (the caller site's soldier
-// register picks the soldier's target; a soldier without a target, or a site without a register, is stock).
-inline constexpr int kLocalPerSoldier = 2;
-void SetLocalMode(int mode) noexcept;  // any value outside -1..2 turns it off
+// register picks the soldier's target; a soldier without a target, or a site without a register, is stock), 3 research
+// only: EVERY caller of the two functions reads body 1 (the local index swapped for the whole game but the second
+// table's local setters 0x14053C9A0; run 29e389d7: the scoped redirect alone never let a guard notice body 1).
+inline constexpr int kLocalPerSoldier = 2, kLocalAll = 3;
+void SetLocalMode(int mode) noexcept;  // any value outside -1..3 turns it off
 int LocalMode() noexcept;
-// Pure. The index a scoped call answers, or -1 for the stock answer: mode 0/1 that index; per soldier the target (0 or 1)
-// when known. Unscoped callers and mode off are always stock.
+// Pure. The index a call answers, or -1 for the stock answer: mode 0/1 that index for a scoped caller; per soldier the
+// target (0 or 1) when known; kLocalAll 1 for every caller. Otherwise (unscoped, mode off) stock.
 int LocalAnswer(int mode, bool scoped, int target) noexcept;
 
 // P13 census (perceive_local census 1): per (caller rva, entry return rva) the calls, how many were redirected, and the
@@ -284,7 +288,8 @@ std::uint32_t OnlineWrites() noexcept;
 // Logs soldier_perceive_local=installed | refused; reason=.... Idempotent; after InstallPick (the same image base).
 bool InstallLocal(const void* base, LogFn log) noexcept;
 bool LocalInstalled() noexcept;
-// One soldier_perceive_local line per census entry (the top `limit` by calls), then the LocalLine summary.
+// One soldier_perceive_local line per census entry (the top `limit` by calls; perceive_status 40, perceive_local dump all),
+// then the LocalLine summary.
 void LogLocal(LogFn log, unsigned limit) noexcept;
 // P13 (read only): for each active notice slot (as LogSlots) the CP record [sys+0x68]+slot*0x60 +0x40 / +0x44 / +0x48
 // and each listed soldier's mask u32 [sys+0x78]+e*0x18 with its level byte +0x15 (0x140D658E1 .. 0x140D659A1).

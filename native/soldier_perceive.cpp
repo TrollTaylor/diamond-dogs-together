@@ -347,7 +347,7 @@ std::atomic<std::uint32_t> g_maskWrites{0};
 } // namespace
 
 bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask, bool set) noexcept {
-    if (slot >= kBodyMasks || offset < 0xC0 || offset > 0xCB || mask > 0xFF) return false;
+    if (slot >= kBodyMasks || offset < 0xC0 || offset > 0xDF || mask > 0xFF) return false;
     g_bodyMask[slot].store(mask ? (set ? 0x10000u : 0u) | (offset << 8) | mask : 0u, std::memory_order_release);
     return true;
 }
@@ -446,10 +446,11 @@ std::atomic<std::uint32_t> g_lc[4]{};  // rec, idx, scoped, redirected
 constexpr unsigned kRegOf[kLocalRegs] = {6, 5, 4, 3, 2, 1, 0};
 } // namespace
 
-void SetLocalMode(int mode) noexcept { g_localMode.store(mode >= -1 && mode <= kLocalPerSoldier ? mode : -1, std::memory_order_relaxed); }
+void SetLocalMode(int mode) noexcept { g_localMode.store(mode >= -1 && mode <= kLocalAll ? mode : -1, std::memory_order_relaxed); }
 int LocalMode() noexcept { return g_localMode.load(std::memory_order_relaxed); }
 
 int LocalAnswer(int mode, bool scoped, int target) noexcept {
+    if (mode == kLocalAll) return 1;
     if (!scoped) return -1;
     if (mode == 0 || mode == 1) return mode;
     if (mode == kLocalPerSoldier && (target == 0 || target == 1)) return target;
