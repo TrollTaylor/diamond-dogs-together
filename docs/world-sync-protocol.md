@@ -2508,3 +2508,13 @@ No new op, world note, CFG bit or receipt field; Lua unchanged. Native only, the
   - `soldier_act_frame` adds `plan; plan_skip; warp15; plan_ok; plan_far; plan_nopath; near_wait; gait_up; plan_fault;
     plan_cancel; plan_busy; plan_none; plan_release`.
 - `soldier_act=installed` prints the contract's site and slot counts (31 and 13 on this track; 34 and 13 merged with track A's quiet-warp sites).
+
+## 43. Enemy round 9 track C: the far mirror's walkers plan once per leg (lab key `act_plan`, native only; with `soldier_act`; design 7.26)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native only, the puppet side.
+
+- With `act_plan`, a due re-apply of a walk is held (no unpack, no restart, no new plan) while the request is the planned
+  one but for a destination moved within 1 m, our plan's handle is in R+0x19c and his planner slot (our type), its
+  300 ms check did not find the path end far or missing, the 15 m warp would not move him and the catch-up gait is unchanged.
+- The catch-up (`gait_up`) starts beyond 1 m (was 2 m): the owner copy ahead by 1..5 m gait + 1 (cap 3), beyond 5 m 3.
+- `soldier_act_frame` adds `plan_hold` (held re-applies) after `plan_release`.

@@ -918,6 +918,32 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   re-apply cadence (1 s) restarts each plan from where he stands: plan only on a changed request or a destination moved
   over 1 m.
 
+#### 7.26 Enemy round 9 track C: the far mirror's walkers plan once per leg (lab key `act_plan`, native only; with `soldier_act`)
+
+- **Re-run of 7.23's void session** (`226fc789`, the round 8 build): the plans land (100 of 104 path ends within 1 m of
+  R+0x80, 4 with no path yet at 300 ms) and the walker's place error fell to p50 1.27 / p90 2.91 m (guard 18; 8.88 /
+  14.36 m without the plan). What is left is a trail of about 1 s: every moving owner's 1 s re-apply restarted the
+  request (the engine's start cancels R+0x19c) and planned again (one plan per 1.01 s), each restart cost a little speed
+  (0.93 in the first 250 ms), and the catch-up raised the gait only beyond 2 m [O logs, I cause].
+- **Plan once per leg** (`act_plan`; red 45670276, green 8447ee9b): in `MirrorRx`, a due re-apply of a walk (wire +0x61 ==
+  1 on both requests) is held (no unpack, no restart, no new plan; `plan_hold`; the moving / still re-apply timer restarts
+  and the planned request stays the one compared) when `PlanHold`: not a first apply; `RequestChangedFar` is false (the
+  request equals the planned one but for the destination wire +0x40 moved within `kPlanMoveM` = 1 m; any other change is
+  a change as before); `PlanLiveFor` (our last plan's handle is in R+0x19c, his planner slot holds `kMoveHash` with that
+  handle, and its 300 ms check did not find the path end far or missing); the unpack's 15 m warp would not move him; and
+  the catch-up gait now (from the last unpack's gait) equals the gait R holds (each command copies the gait from R when it
+  is issued, so a gait change needs a restart). An unpack forgets our plan (the engine's start cancels it); `PlanStep`
+  remembers each new one. The catch-up starts beyond `kPlanCatchM` = 1 m (was 2 m, the engine's own mode 0 onset).
+- **Seen with it** (`77785f31`): 172 held re-applies; a caution runner kept one handle 7.3 s [O]. Long caution walks
+  (100-140 m) got a partial path first (end 31-94 m short at 300 ms; a later plan reached R+0x80) [O]; a partial path is
+  not held. Calm walkers unmeasured in that run (calm ended after 42.5 s by the guest's own guard 246's startle).
+- **Calm walker with the hold** (`c0c3d088`, `quiet_place=1` named; the seed's place correction was not applied, so calm
+  lasted the whole watch): guard 18 p50 1.38 / p90 1.98 m (121 samples), ratio 0.95, 13 plans (98 without the hold), 63
+  held, 2 catch-ups; 11 of 13 plans within 1 m (2 had no path yet at 300 ms) [O]. The p90 row passes, p50 does not.
+- **Gate** (7.23's, per guard, calm frames): not reached; see docs/STATUS.md (2026-11-05, enemy round 9 track C).
+- **Next**: lead or extrapolate the owner copy by the delivery lag (the 1 s trail), hold a partial path while it grows,
+  and a spot where a calm walker is in clear view from both players for the frame pair.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
