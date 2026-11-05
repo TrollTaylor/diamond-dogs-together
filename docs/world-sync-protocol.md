@@ -2260,8 +2260,10 @@ the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
 - Log lines: host `event=owner`, `event=hplace` (its own placements), `world_place=host_warp`, `event=route_tx`,
   `event=body_tx`; guest `event=owner_rx`, `event=place_ack; side=host`, `event=place_first; ...; side=guest`,
   `event=route_apply`, `event=place_body`, `event=holdup_show`; both `event=phase; ...; src=down`.
-- Reason (WHY) 23 `unrealized` (enemy latch, design 7.14): the receiving copy's guard is allocated but not realized there,
-  so the native set-transform was relayed (`refused="relayed"`, out=0 handled=0 on the typed dispatch) or that guard is
+- Reason (WHY) 23 `unrealized` (enemy latch, design 7.14): the receiving copy's soldier handler refused a guard whose slot
+  is allocated there (most likely not realized there [I]; realized with no character gives the same answer, so the name
+  is the likely case, not a reading), so the native set-transform was relayed (`refused="relayed"`, out=0 handled=0 on
+  the typed dispatch) or that guard is
   still in its native backoff (`refused="backoff"`). The sender backs that guard off 3 s (the host's ENEMY_DEBUG_ACK,
   the guest's ENEMY_PLACE_ACK); 10 s stays for `far`, `native_off`, `latched`. An older peer logs it as `?`.
 - `event=place_body` carries `why` (the receiver's own refusal, `none` when the fix is queued or not needed); a refused
