@@ -393,7 +393,7 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   at +0x14 and kind 20 hash-like words; whether these are ids, and so the remap or refuse rule, is open. [U] U2, the
   frames and counts of the gate.
 
-#### 7.16 Enemy sync M7 FM1 retry: puppets in calm, R(ALERT) 261 m, the apart release (lab key `soldier_act`, off)
+#### 7.16 Enemy sync M7 FM1 retry: the first puppets, R(ALERT) 261 m, the apart release (lab key `soldier_act`, off)
 
 - **R from the gate runs** (plan rule, R = 1.5 x the farthest first notice or engagement distance per phase): in ALERT
   the guest's own copies hit it from up to 173.9 m (`94a7bf2a`; 152.0 / 152.6 m in `adecad01` / `80cc0176`), the host
@@ -418,10 +418,13 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   (423, 269.5, 2081) (z ~2018-2026, four runs); the host's spot 50 m south of the outpost sits at a rock that hides
   bearings -30..-1 degrees.
 - **Runs** (`94a7bf2a`, `adecad01`, `80cc0176` the gate scenarios; `46c0da9e` the latch regression; STATUS has the
-  numbers): puppets form in calm and run the posted requests (standing, walking at the host copy's speed: ratio p50
-  0.98 in `94a7bf2a`); 0 unpack faults; releases at the ALERT rise, `mirror off`, the guest's shot within one update;
-  matched frames of a mirrored guard standing at the same spot on both screens (`80cc0176` q-0, q-30), none walking; no
-  ALERT puppet. The gate is not reached; `soldier_act` stays off.
+  numbers): puppets form and run the posted requests (standing, walking at the host copy's speed: ratio p50 0.98 in
+  `94a7bf2a`; worse in the final build, p50 0.20 / 0.55 by the skeptic's pairing); 0 unpack faults; releases at the ALERT
+  rise, `mirror off`, the guest's shot within one update; matched frames of a mirrored guard standing at the same spot
+  on both screens (`80cc0176` q-0, q-30), none walking. In ALERT: with R(ALERT) 184 m (`94a7bf2a`) three puppets of the
+  alerted CP existed 184-212 m out (two taken in ALERT, one held from calm until a `stale` release ~29 s in), none
+  fired, none in a frame; with 261 m (`adecad01`, `80cc0176`) every take was at R 80 m (calm) and none existed in ALERT.
+  The gate is not reached; `soldier_act` stays off.
 - **Next**: decision D-FM1 (calm / caution only, or a watch point beyond 276 m for the ALERT half); a host spot with a
   clear view of a walking puppet; moving puppets re-applied every 1 s; apart only for a still owner copy; skip riders.
 
@@ -451,10 +454,14 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   skips a body while its placement is pending (at most 15 s), so a corpse the game does not move is never reported back
   (no ping-pong). Whether the native set-transform moves a corpse is still [U].
 - **Runs** (play, `-WanSim bad`, the gun profile, afgh-ledge): `9023e5c6`, `8281b868`, `3c9d1250` with both keys named,
-  `b77e2104` with no key named (place_reach on by default for that run). The host's place error for the guest-owned
-  guards p90 2.78 / 2.63 / 1.95 / 2.63 m (`798b51dd` without it 6.97 m); 0 latches. No frame shows the watched guard on
-  the host's screen (a rock, grass or a rise of ground in every host view), so both keys stay off unless named. STATUS
-  has the numbers.
+  `b77e2104` with no key named (place_reach on by default in that build, so it is not a run of the shipped defaults;
+  no run exercised the gaps-2 code with both keys off, which rests on code reading and the unit tests). The host's place
+  error for the guest-owned guards p90 2.78 / 2.63 / 1.95 / 2.63 m (`798b51dd` without it 6.97 m); 0 latches (the
+  divergence report's composite gate still fails on `drive_sank=1` in `9023e5c6` / `b77e2104`, as at the defaults). The
+  realize hold ended in a landed placement in only 8 of 26 holds (all 14 host holds of `3c9d1250` timed out); a backoff
+  refusal never gets a hold and a hold ends at the first landing, so the riders went unplaced again for ~40 s in
+  `9023e5c6`: the hold does not yet wait out the backoff. No frame shows the watched guard on the host's screen (a
+  rock, grass or a rise of ground in every host view), so both keys stay off unless named. STATUS has the numbers.
 - **Not done**: the riders' in-vehicle part (the LRRP truck is each copy's own: VEHICLE_STATE skips LRRP trucks and
   occupied vehicles), so their copies stay `far` / `vehicle_local` while the truck drives; the next step is the vehicle
   owner path (the host streams an LRRP truck with riders, the guest's copy follows) or a soldier dismount command [U].
