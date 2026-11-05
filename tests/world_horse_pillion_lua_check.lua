@@ -244,10 +244,12 @@ g.e = true
 g.ride(8)
 check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=passenger;side=passenger;placed=1"), "E held 0.3 s again: hop off")
 local w = g.warps[#g.warps]
--- The skeptic's frames (runs 51f6a2cc / 4f52fa2a): -x at yaw 0 is the horse's RIGHT. A horse that has not moved 2 m since
--- the seating has no ridden path to use: the side point.
-check(w and w[1] == 0 and math.abs(w[2][1] * 1000 - (pl.x - 1300)) < 2 and g.logged(";at=side"),
-    "a horse that has not moved: laid beside its right (yaw 0: -x), body 0 warped once")
+-- A horse that has not moved 2 m since the seating has no ridden path to use. Runs 16f3f282 / 023f9167 (play): the side
+-- point (-x at yaw 0, the horse's RIGHT) put the passenger inside the rock beside the horse on the driver's dismount. Now
+-- the spot the passenger stood on when they claimed (vars 11 / 1.1 / 30 m), 0.3 m up.
+check(w and w[1] == 0 and math.abs(w[2][1] * 1000 - 11000) < 2 and math.abs(w[2][2] * 1000 - 1400) < 2 and
+    math.abs(w[2][3] * 1000 - 30000) < 2 and g.logged(";x=1100;z=3000;at=foot"),
+    "a horse that has not moved: laid where the passenger stood at the claim, body 0 warped once")
 check(g.masks[#g.masks][1] == "reset" and g.masks[#g.masks][2].settingName == "MgsCoopPillion" and g.stances[#g.stances] == 0,
     "the pad mask released, standing")
 local un = lastSeat(g)
@@ -274,7 +276,8 @@ h.rides = false
 h.tick(33)
 check(h.P.state == "off" and h.logged("step=unseated;seat=1;why=driver_off;side=driver"), "the driver gets off: driver_off")
 deliver(g, lastSeat(h))
-check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=driver_off;side=passenger;placed=1;"), "the passenger is laid off too")
+check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=driver_off;side=passenger;placed=1;x=1100;z=3000;at=foot"),
+    "the passenger is laid off too, where they stood at the claim (the horse did not move)")
 -- The ride's end on the passenger's copy (the final pose) lays them off as well.
 h, g = fixture(), fixture({host = false})
 h.rides, h.horse.occupied = true, true
@@ -438,7 +441,8 @@ seatBoth(th, tg)
 tg.horse.z = tg.horse.z + 6000
 tg.ride(1)
 tg.e = false; tg.ride(1); tg.e = true; tg.ride(8)
-check(tg.P.state == "off" and tg.logged("why=passenger;side=passenger;placed=1;x=870;z=3600;at=side"), "no path point within 2-4 m: the side point")
+check(tg.P.state == "off" and tg.logged("why=passenger;side=passenger;placed=1;x=870;z=3600;at=side"),
+    "no path point within 2-4 m and the claim spot 6.1 m away: the side point")
 -- The skeptic (runs 93b59ae4 / 5687aa1c: E masked and nothing claimed at 2.59 / 2.76 m): inside the ride hold (released past
 -- 2.8 m) E claims the seat, so a masked E is never lost.
 local bg = fixture({host = false})
