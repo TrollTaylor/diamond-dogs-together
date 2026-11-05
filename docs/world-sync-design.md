@@ -680,16 +680,18 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   truck was still driving in at ~11 m/s from (764, 1940) while the host's copies stood at the outpost (413, 2138). Nothing
   shared the truck: VEHICLE_STATE skips LRRP trucks on both sides (`S.busy` `lrrp`) and a correction skips a rider
   (`vehicle_local`), so the riders were `far`, then `vehicle_local` every ~1 s until they got out.
-- **lrrp_follow** (native-only lab key; no CFG bit: Lua asks the receipt `MGS_COOP_LRRP_CFG_V1`; follows the gun profile
-  since run `c784a5a7`, a named 0 opts out): the host owns every LRRP truck (the trucks start on its clock). It streams
+- **lrrp_follow** (native-only lab key; no CFG bit: Lua asks the receipt `MGS_COOP_LRRP_CFG_V1`; off unless named: the
+  gun profile turned it on at f91dc7ff, back off at 34b9f024 after the review below): the host owns every LRRP truck (the trucks start on its clock). It streams
   each live one no player rides (not the local player's vehicle, not the partner's RIDE_FAST ride) as LRRP_FAST (0x5D,
-  protocol section 38): 10 Hz while it moves (> 0.5 m/s over 250 ms), 1 Hz at rest, one datagram per 50 ms. The guest's
+  protocol section 38): 10 Hz while it moves (> 0.5 m/s over 250 ms), 1 Hz at rest, one datagram per 50 ms (one receive
+  slot for all trucks: a newer datagram for one truck replaces an undelivered one for another). The guest's
   copy gets `ForceStop{enabled=true}` (the E10 stop of its own AI driver) while the host's track lives and is put on the
   newest sample advanced by its velocity (the sample's age on the receiver's min-offset clock + 100 ms, at most 400 ms
-  ahead) every frame while the host's truck moves or carries riders; its riders ride along. At rest it is pinned (put back
+  ahead) every frame while the host's truck moves or carries riders (no local-player hold; untested near the guest); its
+  riders ride along. At rest it is pinned (put back
   at once when 1 m+ off; `step=settle` over 3 m). A crew still seated on the guest's copy while the host's truck rests
   empty gets `UnsetRelativeVehicle` after 2 s and `StartTravel{travelPlan=""}` after 5 s (s10090's get-off; `step=unseat`);
-  once off, M1..M6 corrections take them as any guard. A track 3 s stale, the local player's ride, unpaired, start and
+  once off, the M1..M6 corrections may take them (the runs show they mostly did not: see the review). A track 3 s stale, the local player's ride, unpaired, start and
   stop release it. In `world_vehicle_state.lua` (`S.lf`); an error there turns only lrrp_follow off. Logs `event=lrrp;
   step=host|follow|riders|stop|release|settle|jump|unseat|stale|refused|error`.
 - **Session 1** `c90ab046` (key named; join, the truck watch, integ-carry, latch-alert) [O]: truck 25605 carries
@@ -701,32 +703,43 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   `vehicle_local`. integ-carry failed: 2961503 was awake (the watch replaced latch-quiet's sleep).
 - **Session 2** `c784a5a7` (key named, the fixed form) [O]: truck error while it moved p50 0.16 / p90 0.74 / max 5.52 m
   (1525 samples), |dy| p90 0.06 m; riders seated on both p50 0.10-0.18 / p90 0.51-0.95 m (both crews, four riders; each
-  rider's one sample at the pairing, before the first placement, was 368-403 m); one jump per truck at the pairing (11.6-402
-  m, 0.5-3.5 km from both players), and truck 25605 caught up 6.0 m 14.8 s after its first jump and 5.1 m later (a sample
+  rider's one sample at the pairing, before the first placement, was 368-403 m; the review's interpolated p90 0.75-1.09 m,
+  25605's riders 10.7-49 m in 14 samples each, 25606's 8.1-9.8 m); one jump per truck at the pairing (11.6-402 m; 25605's
+  target 364 m from the guest, still at the seed spot), and truck 25605 caught up 6.0 m 14.8 s after its first jump and 5.1 m later (a sample
   gap ended at the 400 ms extrapolation cap; 610 / 350 m from the players [I: not in view]). The guest's crews of the four
   parked trucks (empty on the host's copy) and of 25605 at its stop got out after the unseat (25605's 6-8 s after the
-  host's); 0 `vehicle_local` refusals; the riders then took corrections and owner changes as other guards (later 3-27 m
-  apart, `unrealized` relays). Frames t-10 (both, binoculars SE): the truck with its headlights at the same spot by the
-  crosshair on both screens, 204 m from the players, logs 0.4 m apart. 0 latches / faults / game overs / drive_sank.
+  host's); 0 `vehicle_local` refusals, but 25605's unseated crew did not follow the host's copies: 3970963356 stood at
+  (407.4, 2123.7) for ~100 s, 43-70.7 m off; 2305481811 26-31 m off for ~80 s (42 of the 87 guest-side `unrealized`
+  refusals; the guest's kill of 2305481811 applied on the host 27.8 / 29.9 m away, `1870d1bf` 0.4 / 1.5 m). Frames t-10
+  (both, binoculars SE): the lit truck at the same spot by the crosshair on both screens (`aim_ent` 191.5 m host /
+  186.8 m guest). 0 latches / faults / game overs / drive_sank.
   integ-carry failed at its placebehind (`viewer landing has no new position sample`; the truck had parked 10 m from the
   host's spot) and latch-alert was cut at 606.8 s by the timeout. Frame proxy (partner_tick hz per 10 s): 46 Hz from the
   first window on both copies, before the pairing too, so the PC was loaded [I]; session 1 dropped to 43-51 Hz while the
   truck drove and the cameras looked 300-600 m east (59 Hz otherwise); `1870d1bf` 59 Hz: not judged.
 - **Session 3** `0da27fc6` (no key named, the final code head f91dc7ff: lrrp_follow on with the gun profile; join, the short
   truck part, integ-carry, latch-alert; all four parts passed) [O]: `event=lrrp; step=on` on both roles; truck error while
-  it moved p50 0.14 / p90 0.52 / max 5.65 m (1224 samples), |dy| p90 0.04 m; riders seated on both p50 0.10-0.18 / p90
-  0.36-0.96 m (four riders; 11 of 510 samples of 25605's two riders were 10-41 m apart for ~3 s while the truck itself
-  was 0.2 m apart: a rider read-back lagging on one copy [I]); one jump per truck at the pairing (49.5-402.6 m, 0.5-3.5 km
-  from both players), later catch-ups 5.4-6.7 m at least 44 s apart; every crew seated here while the host's truck rested
-  empty got out after the unseat (25605's two 4 s and 38 s after the host's); 0 `vehicle_local`; report: 0 latches /
+  it moved p50 0.14 / p90 0.52 / max 5.65 m (1224 samples; interpolated 0.14 / 0.49 m, 1210), |dy| p90 0.04 m; riders
+  seated on both p50 0.10-0.18 / p90 0.36-0.96 m (interpolated 0.92-1.13 m; 11 of 510 samples of 25605's two riders were
+  10-41 m apart for ~3 s: the guest's rider reads frozen at (956.8, 1968.2) while the truck was within 0.2 m); one jump
+  per truck at the pairing (49.5-402.6 m; 25605's target 364 m from the guest at the seed spot), later three catch-ups
+  of 5.4-6.7 m at least 43.9 s apart; every truck ends with `rl=0`, but 25605's guest crew was out before the host's and
+  got back in and out twice (rl 0-1-0-1-0, ~125 m from the players), and no correction was tried for the unseated
+  riders; 0 `vehicle_local`; report: 0 latches /
   faults / game overs / drive_sank, guest place error p50 0.51 / p90 0.91 m, corrections 25/26; failing rows as at the old
-  defaults: M3 host p90 7.26 m (`1870d1bf` 6.89), one host-outcome apply at 38.5 m (1179373153 in the ALERT). Frames s-0 /
+  defaults: M3 host p90 7.26 m (`1870d1bf` 6.89), the guest's state-5 apply at 39.5 m (1179373153 in the ALERT). Frames s-0 /
   s-1: the truck out of view (far east); c-b: the sleeping guard by the guest's character on both screens. Frame proxy 46
   Hz from the first window on both (before the pairing too): not judged.
-- **Not done**: a crew that gets back in on the host's screen stays out on the guest's (seen for 25606 at 2 km in
-  `c784a5a7` and `0da27fc6`; its truck had not moved off by the end); the guest's own crew of a parked truck is unseated
-  and its LRRP plan ended (StartTravel ""), so it no longer boards there [I]; the frame-time row needs an unloaded PC and a
-  key-off run of the same parts (`lrrp_follow=0`); Africa (30020) not run.
+- **Review** (skeptic, all three runs): the truck rows hold; refuted were the riders' p90 (0.75-1.13 m interpolated, with
+  10-49 m outliers in both key-on runs), the pairing jump being out of view, the crews getting out "a few seconds later"
+  (0da27fc6 flapped), the unseated crews being kept with the host's copies (above), the "did not drive off" clause (below)
+  and the gate as a whole (frame time not judged, Africa not run). lrrp_follow is off unless named again (1aa30d55 red /
+  34b9f024 green); turning it on is the user's call (a possible player unseen by reinforcements, below).
+- **Not done**: a crew that gets back in on the host's screen stays out on the guest's, and the guest's truck drives off
+  empty (25606 in `c784a5a7` and `0da27fc6`: `rh=2 rl=0`, ~12.5 m/s, still moving at the end, at (-965, 1570) and
+  (-1433, 1159)); the unseat ends the guest's crew's LRRP plan (StartTravel ""), so it no longer boards [I] and those
+  reinforcements may never reach the guest on the guest's PC; corrections for unseated riders; the frame-time row needs
+  an unloaded PC and a key-off run of the same parts; Africa (30020) not run; a mixed-version run.
 - **Old partners**: a partner without 0x5D skips it by its length (`unknown_op`); a guest without the key ignores it and
   its own AI keeps its truck, as in 0.15.1 (unit tests).
 

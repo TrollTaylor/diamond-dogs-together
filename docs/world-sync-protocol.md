@@ -2440,10 +2440,10 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
 |---|---|---|---|---|---|
 | 0x5D | LRRP_FAST | host to guest | U (its own newest-value slot), level 3, play too | 26 | sender tick (u32 ms), truck id (u16, 25600..26111), x / y / z (i32 mm), yaw (i32 mrad, +-31416), speed (u16 mm/s), NPC riders (u8, 0..8), flags (u8: 1 moving) |
 
-- Sent only on a host with `lrrp_follow` (follows the gun profile, a named 0 opts out; receipt `MGS_COOP_LRRP_CFG_V1` ->
+- Sent only on a host with `lrrp_follow` (off unless named, the gun profile too, since 34b9f024; receipt `MGS_COOP_LRRP_CFG_V1` ->
   `return 1`; `return 0` off; nil off the runtime thread, asked again in 5 s); never for a truck the host's player rides or one with a live RIDE_FAST track.
-  10 Hz moving, 1 Hz at rest, at most one per 50 ms (the receiver's slot keeps the newest sender tick, so trucks take
-  turns).
+  10 Hz moving, 1 Hz at rest, at most one per 50 ms (the receiver's one slot keeps the newest sender tick, so trucks take
+  turns, and a newer datagram for one truck replaces an undelivered one for another: a design limit).
 - The guest applies it only with `lrrp_follow`, only for an id that is an authored LRRP truck on its copy (else
   `event=lrrp; step=refused; reason=not_lrrp` once per id), never while its own player rides it. Older sender ticks are
   dropped. A partner without 0x5D skips it by its length (`unknown_op`).
