@@ -2051,10 +2051,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
-    // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19), the user's decision D-FM1 (a): the far mirror follows
-    // the gun profile in lab and play, in calm / caution only, and only against a partner that announces it (ACT_CAPS
-    // 0x5C). Turned on for its calm-gate run with no key named (docs/STATUS.md); a named 0 opts out.
-    if (!c.soldier_act_given) { c.soldier_act = gun; c.soldier_act_calm = gun; }
+    // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
+    // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
+    // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.
     // Enemy gaps 2 (docs/world-sync-design.md 7.17): place_reach and body_dead stay off unless named. place_reach's runs
     // 9023e5c6, 8281b868, 3c9d1250 (named) and b77e2104 (on by default for that run) show it in both copies' logs (the
     // host's place error for the guest's guards p90 2.78 / 2.63 / 1.95 / 2.63 m, 798b51dd without it 6.97 m; 0 latches),
