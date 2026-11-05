@@ -251,12 +251,14 @@ void TestCargoKey() {
     Check(!off.world_horse_cargo && off.world_horse_cargo_given, "a named 0 is the off switch");
     Check(!bad.world_horse_cargo && bad.invalid_values == 1, "an invalid value stays off");
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    Check(gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share, "the gun profile turns world_horse_cargo on");
+    // Round 2's final session (8cfe8e97 lab, 7f3155c8 play) did not pass the gate: off unless named again, gun profile too.
+    Check(!gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share,
+          "after the round 2 gate failed: off with the gun profile (the M1 key stays on)");
     const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=0\n");
     Check(!gunOff.world_horse_cargo && gunOff.world_horse_cargo_given, "with the gun profile a named 0 is the off switch");
     const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                              "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
-    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_cargo && playGun.play_refused == 0, "on in play with the gun profile");
+    Check(playGun.mode == mgscoop::LabMode::play && !playGun.world_horse_cargo && playGun.play_refused == 0, "off in play unless named");
     const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
                           "world_horse_cargo=1\n");

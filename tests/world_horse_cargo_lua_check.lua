@@ -276,11 +276,11 @@ check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.VICTIM_RI
  math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6 and math.abs(w.rotY - math.pi / 2) < 1e-3,
  "body 0 warped to its own horse's cargo point, a quarter turn (across the back)")
 check(f.C.busy(), "the victim's copy is busy too")
--- Round 2 (runs a49c4d76 / 20aef564 / d2a5cafa: body 0 on the ground under the moving horse with a per-tick Lua Warp):
--- body 0 on the horse moves through the native hold0 (the partner driver's xform mover, no C0 / A0 reset), mm / mrad.
-check(w.via == "hold0" and f.holds[#f.holds]:find("^hold0 30010 7 150000 3400 309560 1571 1$"),
- "body 0 held natively (hold0, mm / mrad) with the A0 reset (run a242d867: no reset kept the airborne pose)")
-check(f.C.RESET == 1, "the default hold0 reset is A0 only")
+-- Round 2: hold0 with no reset (a242d867, c2927350) or the A0 reset (8cfe8e97, 7f3155c8) kept body 0 with the horse but
+-- in the airborne pose, also on the carrier's screen; the Lua Warp keeps the lying pose. Default 4: the Lua Warp; the
+-- lab lever picks hold0 with a reset 0..3 (C0 alone untried).
+check(w.via == nil and #f.holds == 0, "by default body 0 moves by the Lua Warp")
+check(f.C.RESET == 4, "the default is the Lua Warp (reset 4)")
 check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
@@ -321,7 +321,7 @@ check(math.abs(f.lastWarp(0).y - (2.6 + f.C.VICTIM_PLACED_MM / 1000)) < 1e-6, "a
 check(f.C.DOWN_MMPS == 1000, "the drop rate is 1 m/s")
 -- The lab lever horse_probe cargo_pose: the placed / census heights, the offset behind the root, the drop rate.
 check(f.C.setVictimPose(1700, 1300, 200, 0, 2) and not f.C.setVictimPose(9000, 1300, 200, 0, 1) and
- not f.C.setVictimPose(1700, 1300, 200, 0, 4), "setVictimPose: in range only (the reset 0..3)")
+ not f.C.setVictimPose(1700, 1300, 200, 0, 5), "setVictimPose: in range only (the reset 0..4, 4 the Lua Warp)")
 f.now = f.now + 50
 f.C.placed(172900, 2600, 310000, 0)
 w = f.lastWarp(0)
@@ -334,11 +334,15 @@ f.W.horseShare = {}
 for i = 1, 25 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
 check(#f.places == 2, "unridden and drifted over 0.5 m from the KEEP pose: re-placed (at most 1 Hz)")
 -- A refused hold0 (an old native, the cargo key off while cargo_test runs it): the Lua Warp as before, one line a reason.
+f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, 1)
+f.tick(50)
+check(f.lastWarp(0).via == "hold0" and f.holds[#f.holds]:find(" 1$"), "the lever's reset 1: hold0 with the A0 reset")
 f.holdOff = "off"
 f.tick(50); f.tick(50)
 w = f.lastWarp(0)
 check(w.via == nil and f.count and f.logged("step=hold0_refused;reason=off"), "hold0 refused: body 0 by Lua Warp")
 f.holdOff = nil
+f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET)
 -- The take-down from the carrier: body 0 at the exact point.
 f.rx(5, 4, 33, 151000, 2400, 309000, 1571)
 check(f.C.state == "off" and f.called("000") and f.logged("step=unloaded;seat=2;why=taken_down;side=cargo;placed=1") and
