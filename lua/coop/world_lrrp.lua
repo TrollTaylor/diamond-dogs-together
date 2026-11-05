@@ -4,8 +4,8 @@
 --   host:  streams each live LRRP truck no player rides (LRRP_FAST 93: 10 Hz moving, 1 Hz still, 50 ms apart).
 --   guest: holds its copy (ForceStop) and puts it on the host's every frame while it moves or is manned there, pinned
 --          at rest. Its crew follows the host's: out at the same spot (UnsetRelativeVehicle; never StartTravel "", which
---          ended the crew's own LRRP plan), in again when the host's boards (SetRelativeVehicle rideFromBeginning, as
---          TppEnemy.AssignSoldiersToCP seats an LRRP crew). Within 400 m of this player (either end) a move over 30 m waits
+--          ended the crew's own LRRP plan); while the host's drives manned and this copy's crew is out, the truck is left
+--          to this copy's own AI (its crew boards on its own clock; SetRelativeVehicle seated nobody mid-mission, 68491f7f). Within 400 m of this player (either end) a move over 30 m waits
 --          (the truck stays this copy's own, as 0.15.2) and one of 5..30 m slides 1 m a frame; farther out it jumps.
 -- Lever (both roles, debug vehicle_state_status lrrp 0|1): pause / resume lrrp_follow on this copy (a key-off window).
 do
@@ -36,7 +36,7 @@ local function me()
   if ok and type(x) == "number" and type(z) == "number" then return x * 1000, z * 1000 end
 end
 local LF = {OP = 93, SEND_MS = 50, MOVE_MS = 100, REST_MS = 1000, STALE_MS = 3000, JUMP_MM = 5000, SETTLE_MM = 3000,
-  MOVING = 500, AHEAD_MS = 100, MAX_AHEAD_MS = 400, UNSEAT_MS = 2000, BOARD_MS = 3000, CMD_MS = 5000, NEAR_MM = 400000,
+  MOVING = 500, AHEAD_MS = 100, MAX_AHEAD_MS = 400, UNSEAT_MS = 2000, CMD_MS = 5000, NEAR_MM = 400000,
   STEP_MM = 1000, CATCH_MM = 30000, COST_MS = 10000}
 S.lf = LF
 W.OP.LRRP_FAST = LF.OP
@@ -69,14 +69,15 @@ local function riders(id)
   end
   return n, gids, s
 end
--- Crew positions (both roles): every crew member this copy has seen seated, once a second for 40 s after its rider
--- count changed: event=lrrp;step=crew;id;ent;x;z;in (seated);rl (riders now).
-local function crewLog(id, rec, t, n, gids)
+-- Crew positions (both roles): every crew member this copy has seen seated, once a second for 60 s after its rider
+-- count (or, on the guest, the host's) changed: event=lrrp;step=crew;id;ent;x;z;in (seated);rl (riders now).
+local function crewLog(id, rec, t, n, gids, rh)
   local seated = {}
   rec.crew = rec.crew or {}
   for _, v in ipairs(gids) do rec.crew[v], seated[v] = true, true end
-  if rec.lastN ~= n then rec.lastN, rec.chgAt = n, t end
-  if not rec.chgAt or t - rec.chgAt > 40000 or t - (rec.crewAt or -1e9) < 1000 then return end
+  local key = n * 16 + (rh or 0)
+  if rec.lastN ~= key then rec.lastN, rec.chgAt = key, t end
+  if not rec.chgAt or t - rec.chgAt > 60000 or t - (rec.crewAt or -1e9) < 1000 then return end
   rec.crewAt = t
   for v in pairs(rec.crew) do
     local x, _, z = S.pose(v)
@@ -162,20 +163,11 @@ H[LF.OP] = function(...)
   end, ...)
   if not ok then lfail(err) end
 end
--- A guard this copy may seat: alive and standing here (W.place.state 0), or unknown to the enemy table.
-local function fit(v)
-  local P, h = W.place, type(W.byId) == "table" and W.byId[v]
-  local en = h and type(W.ent) == "table" and W.ent[h]
-  if type(P) == "table" and type(P.state) == "function" and en then return P.state(en) == 0 end
-  return true
-end
--- The crew follows the host's count (rh = b.n): this copy's extra riders get out 2 s after the host's did (at rest),
--- this copy's known crew boards 3 s after the host's did; one command per guard per 5 s.
+-- The crew follows the host's count (rh = b.n): this copy's extra riders get out 2 s after the host's did (at rest);
+-- one command per guard per 5 s.
 local function crew(id, tr, t, b, moving, n, gids)
-  local seated = {}
-  for _, v in ipairs(gids) do tr.crew[v], seated[v] = true, true end
+  for _, v in ipairs(gids) do tr.crew[v] = true end
   tr.outAt = (not moving and b.n < n) and (tr.outAt or t) or nil
-  tr.inAt = b.n > n and (tr.inAt or t) or nil
   if tr.outAt and t - tr.outAt >= LF.UNSEAT_MS then
     local extra = n - b.n
     for _, v in ipairs(gids) do
@@ -187,21 +179,6 @@ local function crew(id, tr, t, b, moving, n, gids)
         L("event=lrrp;step=unseat;id=%d;ent=%s;k=%d;rh=%d;rl=%d", id, ent(v), tr.outs, b.n, n)
       end
     end
-  end
-  if tr.inAt and t - tr.inAt >= LF.BOARD_MS then
-    local want, any = b.n - n, false
-    for v in pairs(tr.crew) do
-      if want <= 0 then break end
-      if not seated[v] and fit(v) then
-        any, want = true, want - 1
-        if t - (tr.cmd[v] or -1e9) >= LF.CMD_MS then
-          tr.cmd[v], tr.ins = t, tr.ins + 1
-          send(v, {id = "SetRelativeVehicle", targetId = id, rideFromBeginning = true})
-          L("event=lrrp;step=board;id=%d;ent=%s;k=%d;rh=%d;rl=%d", id, ent(v), tr.ins, b.n, n)
-        end
-      end
-    end
-    if not any and not tr.noCrew then tr.noCrew = true; L("event=lrrp;step=board_none;id=%d;rh=%d;rl=%d", id, b.n, n) end
   end
 end
 function LF.frame(t)
@@ -227,12 +204,15 @@ function LF.frame(t)
       -- How near this player is to either end (mm); a jump there would be seen.
       local near = x and mx and math.min(hdist(x, z, mx, mz), hdist(tx, tz, mx, mz)) or 1e12
       local wait = d > LF.CATCH_MM and near < LF.NEAR_MM
-      if wait then
-        force(id, tr, false, "near")
+      -- The host's truck drives manned and this copy's known crew is out: never drive it off empty; its own AI keeps it.
+      local crewless = moving and b.n > 0 and tr.rl == 0 and next(tr.crew) ~= nil
+      if wait or crewless then
+        force(id, tr, false, crewless and "crew_out" or "near")
         if t - (tr.deferAt or -1e9) >= 2000 then
           tr.deferAt = t
-          L("event=lrrp;step=defer;id=%d;d_m=%.1f;near_m=%.1f;rh=%d", id, d / 1000, near / 1000, b.n)
+          L("event=lrrp;step=%s;id=%d;d_m=%.1f;near_m=%.1f;rh=%d;rl=%d", crewless and "crew_wait" or "defer", id, d / 1000, near / 1000, b.n, tr.rl or -1)
         end
+        wait = true
       else
         force(id, tr, true, follow and (b.n > 0 and "riders" or "moving") or "rest")
         if not follow and d > LF.SETTLE_MM then L("event=lrrp;step=settle;id=%d;d_m=%.1f", id, d / 1000) end
@@ -257,8 +237,9 @@ function LF.frame(t)
       if logs or t - (tr.seatAt or 0) >= 500 then
         tr.seatAt = t
         local n, gids, list = riders(id)
-        if not wait then crew(id, tr, t, b, moving, n, gids) end
-        crewLog(id, tr, t, n, gids)
+        tr.rl = n
+        if not wait then crew(id, tr, t, b, moving, n, gids) else for _, v in ipairs(gids) do tr.crew[v] = true end end
+        crewLog(id, tr, t, n, gids, b.n)
         if logs then
           tr.logAt = t
           local x2, y2, z2 = S.pose(id)

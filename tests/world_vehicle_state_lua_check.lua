@@ -570,8 +570,7 @@ do
     for i = 26, 85 do g.H[93]({6100 + i * 100, 25602, 111000, 1000, 200000, 0, 0, 0, 0}); g:poll(100) end
     check(sentTo(1194, 'StartTravel') == 0 and sentTo(1195, 'StartTravel') == 0 and sentTo(1194, 'UnsetRelativeVehicle') == 2,
         'guest: still seated: never StartTravel "", UnsetRelativeVehicle again 5 s later (' .. sentTo(1194, 'UnsetRelativeVehicle') .. ')')
-    g.pool[25602].riders = nil
-    -- The host's truck drives again: still stopped here, placed every frame.
+    -- The host's truck drives again, this copy's crew still seated: still stopped here, placed every frame.
     n = #placedOf(g, 25602)
     for i = 86, 90 do g.H[93]({6100 + i * 100, 25602, 111000 + (i - 85) * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
     check(forces(g, 25602, true) == 1 and #placedOf(g, 25602) >= n + 5, 'guest: driving again: followed, ForceStop never lifted')
@@ -622,7 +621,7 @@ do
     check(forces(g, 25602, false) == 1 and #placedOf(g, 25602) == fx and g:has('event=lrrp;step=crew_wait;id=25602') and
         #cmdsOf(g, 1194, 'SetRelativeVehicle') == 0, 'crew: the host truck drives manned, ours is out: released, never driven off empty, no board command')
     g.pool[25602].riders = {1194, 1195}
-    for i = 11, 20 do s2(100000 + i * 1000, 10000, 2, 1) end
+    for i = 11, 30 do s2(100000 + i * 1000, 10000, 2, 1) end
     check(forces(g, 25602, true) == 2 and #placedOf(g, 25602) > fx and #cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 1,
         'crew: manned here again: taken and placed again')
     check(g:has('event=lrrp;step=cost;role=guest;'), 'a cost line every 10 s')
