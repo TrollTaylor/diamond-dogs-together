@@ -405,6 +405,25 @@ float NearerSquaredFlat(const float (&pos)[3], const float (&host)[3], const flo
 
 void FlattenRange(Request& request) noexcept { request.player[1] = request.pos[1]; }
 
+void RangePlayer(bool partner_nearer, const float (&own)[3], const float (&partner)[3], float (&out)[3]) noexcept {
+    for (unsigned i = 0; i < 3; ++i) out[i] = partner_nearer ? partner[i] : own[i];
+}
+
+RemoteSource RemoteRangeSource(bool have_cmd, bool range_hidden, bool net_valid, unsigned net_age_ms, bool net_allowed) noexcept {
+    if (have_cmd) return RemoteSource::cmd;
+    if (net_allowed && range_hidden && net_valid && net_age_ms <= kRangePoseMaxAgeMs) return RemoteSource::net;
+    return RemoteSource::none;
+}
+
+const char* RemoteSourceName(RemoteSource source) noexcept {
+    switch (source) {
+    case RemoteSource::cmd: return "cmd";
+    case RemoteSource::net: return "net";
+    case RemoteSource::none: return "none";
+    }
+    return "?";
+}
+
 bool GuestMayWarp(bool lab, bool play, bool) noexcept { return lab || play; }
 
 const char* Gate::Record(const Result& result) noexcept {

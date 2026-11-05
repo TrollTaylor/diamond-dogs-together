@@ -330,6 +330,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.world_horse_pillion);
         if (ok) result.world_horse_pillion_given = true;
     }
+    // Horse plan M4, shoot from the back of the horse (lab and play, off unless named: ResolveWeaponDefaults).
+    else if (Equals(key, "world_horse_shot")) {
+        ok = ParseBool(value, result.world_horse_shot);
+        if (ok) result.world_horse_shot_given = true;
+    }
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
         if (ok) result.companion_host_owned_given = true;
@@ -1994,12 +1999,17 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // rehearsal -WanSim bad); a named 0 is the off switch.
     if (!c.world_horse_share_given) c.world_horse_share = gun;
     // Horse plan M2, a downed partner on the shared D-Horse (docs/mounts.md "Downed partner on the horse"): off unless
-    // named in lab and play (BODY0 round: the downed player lies on the horse on both screens through the ride, but on
-    // their own screen crouches on it after the dismount; the gate did not pass); a named 1 runs in play too.
+    // named in lab and play (M2f round: the squat after the carrier's dismount is asked back to CRAWL and the victim's horse
+    // no longer jumps to a stale KEEP pose, but the lab proof session never completed its two role orders); a named 1 runs
+    // in play too.
     if (!c.world_horse_cargo_given) c.world_horse_cargo = false;
     // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): follows the gun profile in lab and
     // play since the M3c round (with its 2.5 / 2.8 m ride hold, lua/coop/world_horse_share.lua); a named 0 is the off switch.
     if (!c.world_horse_pillion_given) c.world_horse_pillion = gun;
+    // Horse plan M4, shoot from the back of the horse (docs/mounts.md "Shoot from the back of the horse"): off unless named
+    // in lab and play (the M4 gate was not reached: no rear-seat shot put a guard down, and the driver's screen shows no
+    // raised gun); a named 1 runs in play too.
+    if (!c.world_horse_shot_given) c.world_horse_shot = false;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;

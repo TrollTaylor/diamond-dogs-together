@@ -205,12 +205,23 @@ do
    if not Q.setPose(unpack(v, 1, 6)) then return false, "pillion_pose;refused=args" end
    return true, "pillion_pose;v=" .. table.concat(v, ",")
   end
-  for k in pairs({wormhole = true, mb_weapons = true, rules = true, pillion_status = true, pillion_pose = true}) do P.handles[k] = true end
+  -- Horse plan M2f (lua/coop/world_horse_cargo.lua): the lab lever cargo_relie 0|1 (1, the default: a squatting or standing
+  -- body held as cargo is asked back to CRAWL; 0 only logs its stance changes).
+  local function relie(a)
+   local Q = type(W) == "table" and W.horseCargo
+   if type(Q) ~= "table" or type(Q.setRelie) ~= "function" then return false, "cargo_unavailable" end
+   if #a ~= 2 or W.mode ~= 1 or not Q.setRelie(tonumber(a[2])) then return false, "cargo_relie;refused=args" end
+   return true, "cargo_relie;v=" .. a[2]
+  end
+  for k in pairs({wormhole = true, mb_weapons = true, rules = true, pillion_status = true, pillion_pose = true, cargo_relie = true}) do
+   P.handles[k] = true
+  end
   local base = P.run
   P.run = function(a, id)
    local c = type(a) == "table" and a[1]
    if c == "wormhole" or c == "mb_weapons" or c == "rules" then return R.command(a) end
    if c == "pillion_status" or c == "pillion_pose" then return pillion(a) end
+   if c == "cargo_relie" then return relie(a) end
    return base(a, id)
   end
   local function tick()
