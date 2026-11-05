@@ -49,10 +49,10 @@ wait 2500
 host run horse_status
 host expect localMounted=1
 host hold w+a 1500 nowait
-guest burst h2p-trot 3 250
+guest burst h2p-trot 2 400
 host capture h2p-trot-carrier
 host hold w+shift+d 1500 nowait
-guest burst h2p-gallop 4 250
+guest burst h2p-gallop 2 400
 host capture h2p-gallop-carrier
 host release
 wait 2500

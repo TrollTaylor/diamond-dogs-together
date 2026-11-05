@@ -245,10 +245,7 @@ local function stanceNow()
  end
  return "none"
 end
-local function stanceTick(now)
- local S = W.horseShare
- local tracked = type(S) == "table" and S.track ~= nil
- if tracked then C.tracked, C.trackOffAt = true, nil elseif C.tracked then C.tracked, C.trackOffAt = false, now end
+local function stanceTick(now, tracked)
  local s = stanceNow()
  if s ~= C.stance then
   capped("stance", fmt("step=stance;s=%s;was=%s;src=%s;tracked=%d;off_ms=%d", s, C.stance or "none", C.want and C.want[4] or "none",
@@ -442,7 +439,12 @@ local function cargoTick(now)
  -- Unridden, this copy's horse stands on the carrier's pose (M1 places it while the carrier rides).
  local k, S = C.keepPose, W.horseShare
  local tracked = type(S) == "table" and S.track ~= nil
- if k and not tracked and not mounted() and now >= (C.placeAt or 0) and sqrt((h.x - k.x) ^ 2 + (h.z - k.z) ^ 2) > DRIFT_MM then
+ if tracked then C.tracked, C.trackOffAt = true, nil elseif C.tracked then C.tracked, C.trackOffAt = false, now end
+ -- M2f (run 131f88c6: right after the final a KEEP pose sent before it put the horse 11 m back; Unconscious 0.25 s later):
+ -- for SETTLE_MS after M1's track ended nothing is re-placed, then only on a KEEP pose sent after that.
+ local off = C.trackOffAt
+ local settled = not off or (now - off >= SETTLE_MS and (C.keepAt or 0) - off >= SETTLE_MS)
+ if k and not tracked and settled and not mounted() and now >= (C.placeAt or 0) and sqrt((h.x - k.x) ^ 2 + (h.z - k.z) ^ 2) > DRIFT_MM then
   C.placeAt = now + PLACE_MS
   local r = place(k)
   local ok = r and r.ready == true
@@ -454,7 +456,7 @@ local function cargoTick(now)
  local wa = h.yaw / 1000
  local wx, wy, wz = h.x - V.back * sin(wa), h.y + V.rise, h.z - V.back * cos(wa)
  if now - (C.trackPinAt or -1e9) >= TRACK_PIN_MS then warp0(wx, wy, wz, wa + pi / 2, "census") end
- stanceTick(now)
+ stanceTick(now, tracked)
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS
   local got = type(me.pos) == "table" and int(me.pos[2], -1000000000, 1000000000) and round(me.pos[2] / 10) or -1
