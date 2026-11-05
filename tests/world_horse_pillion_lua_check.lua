@@ -8,7 +8,8 @@ end
 local HORSE, OP = 6656, 80
 local function fixture(o)
     o = o or {}
-    local f = {now = 1000, tx = {}, logs = {}, places = {}, masks = {}, warps = {}, holds = {}, seats = {}, stances = {}, rides = false,
+    local f = {now = 1000, tx = {}, logs = {}, places = {}, masks = {}, warps = {}, holds = {}, seats = {}, stances = {}, boxes = {}, rides = false,
+        shot = o.shot == true,
         key = o.key ~= false, pillion = o.pillion ~= false, gen = 5, e = false, padOk = true, seatOk = true, placeOk = true, masked = false, mag = 0,
         horse = {x = 10000, y = 2000, z = 30000, yaw = 0, occupied = false}}
     local W = {OP = {}, handlers = {}, stopHooks = {}, pairedHooks = {}, startHooks = {}, unpairedHooks = {}, paired = true, eff = 3,
@@ -25,7 +26,12 @@ local function fixture(o)
     W.receipt = function(text)
         local verb = text:match("MGS_COOP_HORSE_DRIVE_V1' %-%- (.*)$")
         if not verb then return nil end
-        if verb == "cfg" then return {on = f.key and 1 or 0, cargo = 0, pillion = f.pillion and 1 or 0} end
+        if verb == "cfg" then return {on = f.key and 1 or 0, cargo = 0, pillion = f.pillion and 1 or 0, shot = f.shot and 1 or 0} end
+        local bx, by, bz, byaw = verb:match("^pbox 30010 7 (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)$")
+        if bx then
+            f.boxes[#f.boxes + 1] = {tonumber(bx), tonumber(by), tonumber(bz), tonumber(byaw)}
+            return {ready = true, box = true}
+        end
         local h = f.horse
         if verb:find("^read ") then
             return {ready = true, id = HORSE, realized = true, occupied = h.occupied, rider = 0, pending = 0, x = h.x, y = h.y, z = h.z, yaw = h.yaw, gen = f.gen,
@@ -460,4 +466,25 @@ check(bo.S.hold ~= true, "band: approached from outside, 2.65 m is not held")
 bo.e = false; bo.ride(1); bo.e = true; bo.ride(1)
 check(bo.P.state == "off" and #bo.seatTx() == 0, "band: unheld at 2.65 m, E claims nothing (it reaches the game)")
 check(g.W.horsePillion.status():find("pillion;state=off;key=1;", 1, true) ~= nil, "status line")
+-- Horse plan M4 (world_horse_shot): the seated passenger's copy leases its placed horse's box to the seated-shot hook with
+-- every placement (pbox: the census root and yaw), only with the key; one step=shot_box line per seating.
+th, tg = fixture(), fixture({host = false, shot = true})
+th.rides, th.horse.occupied = true, true
+tg.ride(3)
+seatBoth(th, tg)
+check(tg.P.state == "seated", "shot: seated")
+local nb = #tg.boxes
+tg.ride(3)
+local bx, pb = tg.boxes[#tg.boxes], tg.places[#tg.places]
+check(#tg.boxes >= nb + 3 and bx[1] == pb.x and bx[2] == pb.y and bx[3] == pb.z and bx[4] == pb.yaw,
+    "shot key: pbox with the placed census root and yaw every placement")
+check(tg.count("event=horse_pillion;step=shot_box;ok=1;") == 1, "step=shot_box once per seating")
+check(tg.P.status():find(";shot=1", 1, true) ~= nil, "the status line names the shot key")
+local nsh, nsg = fixture(), fixture({host = false})
+nsh.rides, nsh.horse.occupied = true, true
+nsg.ride(3)
+seatBoth(nsh, nsg)
+nsg.ride(3)
+check(nsg.P.state == "seated" and #nsg.boxes == 0 and nsg.P.status():find(";shot=0", 1, true) ~= nil, "shot key off: no pbox")
+check(#th.boxes == 0, "the driver's copy sends no pbox")
 print("world_horse_pillion_lua_check: " .. checks .. " checks passed")

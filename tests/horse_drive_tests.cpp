@@ -10,6 +10,7 @@
 #include "../native/horse_drive_contract.hpp"
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
+#include "mgscoop/partner_seat_shot.hpp"
 
 namespace {
 namespace hd = mgscoop::horse_drive;
@@ -383,6 +384,76 @@ void TestSeatErr() {
     Check(pinned && hd::kLifeSiteRva == 0xe4d340, "the life table's reader (SetMaxLife's loop 0x140E4D340) is a pinned site");
 }
 
+// Horse plan M4 (shoot from the back of the horse, lab key world_horse_shot): the passenger's copy leases its placed horse's
+// box (pbox: the census root and yaw) to the seated-shot hook (partner_seat_shot Class::horse), which moves a bullet's start
+// past the horse and the driver in front of the passenger (design 8.37's self-hit exclusion for the rear seat).
+void TestShot() {
+    hd::Request r{};
+    Check(Parse("pbox 30010 7 1000 -2000 3000 1571", r) && r.verb == hd::Verb::pbox && r.mission == 30010 && r.epoch == 7 && r.x == 1000 &&
+              r.y == -2000 && r.z == 3000 && r.yaw == 1571,
+          "pbox: the placed census root (mm) and yaw (mrad)");
+    Check(!Parse("pbox 30050 7 0 0 0 0", r) && !Parse("pbox 30010 7 0 0 0", r) && !Parse("pbox 30010 7 0 0 0 0 1", r) &&
+              !Parse("pbox 30010 7 0 0 0 40000", r) && !Parse("pbox 30010 0 0 0 0 0", r),
+          "pbox: free roam, epoch, exact grammar, yaw bounds");
+    hd::Reset();
+    float p[3]{}, yaw = 0.f;
+    Check(!hd::ShotBox(1000, p, yaw), "no box yet");
+    hd::NoteShotBox(1000, -2000, 3000, 1571, 1000);
+    Check(hd::ShotBox(1000, p, yaw) && Near(p[0], 1.f) && Near(p[1], -2.f) && Near(p[2], 3.f) && Near(yaw, 1.571f), "a box in metres / radians");
+    Check(hd::kBoxMs == 300 && hd::ShotBox(1000 + hd::kBoxMs, p, yaw) && !hd::ShotBox(1001 + hd::kBoxMs, p, yaw) && !hd::ShotBox(999, p, yaw),
+          "live for kBoxMs (300 ms) after the last pbox; a clock that went back has none");
+    hd::NoteShotBox(1000, -2000, 3000, 1571, 2000);
+    hd::Reset();
+    Check(!hd::ShotBox(2000, p, yaw), "reset ends the box");
+    namespace pss = mgscoop::partner_seat_shot;
+    Check(pss::SpecFor(pss::Class::horse) == &pss::kHorseBox && std::strcmp(pss::ClassName(pss::Class::horse), "horse") == 0 &&
+              pss::ClassFor(1, 1) == pss::Class::light,
+          "the horse class has its own box (the vehicle classes unchanged)");
+    pss::Pub pub{};
+    pub.cls = pss::Class::horse;
+    pub.apply = true;
+    pub.target_ok = true;
+    pub.target[0] = 0.f; pub.target[1] = 1.2f; pub.target[2] = 20.f;
+    // The passenger's muzzle 0.25 m behind and 1.3 m over the census root (body 0 is held 0.35 m behind, 0.8 m up), the
+    // horse facing +Z: a shot ahead across the driver and the neck starts past the horse's head.
+    const float start[3] = {0.f, 1.3f, -0.25f}, ahead[3] = {0.f, 0.f, 1.f};
+    pss::Plan pl = pss::PlanShot(pub, start, ahead);
+    Check(pl.move && std::strcmp(pl.result, "shift") == 0 && pl.inside && pl.pos[2] > 1.6f && pl.pos[2] < 2.0f,
+          "ahead: the start moves past the box's front (the driver, the neck and the head)");
+    const float right[3] = {-1.f, 0.f, 0.f};  // the horse's right at yaw 0 (partner_seat_shot Axes)
+    pl = pss::PlanShot(pub, start, right);
+    Check(pl.move && pl.t > 0.5f && pl.t < 0.75f, "to the side: past the horse's flank within 0.75 m");
+    const float high[3] = {0.f, 2.5f, -0.25f};
+    pl = pss::PlanShot(pub, high, ahead);
+    Check(!pl.move && std::strcmp(pl.result, "outside") == 0, "a start outside the box is never moved");
+    const float driver_head[3] = {0.f, 0.49f + 1.0f, 0.1f};
+    pl = pss::PlanShot(pub, driver_head, ahead);
+    Check(pl.inside, "the driver's head (0.1 m ahead, ~1 m over the rider root) is inside the box");
+}
+void TestShotKey() {
+    const auto lab = [](const char* text) {
+        mgscoop::LabConfig c{};
+        (void)mgscoop::ParseLabConfig(text, std::strlen(text), c);
+        return c;
+    };
+    const auto def = lab("enabled=1\nrole=host\n");
+    const auto on = lab("enabled=1\nrole=guest\nworld_horse_shot=1\n");
+    const auto off = lab("enabled=1\nrole=guest\nworld_horse_shot=0\n");
+    const auto bad = lab("enabled=1\nrole=host\nworld_horse_shot=2\n");
+    Check(!def.world_horse_shot && !def.world_horse_shot_given, "world_horse_shot: off unless named without the gun profile");
+    Check(on.world_horse_shot && on.world_horse_shot_given && on.unknown_keys == 0 && on.invalid_values == 0, "a named 1 turns it on");
+    Check(!off.world_horse_shot && off.world_horse_shot_given, "a named 0 is the off switch");
+    Check(!bad.world_horse_shot && bad.invalid_values == 1, "an invalid value stays off");
+    // M4: on with the gun profile in lab and play (the proof runs do not name it); a named 0 is the off switch.
+    const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
+    Check(gun.world_horse_shot && !gun.world_horse_shot_given && gun.world_horse_pillion, "M4: on with the gun profile");
+    const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_shot=0\n");
+    Check(!gunOff.world_horse_shot && gunOff.world_horse_shot_given, "with the gun profile a named 0 is the off switch");
+    const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
+    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_shot && playGun.play_refused == 0, "on in play with the gun profile");
+}
+
 // BODY0 round: the pure part of the hardware write watch on body 0's transform (native/include/mgscoop/horse_body_watch.hpp).
 void TestBodyWatch() {
     namespace w = mgscoop::horse_body_watch;
@@ -438,6 +509,8 @@ int main() {
     TestCargoKey();
     TestPillion();
     TestPillionKey();
+    TestShot();
+    TestShotKey();
     TestSeatErr();
     std::printf("%u horse drive checks passed: call-enter matrix, saddle anchor, receipt grammar, refusals, shared state, "
                 "shared-horse rider visibility, lab key\n",
