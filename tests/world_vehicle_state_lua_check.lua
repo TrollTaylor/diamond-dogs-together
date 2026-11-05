@@ -53,7 +53,7 @@ local function Fixture(role, opts)
     W.tick32 = function(ms) return ms % 4294967296 end
     W.receipt = function(source)
         -- Enemy round 8 track B: the native-only lab key lrrp_follow (1 on, 0 off).
-        if source == "return 'MGS_COOP_LRRP_CFG_V1'" then c.cfgAsked = (c.cfgAsked or 0) + 1; return opts.lrrp and 1 or 0 end
+        if source == "return 'MGS_COOP_LRRP_CFG_V1'" then c.cfgAsked = (c.cfgAsked or 0) + 1; return opts.lrrpDefault and 2 or opts.lrrp and 1 or 0 end
         local first, n = source:match("^return 'MGS_COOP_VEHICLE_LIFE_V1' %-%- (%d+) (%d+)$")
         assert(first, 'only the life receipt: ' .. source)
         c.reads = (c.reads or 0) + 1
@@ -774,5 +774,29 @@ do
     for i = 6, 20 do s3(5600000 + i * 1000, 10000, 1) end
     check(#cmdsOf(g, 1194, 'StartTravel') == 0 and g:has('event=lrrp;step=tstep_hold;id=25603;ent=' .. str32('sol_a') .. ';why=wait'),
         'guest: its truck waits near this player: the crew keeps its own step')
+end
+-- Enemy round 10 B flip (design 7.28): at the defaults (gun profile, not named) the receipt answers 2 and lrrp_follow runs
+-- in Afghanistan free roam (30010) only, the map its gate ran on; a named 1 runs on any map.
+do
+    local h = Fixture('host', {lrrpDefault = true, mission = 30010})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(h.S.lf.on() and #h:sent(93) >= 5, 'defaults (receipt 2): on in 30010')
+    h = Fixture('host', {lrrpDefault = true, mission = 30020})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(not h.S.lf.on() and #h:sent(93) == 0, 'defaults (receipt 2): off in Africa (30020)')
+    h = Fixture('host', {lrrpDefault = true, mission = 30050})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(not h.S.lf.on() and #h:sent(93) == 0, 'defaults (receipt 2): off at Mother Base (30050)')
+    h = Fixture('host', {lrrp = true, mission = 30020})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(h.S.lf.on() and #h:sent(93) >= 5, 'named 1: on in Africa too')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')
