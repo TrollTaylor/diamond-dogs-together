@@ -1,17 +1,31 @@
 # Enemy gaps 2 (body_dead, docs/world-sync-design.md 7.17), the dead body carried: after enemy-prove-1-join.txt,
 # enemy-latch-quiet.txt (guard 2961503 asleep) and, if it runs, enemy-integ-carry.txt (him carried asleep); before
-# enemy-latch-alert.txt. The host kills 2961503 (placed first on the guest's copy, so both corpses lie at the same spot;
-# not 753908875: in run 9023e5c6 his dropped steel shield took the guest's r, the pick-up prompt, so nobody carried
-# him), the guest warps next to the dead guard, picks him up (hold r), turns round, walks about 6 m and puts him down.
-# Expected with body_dead (CFG r[19] bit 1024): the guest's event=body_tx sent=1 once the body rested 1.5 s, the host's
-# event=place_body fix=1 why=none and its hplace applied: on the host's screen the corpse lies where the guest put it.
-# Without it the host refuses disabled_local (the 6.8 m of run 41f2b07f). Frames d-a (spot A, both copies), d-held
-# (guest), d-b (spot B, both cameras on the corpse: aim_ent). The host is warped behind the guest for the frames,
-# then back to the quiet spot 50 m south.
+# enemy-latch-alert.txt. The guest shoots the sleeping 2961503 (its own kill: placed first on the host's copy, so both
+# corpses lie at the same spot), warps next to the dead guard, picks him up (hold r), turns round, walks about 6 m and
+# puts him down. Runs 9023e5c6 / 8281b868: a guard killed by the debug outcome (enemy kill) offers no pick-up prompt
+# (and 753908875's dropped steel shield took the r), so nobody carried him. Expected with body_dead (CFG r[19] bit
+# 1024): the guest's event=body_tx sent=1 once the body rested 1.5 s, the host's event=place_body fix=1 why=none and its
+# hplace applied: on the host's screen the corpse lies where the guest put it. Without it the host refuses
+# disabled_local (the 6.8 m of run 41f2b07f). Frames d-a (spot A, both copies), d-held (guest), d-b (spot B, both
+# cameras on the corpse: aim_ent). The host is warped behind the guest for the frames, then back to the quiet spot.
 logmark both
-host run enemy kill 2961503
-host expect ^enemy_kill;ent=2961503;
-waitlog guest 'world_lua=event=apply; ent=2961503; state=5; ver=[0-9]+; src=outcome;' 10
+guest run enemy goto 2961503 2.5
+wait 1500
+guest run aim_ent 2961503 0.2
+wait 500
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 1500
+guest run aim_ent 2961503 0.2
+wait 500
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=2961503; state=5;' 6
+waitlog host 'world_lua=event=apply; ent=2961503; state=5;' 8
 wait 2500
 host run enemy info 2961503
 guest run enemy info 2961503
