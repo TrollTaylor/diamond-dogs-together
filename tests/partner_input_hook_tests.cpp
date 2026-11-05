@@ -13,6 +13,7 @@
 #include <utility>
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
+#include "mgscoop/soldier_authority.hpp"
 #include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "partner_player_contract.hpp"
@@ -244,6 +245,27 @@ void TestFireFilter() {
         Check(st.installed && st.live && st.armed && st.owner == 1 && st.suppressed == 2 && st.passed == 3 && st.passed_player == 2 &&
               st.owner_disarmed == 0 && st.last_owner == 0x401 && st.last_thread == GetCurrentThreadId(),
               "stats: suppressed 2, passed 3 (2 player-owned), last owner and thread");
+        // FM1, the far mirror: a mirror puppet's bullet (owner 0x400|idx in the mirror mask) is dropped, armed or not; body 1
+        // keeps its own rule; the local player's shots are counted.
+        {
+            namespace au = mgscoop::soldier_authority;
+            au::ClearMirrored();
+            au::SetMirrored(15, true);
+            std::uint32_t f0 = 0, n0 = 0, f1 = 0, n1 = 0;
+            au::MirrorDrops(f0, n0);
+            const std::uint32_t s0 = au::LocalShots();
+            const unsigned before = g_forwarded;
+            Check(img.Call(pc::fire_slot_live_rva, 0x400 | 15) == nullptr && g_forwarded == before, "FM1: a mirror puppet's bullet is dropped");
+            Check(img.Call(pc::fire_slot_live_rva, 0x400 | 16) == reinterpret_cast<void*>(0x1234) && g_forwarded == before + 1,
+                  "FM1: another soldier's bullet is forwarded");
+            Check(img.Call(pc::fire_slot_live_rva, 1) == nullptr && g_forwarded == before + 1, "FM1: body 1 still dropped (armed)");
+            Check(img.Call(pc::fire_slot_live_rva, 0) == reinterpret_cast<void*>(0x1234) && au::LocalShots() == s0 + 1,
+                  "FM1: the local player's shot is forwarded and counted");
+            au::MirrorDrops(f1, n1);
+            Check(f1 == f0 + 1 && n1 == n0, "FM1: one puppet_fire drop");
+            au::ClearMirrored();
+            Check(img.Call(pc::fire_slot_live_rva, 0x400 | 15) == reinterpret_cast<void*>(0x1234), "FM1: released, forwarded again");
+        }
         ff::Disarm();
         Check(img.Call(pc::fire_slot_live_rva, 1) == reinterpret_cast<void*>(0x1234), "disarmed again: owner 1 forwarded");
         ff::ReadStats(reinterpret_cast<void*>(img.base), st);
@@ -654,6 +676,17 @@ void TestNoiseFilter() {
         ff::ReadStats(reinterpret_cast<void*>(img.base), st);
         Check(g_noise_forwarded == 3 && st.noise_installed && st.noise_live && st.noise_dropped == 1 && st.noise_passed == 3 &&
                   st.noise_last_owner == 0x401, "noise: owner 1 dropped, the local player and soldiers forwarded");
+        {
+            namespace au = mgscoop::soldier_authority;
+            au::ClearMirrored();
+            au::SetMirrored(1, true);
+            std::uint32_t f0 = 0, n0 = 0, f1 = 0, n1 = 0;
+            au::MirrorDrops(f0, n0);
+            call(0x401);
+            au::MirrorDrops(f1, n1);
+            Check(g_noise_forwarded == 3 && n1 == n0 + 1 && f1 == f0, "FM1: a mirror puppet's noise is dropped (puppet_noise)");
+            au::ClearMirrored();
+        }
         std::memcpy(img.mem + pc::noise_vtable_rva, &target, 8);
         Check(!ff::NoisePatchLive(reinterpret_cast<void*>(img.base)), "noise: a restored slot is not live");
         ff::Disarm();

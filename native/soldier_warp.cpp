@@ -330,6 +330,7 @@ const char* DriveAdmit(const DriveRule& rule) noexcept {
     if (!(rule.lab || rule.play)) return "role";
     if (!rule.snap || (rule.host && !rule.owner)) return "disabled";
     if (rule.puppet && (!rule.puppet_key || rule.host)) return "puppet";
+    if (rule.mirror && (!rule.act_key || rule.host)) return "mirror";
     if (!FollowMission(rule.mission)) return "mission";
     return nullptr;
 }

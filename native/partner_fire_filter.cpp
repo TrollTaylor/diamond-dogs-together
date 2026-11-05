@@ -6,6 +6,7 @@
 #include <strsafe.h>
 #include <cstring>
 #include "mgscoop/partner_fire_filter.hpp"
+#include "mgscoop/soldier_authority.hpp"
 #include "mgscoop/near_code.hpp"
 #include "partner_player_contract.hpp"
 
@@ -213,6 +214,14 @@ void* Hook(void* iface, const void* record) noexcept {
         InterlockedIncrement(&g_suppressed);
         return nullptr;  // as RequestBullet itself when its slot allocator yields nothing (0xD32CB4)
     }
+    // Enemy sync M7 FM1 (soldier_act): a mirror puppet's shot is the owner copy's, only seen here (its muzzle flash comes
+    // from its own fire motion); its bullet is dropped like body 1's. The local player's own shots are counted (the
+    // guest's shot releases the mirror puppets).
+    if (soldier_authority::Mirrored(owner)) {
+        soldier_authority::NoteMirrorDrop(false);
+        return nullptr;
+    }
+    if (owner == 0) soldier_authority::NoteLocalShot();
     if (owner != 0xFFFFu && owner == static_cast<std::uint16_t>(g_owner_id)) InterlockedIncrement(&g_owner_disarmed);
     InterlockedIncrement(&g_passed);
     if ((owner & c::shot_owner_type_mask) == 0) InterlockedIncrement(&g_passed_player);
@@ -246,6 +255,10 @@ void NoiseHook(void* self, const void* record) noexcept {
     }
     if (detail::Drops(static_cast<std::uint16_t>(g_owner), owner)) {
         InterlockedIncrement(&g_noise_dropped);
+        return;
+    }
+    if (soldier_authority::Mirrored(owner)) {  // FM1: a mirror puppet's noise (the owner copy's shot)
+        soldier_authority::NoteMirrorDrop(true);
         return;
     }
     InterlockedIncrement(&g_noise_passed);

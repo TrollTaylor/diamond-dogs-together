@@ -432,6 +432,31 @@ bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world
     return g_core.SnapPair(slot, cur, prev);
 }
 
+bool ActLatest(std::uint16_t slot, std::uint64_t& now_ms, world::Act& out) noexcept {
+    now_ms = partner_net::NowMs();
+    if (!Configured()) return false;
+    Locked lock;
+    return g_core.ActLatest(slot, out);
+}
+
+world::TxStatus SendAct(std::uint32_t tick, std::uint16_t slot, std::uint16_t seq, unsigned part,
+                        const std::uint8_t (&req)[world::kActRequest], const std::uint8_t (&order)[world::kActOrder]) noexcept {
+    if (!Configured()) return world::TxStatus::disabled;
+    std::uint32_t words[world::kActWords]{};
+    if (!world::ActWords(part, req, order, words)) return world::TxStatus::bad_args;
+    std::int64_t values[4 + world::kActWords] = {tick, slot, seq, static_cast<std::int64_t>(part)};
+    for (unsigned i = 0; i < world::kActWords; ++i) values[4 + i] = words[i];
+    static thread_local world::Datagram datagram;
+    datagram.size = 0;
+    world::TxStatus status{};
+    {
+        Locked lock;
+        status = g_core.Tx(world::op::soldier_act, values, 4 + world::kActWords, partner_net::NowMs(), &datagram);
+    }
+    if (status == world::TxStatus::ok && datagram.size) partner_net::SendDatagram(1, datagram.bytes, datagram.size);
+    return status;
+}
+
 WarpGrant FindGrant(std::uint16_t seq) noexcept {
     WarpGrant out{};
     if (!Configured()) return out;

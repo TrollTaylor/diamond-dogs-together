@@ -1,0 +1,135 @@
+# Enemy sync M7 FM1, the far mirror (docs/world-sync-design.md 7.15), gate part 1 of 3: the quiet scene. Run with
+# -LabSetting soldier_act=1 (and the shipped defaults otherwise); act_census=1 is named here for the census lines.
+#   1. the host alone 50 m south of afgh_field_cp; the guest pairs, then walks ~110 m further south (the watcher, about
+#      150 m from the outpost; its distance is measured by the census and the mirror lines, not assumed);
+#   2. the host walks toward the outpost; 60 s of quiet patrol watched through the guest's binoculars (frames on both
+#      copies every 10 s: the guards the guest's copy mirrors walk their routes with leg motion);
+#   3. CAUTION (cp_phase nearest caution), 25 s.
+# Expected (guest): event=mirror;on=1;why=far for the outpost guards beyond R + 15 m; soldier_act_frame lines with
+# rx / applied growing; 0 event=mirror;on=1 within R. Host: tx growing; soldier_act_census lines.
+# Run all three parts in ONE hidden session:
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo <built worktree> -Owner FM1-far-mirror-guest
+#     -ScenarioPath tools/worker/scenarios/enemy-act-1-quiet.txt,tools/worker/scenarios/enemy-act-2-alert.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     -LabSetting soldier_act=1 -TimeoutSec 600 -Wait
+labsetting act_census=1
+labsetting nametag=1
+titlemenu host 240
+title host 240
+waitgameplay host 150
+host debug godmode 1
+host debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+wait 6000
+host run teleport 421.16 269.2 2084.42 0
+wait 8000
+host run world_status
+logmark both
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+guest debug godmode 1
+guest debug infinite_ammo 1
+guest run teleport 423.00 269.5 2081.00 0
+wait 3000
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+wait 1500
+guest run position
+# The walk stops near z 2018-2025 (~105 m from the outpost; runs 125d916b, 0a271c10, 3 of FM1). A debug teleport 40 m
+# further south from 10 m above the walked height left the guest under the terrain (y -79.2, FM1 session 3): no
+# teleport here until a ground point there is known.
+host run position
+host run act_status
+guest run act_status
+host hold w 1500
+host hold w 1500
+host run position
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold f 1500 nowait
+wait 900
+both capture q-0
+wait 7000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold f 1500 nowait
+wait 900
+both capture q-10
+wait 7000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold f 1500 nowait
+wait 900
+both capture q-20
+wait 7000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold f 1500 nowait
+wait 900
+both capture q-30
+wait 7000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold f 1500 nowait
+wait 900
+both capture q-40
+wait 7000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold f 1500 nowait
+wait 900
+both capture q-50
+wait 7000
+host run cp_phase nearest caution
+host expect ^submitted_phase;cp=[^;]+;phase=caution;
+wait 5000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold f 1500 nowait
+wait 900
+both capture c-0
+wait 7000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold f 1500 nowait
+wait 900
+both capture c-10
+wait 7000
+host run act_status
+guest run act_status
+host run world_status
+guest run world_status

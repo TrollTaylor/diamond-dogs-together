@@ -2294,6 +2294,14 @@ int main() {
                   Lab("enabled=1\nrole=host\npartner_native_profile=gun\nplace_lift=1\n").place_lift &&
                   Lab("enabled=1\nrole=host\nplace_lift=1\n").place_lift,
                   "enemy gaps: place_lift follows the gun profile; a named 0 opts out");
+            // Enemy sync M7 FM1 (far mirror, docs/world-sync-design.md 7.15): soldier_act (CFG r[19] bit 512) parses in lab
+            // and play and stays off unless named until its gate run passes; an invalid value is named and off.
+            Check(!def.soldier_act && !gunDefault.soldier_act && !gunDefault.soldier_act_given &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=1\n").soldier_act &&
+                  Lab("enabled=1\nrole=guest\nsoldier_act=1\n").soldier_act_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=0\n").soldier_act &&
+                  Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
+                  "FM1: soldier_act parses, off unless named");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a

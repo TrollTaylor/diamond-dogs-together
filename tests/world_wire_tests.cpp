@@ -114,7 +114,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 74, "74 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 75, "75 ops (FM1 soldier act, horse seat, world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
                        "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
                        "M3 place / ack / owner / engage, M4 soldier snap, M7 soldier hit, horse plan M2 horse seat, and local ops)");
@@ -142,7 +142,8 @@ void Table() {
                           {op::req_phase, 24}, {op::player_area, 5}, {op::digest, 22}, {op::guest_digest, 22}, {op::phase_vec, 53},
                           {op::clock, 11}, {op::weather, 7}, {op::checkpoint, 22},
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}, {op::enemy_place, 30}, {op::enemy_place_ack, 12},
-                          {op::owner, 6}, {op::engage, 5}, {op::soldier_snap, 25}, {op::soldier_hit, 19}};
+                          {op::owner, 6}, {op::engage, 5}, {op::soldier_snap, 25}, {op::soldier_hit, 19},
+                          {op::soldier_act, 49}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
     Check(!world::FindOp(0) && !world::FindOp(0x32) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
@@ -1440,6 +1441,91 @@ void SoldierSnapOp() {
     Check(!g_guest.SnapPair(7, cur, prev), "a link session change clears them");
 }
 
+// Enemy sync M7 FM1 (docs/world-sync-protocol.md section 33): SOLDIER_ACT 0x58, a datagram both ways: one guard's packed
+// request (parts 0..2, 0x70 bytes) or order (part 3, 0x18 bytes) as ten u32 words a part; the receiver keeps the newest
+// complete request and order per roster slot (Core::ActLatest), never in Lua's queues; a link session change clears them.
+// A partner without the op skips each part by its length (unknown_op).
+world::TxStatus ActTx(world::Core& core, std::uint32_t tick, std::uint16_t slot, std::uint16_t seq, unsigned part,
+                      const std::uint8_t (&req)[0x70], const std::uint8_t (&order)[world::kActOrder], std::uint64_t now, world::Datagram* d) {
+    std::uint32_t w[world::kActWords]{};
+    if (!world::ActWords(part, req, order, w)) return world::TxStatus::bad_args;
+    std::int64_t v[4 + world::kActWords] = {tick, slot, seq, static_cast<std::int64_t>(part)};
+    for (unsigned i = 0; i < world::kActWords; ++i) v[4 + i] = w[i];
+    return core.Tx(op::soldier_act, v, 4 + world::kActWords, now, d);
+}
+void SoldierActOp() {
+    Setup(3, 3, true); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
+    const world::OpSpec* s = world::FindOp(op::soldier_act);
+    Check(op::soldier_act == 0x58 && s && s->wire == world::Wire::datagram && s->dir == world::Dir::both && s->level == 2 &&
+              s->lua == 14 && s->body == 49 && !s->lab_only && std::strcmp(s->name, "SOLDIER_ACT") == 0,
+          "SOLDIER_ACT: a 49-byte datagram both ways, level 2, play too");
+    Check(!world::FindOp(0x59) && !world::FindOp(0x5A) && !world::FindOp(0x5B), "0x59..0x5B stay reserved (HANDOVER, CLAIM)");
+    std::uint8_t req[0x70]{}, order[world::kActOrder]{}, req2[0x70]{};
+    for (unsigned i = 0; i < sizeof(req); ++i) { req[i] = static_cast<std::uint8_t>(i * 7 + 1); req2[i] = static_cast<std::uint8_t>(i ^ 0x5A); }
+    for (unsigned i = 0; i < sizeof(order); ++i) order[i] = static_cast<std::uint8_t>(200 - i);
+    std::uint32_t w[world::kActWords]{};
+    Check(!world::ActWords(4, req, order, w), "parts 0..3 only");
+    world::Datagram d[4]{}, n[3]{}, back{};
+    for (unsigned part = 0; part < 4; ++part)
+        Check(ActTx(g_host, 1000 + part, 7, part == 3 ? 5 : 3, part, req, order, 101, &d[part]) == world::TxStatus::ok && d[part].size,
+              "each part is one datagram");
+    Check(ActTx(g_host, 1000, 0, 3, 0, req, order, 101, nullptr) == world::TxStatus::bad_args &&
+              ActTx(g_host, 1000, world::kSnapSlots + 1, 3, 0, req, order, 101, nullptr) == world::TxStatus::bad_args,
+          "slot 1..512");
+    world::Act a{};
+    Check(!g_guest.ActLatest(7, a), "nothing before the datagrams");
+    g_guest.OnDatagram(d[0].bytes, d[0].size, 102);
+    g_guest.OnDatagram(d[1].bytes, d[1].size, 102);
+    Check(!g_guest.ActLatest(7, a) || !a.req_valid, "two parts of three: no request yet");
+    g_guest.OnDatagram(d[2].bytes, d[2].size, 103);
+    Check(g_guest.ActLatest(7, a) && a.req_valid && a.req_seq == 3 && a.req_rx_ms == 103 && std::memcmp(a.req, req, sizeof(req)) == 0 &&
+              !a.order_valid, "the third part completes the request, byte for byte");
+    g_guest.OnDatagram(d[3].bytes, d[3].size, 104);
+    Check(g_guest.ActLatest(7, a) && a.order_valid && a.order_seq == 5 && std::memcmp(a.order, order, sizeof(order)) == 0,
+          "part 3 is the order");
+    for (unsigned part = 0; part < 3; ++part)
+        Check(ActTx(g_host, 1100 + part, 7, 4, part, req2, order, 110, &n[part]) == world::TxStatus::ok, "the next request");
+    g_guest.OnDatagram(n[0].bytes, n[0].size, 111);
+    g_guest.OnDatagram(n[2].bytes, n[2].size, 111);
+    Check(g_guest.ActLatest(7, a) && a.req_seq == 3 && std::memcmp(a.req, req, sizeof(req)) == 0, "the old request until all parts");
+    g_guest.OnDatagram(n[1].bytes, n[1].size, 112);
+    Check(g_guest.ActLatest(7, a) && a.req_seq == 4 && std::memcmp(a.req, req2, sizeof(req2)) == 0, "then the new one");
+    g_guest.OnDatagram(d[0].bytes, d[0].size, 113);
+    g_guest.OnDatagram(d[1].bytes, d[1].size, 113);
+    g_guest.OnDatagram(d[2].bytes, d[2].size, 113);
+    Check(g_guest.ActLatest(7, a) && a.req_seq == 4, "a late older request is dropped");
+    Check(Drain(g_guest, 3, 114).empty(), "never in Lua's queues");
+    Check(ActTx(g_guest, 5, 9, 1, 3, req, order, 115, &back) == world::TxStatus::ok, "the guest sends its own guards too");
+    g_host.OnDatagram(back.bytes, back.size, 116);
+    Check(g_host.ActLatest(9, a) && a.order_valid && a.order_seq == 1, "the host keeps the guest's acts");
+    // An old partner: the part's code is unknown there; the reader skips it by its length and reads the next op.
+    {
+        std::uint8_t bundle[world::kMaxDatagramBundle]{};
+        const std::size_t first = d[0].size - world::kBundleHeaderSize;
+        std::memcpy(bundle + world::kBundleHeaderSize, d[0].bytes + world::kBundleHeaderSize, first);
+        bundle[world::kBundleHeaderSize] = 0x5F;  // a code this build does not know
+        world::Op snap{};
+        snap.code = op::soldier_snap;
+        snap.epoch = g_host.epoch();
+        snap.count = 8;
+        const std::int64_t sv[8] = {1, 7, 0, 0, 0, 0, 0, 0};
+        for (unsigned i = 0; i < 8; ++i) snap.v[i] = sv[i];
+        const std::size_t second = world::EncodeOp(snap, bundle + world::kBundleHeaderSize + first,
+                                                   sizeof(bundle) - world::kBundleHeaderSize - first);
+        world::WriteBundleHeader(bundle, 2);
+        world::BundleReader reader;
+        Check(second && reader.Open(bundle, world::kBundleHeaderSize + first + second), "the bundle opens");
+        world::Op o{};
+        world::OpStatus st{};
+        std::vector<world::OpStatus> got;
+        while (reader.Next(o, st)) got.push_back(st);
+        Check(got.size() == 2 && got[0] == world::OpStatus::unknown_op && got[1] == world::OpStatus::ok,
+              "an unknown 49-byte op is skipped by its length");
+    }
+    g_guest.OnLinkState(true, 2, 300);
+    Check(!g_guest.ActLatest(7, a), "a link session change clears them");
+}
+
 // Enemy sync M7 (docs/world-sync-protocol.md section 31): SOLDIER_HIT, both directions, control queue, level 3, play too.
 void SoldierHitOp() {
     Setup(3, 3, true); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
@@ -2351,6 +2437,7 @@ int main() {
     SpawnSync();
     EnemyOwnerOps();
     SoldierSnapOp();
+    SoldierActOp();
     SoldierHitOp();
     RescueAndBuddies();
     RideFast();
