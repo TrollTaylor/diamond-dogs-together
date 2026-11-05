@@ -39,8 +39,18 @@ guest debug godmode 1
 guest debug infinite_ammo 1
 guest run teleport 423.00 269.5 2081.00 0
 wait 3000
-guest hold s 9000
-guest hold s 9000
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
 wait 1500
 guest run position
 host run position
@@ -50,7 +60,8 @@ both capture w-0
 host run act_status
 guest run act_status
 # --- 2: quiet, the host closes to ~30 m ------------------------------------------------------------------------------
-host hold w 2500
+host hold w 1500
+host hold w 1000
 wait 1500
 host run position
 host run enemy_aim_nearest 1.1
