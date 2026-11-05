@@ -84,6 +84,10 @@ constexpr char world_vehicle_source[] = R"MGS_WORLD(
 constexpr char world_vehicle_state_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_STATE_SOURCE@
 )MGS_WORLD";
+// Enemy round 8 / 9 B, the LRRP trucks follow the host's (lab key lrrp_follow; docs/world-sync-design.md 7.21, 7.25; after VEHICLE_STATE).
+constexpr char world_lrrp_source[] = R"MGS_WORLD(
+@MGS_WORLD_LRRP_SOURCE@
+)MGS_WORLD";
 // The user's vehicle decisions of 2026-10-29 (D11, D12, D14; CFG r[15] bits 8 / 16 / 32).
 constexpr char world_vehicle_rules_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_RULES_SOURCE@

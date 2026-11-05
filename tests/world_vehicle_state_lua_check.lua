@@ -518,11 +518,6 @@ do
     local a, b = lf(h, 25602), lf(h, 25603)
     check(#a >= 16 and #a <= 21 and #b >= 1 and #b <= 3, 'host: the moving truck at 10 Hz (' .. #a .. '), the parked one at 1 Hz (' .. #b .. ')')
     check(#lf(h, 25608) == 0, 'host: never a vehicle that is not an LRRP truck')
-    h.pool[25602].riders = {1195}
-    for i = 1, 30 do h:poll(50) end
-    check(h:has('event=lrrp;step=crew;id=25602;ent=1194;') and h:has('event=lrrp;step=crew;id=25602;ent=1195;') and h:has(';in=0;rl=1'),
-        'host: a rider got out: the crew\'s positions once a second (step=crew)')
-    h.pool[25602].riders = {1194, 1195}
     local s = a[#a]
     check(s[2] >= (h.clock - 100) % 4294967296 and s[2] <= h.clock % 4294967296, 'host: the sender tick is this copy\'s clock')
     check(s[4] >= 118000 and s[5] == 1000 and s[6] == 200000 and s[8] >= 9000 and s[8] <= 11000 and s[9] == 2 and s[10] == 1,
@@ -530,6 +525,11 @@ do
     check(b[#b][8] == 0 and b[#b][9] == 0 and b[#b][10] == 0, 'host: the parked truck at speed 0, no riders, not moving')
     check(h:has('event=lrrp;step=host;id=25602') and h:has('event=lrrp;step=riders;id=25602;n=2;r1=1194:?;r2=1195:?'),
         'host: a step=host line and a riders line for the moving truck')
+    h.pool[25602].riders = {1195}
+    for i = 1, 30 do h:poll(50) end
+    check(h:has('event=lrrp;step=crew;id=25602;ent=1194;') and h:has('event=lrrp;step=crew;id=25602;ent=1195;') and h:has(';in=0;rl=1'),
+        'host: a rider got out: the crew\'s positions once a second (step=crew)')
+    h.pool[25602].riders = {1194, 1195}
     h.riding = true; h.env.vars.playerVehicleGameObjectId = 25602
     local before = #lf(h, 25602)
     for i = 1, 10 do h.pool[25602].x = 120 + i * 0.5; h:poll(50) end
