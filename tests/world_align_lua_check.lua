@@ -1481,6 +1481,126 @@ if arg[7] and arg[8] then
         'M6: a body placement this copy refuses (disabled_local) is not queued')
     ticks(bd, 330)
     check(not logged(bd, 'event=body_tx;'), 'M6: this copy\'s body is not reported back for 10 s (no ping-pong)')
+    do
+    -- Enemy gaps 2, body_dead (CFG r[19] bit 1024, W.deadOn; run 41f2b07f: a dead guard 6.8 m apart, refused
+    -- disabled_local): the other copy's dead body placement goes through; after it the resting spot is where this
+    -- copy's body really lies, so a corpse the game does not move is not reported back either (no ping-pong).
+    local function deadFix(reply)
+        local c = guestFix(180)
+        c.W.bodyOn, c.W.deadOn = true, true
+        c.life[1] = 1
+        c.positions[1] = {0, 0.3, 20.0}
+        c.env.TppGameObject = {NPC_STATE_DISABLE = 9}; c.status = {[1] = 9}
+        c.warp = {reply}
+        ticks(c, 60)
+        return c
+    end
+    local dd = deadFix({r = 0, h = 1, leaf = 'typed'})
+    dd.W.handlers[34]({43, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, dd.now)
+    check(#dd.P.q == 1 and logged(dd, 'event=place_body;seq=43;ent=3000000001;div_m=5.0;state=5;fix=1;why=none'),
+        'body_dead: the dead body 5 m off is queued (not disabled_local)')
+    ticks(dd, 8)
+    check(logged(dd, 'event=place;seq=43;ent=3000000001;kind=correct;result=applied'), 'body_dead: the dead body is placed')
+    ticks(dd, 330)
+    check(not logged(dd, 'event=body_tx;'), 'body_dead: a corpse that did not move is not reported back (rest = where it lies)')
+    -- The corpse moved by the placement: no report either; a later carry of it is reported once.
+    local dm = deadFix({r = 0, h = 1, leaf = 'typed'})
+    dm.W.handlers[34]({44, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, dm.now)
+    dm.positions[1] = {5.0, 0.3, 20.0}
+    ticks(dm, 330)
+    check(logged(dm, 'event=place;seq=44;ent=3000000001;kind=correct;result=applied') and not logged(dm, 'event=body_tx;'),
+        'body_dead: a corpse the placement moved is not reported back')
+    dm.positions[1] = {12.0, 0.3, 20.0}
+    ticks(dm, 120)
+    check(logCount(dm, 'event=body_tx;ent=3000000001') == 1, 'body_dead: a later carry of it is reported once')
+    -- A dead body placement refused natively (relayed) leaves the resting spot where this body lies: no report.
+    local dr = deadFix({refused = 'relayed'})
+    dr.W.handlers[34]({45, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, dr.now)
+    ticks(dr, 330)
+    check(logged(dr, 'event=place;seq=45;ent=3000000001;kind=correct;result=refused;why=unrealized') and
+        not logged(dr, 'event=body_tx;'), 'body_dead: a refused corpse placement is not reported back')
+    -- Without body_dead (bodyOn only) the old refusal stands (the bd case above).
+    -- Enemy gaps 2, place_reach (CFG r[19] bit 2048, W.reachOn; run 798b51dd: 57 host placements and 22 guest
+    -- corrections refused unrealized, a dismounted rider 105-120 m off for 48 s): a correction the game relayed (not
+    -- realized on this copy) force-realizes that guard for 8 s, so the next one lands; released when one lands.
+    local rz = guestFix(180)
+    rz.W.reachOn = true
+    rz.positions[1] = {0, 1.8, 20.0}
+    rz.warp = {{refused = 'relayed'}, {r = 0, h = 1, leaf = 'typed'}}
+    sample(rz, 50, ENT1, 3000, 20000)
+    ticks(rz, 3)
+    check(logged(rz, 'event=place;seq=50;ent=3000000001;kind=correct;result=refused;why=unrealized;native=relayed') and
+        sent(rz, 1, 'SetForceRealize') == 1 and logged(rz, 'event=realize_hold;ent=3000000001;on=1'),
+        'place_reach: a relayed correction force-realizes that guard')
+    ticks(rz, 40)
+    sample(rz, 51, ENT1, 3000, 20000)
+    ticks(rz, 8)
+    check(logged(rz, 'event=place;seq=51;ent=3000000001;kind=correct;result=applied') and
+        sent(rz, 1, 'SetForceRealize', false) == 1 and logged(rz, 'event=realize_hold;ent=3000000001;on=0;why=landed'),
+        'place_reach: released once a placement of him lands')
+    -- Not landed within 8 s: released (timeout); at most 4 at once; never without the key.
+    local rt = guestFix(180)
+    rt.W.reachOn = true
+    rt.warp = {{refused = 'relayed'}}
+    for i = 1, 5 do
+        rt.positions[i] = {0, 1.8, 20.0 + i}
+        sample(rt, 60 + i, 3000000000 + i, 3000, 20000 + i * 1000)
+    end
+    ticks(rt, 12)
+    local holds = 0
+    for i = 1, 5 do holds = holds + sent(rt, i, 'SetForceRealize') end
+    check(holds == 4 and sent(rt, 5, 'SetForceRealize') == 0, 'place_reach: at most 4 guards held at once')
+    ticks(rt, 250)
+    check(sent(rt, 1, 'SetForceRealize', false) == 1 and logged(rt, 'event=realize_hold;ent=3000000001;on=0;why=timeout'),
+        'place_reach: a hold ends after 8 s')
+    local rn = guestFix(180)
+    rn.positions[1] = {0, 1.8, 20.0}
+    rn.warp = {{refused = 'relayed'}}
+    sample(rn, 70, ENT1, 3000, 20000)
+    ticks(rn, 3)
+    check(logged(rn, 'event=place;seq=70;ent=3000000001;kind=correct;result=refused;why=unrealized') and
+        sent(rn, 1, 'SetForceRealize') == 0, 'place_reach off: a relayed correction is only refused')
+    -- The host's M3 placement (hplace) the same way.
+    local rh = followFixture(true)
+    rh.W.ownerOn, rh.W.reachOn = true, true
+    rh.env.vars.playerCameraRotation = {[0] = 0, [1] = 0}
+    rh.positions[900] = {100.0, 0, 0}
+    rh.positions[2] = {95.0, 1.8, 0}
+    rh.warp = {{refused = 'relayed'}}
+    rh.W.handlers[71]({6, 3000000002, 3, 100000, 1400, 0, 0, 0, 0, 2}, rh.now)
+    ticks(rh, 6)
+    check(logged(rh, 'event=hplace;seq=6;ent=3000000002;kind=correct;result=refused;why=unrealized;native=relayed') and
+        sent(rh, 2, 'SetForceRealize') == 1, 'place_reach: a relayed host placement force-realizes the host copy')
+    -- The M4 stream reaches 160 m: the owner streams its guards within 160 m of the other player that stand within
+    -- 60 m of its own; the receiver drives the other side's guards within 160 m of its player (native: 60 m of the nearer).
+    local function snapsOf(c, slot)
+        local n = 0
+        for _, p in ipairs(placeTx(c, 75)) do if p.v[2] == slot then n = n + 1 end end
+        return n
+    end
+    local rp = followFixture(true)
+    rp.W.snapOn = true
+    rp.positions[900] = {120.0, 0, 0}
+    rp.positions[1] = {5.0, 1.8, 0}
+    ticks(rp, 61)
+    local far0 = snapsOf(rp, 1)
+    rp.W.reachOn = true
+    rp.tx = {}
+    ticks(rp, 61)
+    check(far0 == 0 and snapsOf(rp, 1) >= 3, 'place_reach: a guard 115 m from the other player (5 m from this one) is streamed')
+    rp.positions[1] = {60.0, 1.8, 70.0}
+    rp.tx = {}
+    ticks(rp, 61)
+    check(snapsOf(rp, 1) == 0, 'place_reach: not one 92 m from both players')
+    local rd = guestFix(180)
+    rd.W.snapOn = true
+    rd.positions[1] = {0, 1.8, 100.0}
+    ticks(rd, 2)
+    local d0 = rd.drives and #rd.drives or 0
+    rd.W.reachOn = true
+    ticks(rd, 20)
+    check(d0 == 0 and rd.drives and #rd.drives >= 1, 'place_reach: the receiver drives a guard 100 m away')
+    end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
     local hu = guestFix(180)
     hu.W.bodyOn = true

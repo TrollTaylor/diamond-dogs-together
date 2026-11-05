@@ -1791,6 +1791,15 @@ do
         check(cb.W.liftOn == case[2] and cb.W.perceiveOn == case[3] and cb.W.brainOn == case[4] and cb.W.actOn == case[5] and
             cb.W.followOn == (case[1] < 4096), 'CFG r[19] ' .. case[1] .. ': lift / perceive / brain / act as their own bits')
     end
+    -- Enemy gaps 2 (docs/world-sync-design.md 7.17): bit 1024 body_dead (W.deadOn, only with bit 16 soldier_body), bit 2048
+    -- place_reach (W.reachOn); neither changes an older key.
+    for _, case in ipairs({{1024 + 16 + 1, true, false}, {1024 + 1, false, false}, {2048 + 1, false, true},
+                           {2048 + 1024 + 16 + 1, true, true}, {16 + 1, false, false}, {4095, true, true}, {2048 + 1024 + 16, false, false}}) do
+        local envd, cd = fixture({role = 2, follow = case[1]})
+        F.start(envd, cd)
+        check(cd.W.deadOn == case[2] and cd.W.reachOn == case[3] and cd.W.bodyOn == (case[1] % 2 == 1 and case[1] % 32 >= 16),
+            'CFG r[19] ' .. case[1] .. ': body_dead / place_reach as their own bits')
+    end
     F.pair(env, c, 3)
     F.push(c, 1, OP.AREA, 2, 30010)
     F.tick(env, c, 1)

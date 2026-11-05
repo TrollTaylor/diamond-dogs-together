@@ -764,6 +764,16 @@ struct LabConfig {
     // too (enemy latch, arm A 6348f361): the engine's relay to an unrealized guard, now refused "relayed" per guard.
     bool place_lift = false;
     bool place_lift_given = false;
+    // Enemy gaps 2 (docs/world-sync-design.md 7.17, lua/coop/world_place.lua): body_dead (CFG r[19] bit 1024, with
+    // soldier_body) lets the other copy's dead body placement through (run 41f2b07f: a dead guard 6.8 m apart, refused
+    // disabled_local) and keeps the resting spot where this copy's body lies after it (no report back); place_reach (bit
+    // 2048, with soldier_follow) force-realizes a guard whose placement the game relayed (not realized here) for 8 s and
+    // lets the M4 stream reach 160 m (run 798b51dd: every M3 host sample 60-160 m from the host, 57 refused unrealized).
+    // Lab and play; off unless named until their run.
+    bool body_dead = false;
+    bool body_dead_given = false;
+    bool place_reach = false;
+    bool place_reach_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still

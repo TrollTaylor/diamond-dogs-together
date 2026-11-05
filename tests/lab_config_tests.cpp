@@ -2302,6 +2302,16 @@ int main() {
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=0\n").soldier_act &&
                   Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
                   "FM1: soldier_act parses, off unless named");
+            // Enemy gaps 2 (docs/world-sync-design.md 7.17): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048) parse in
+            // lab and play, off unless named until their run.
+            Check(!def.body_dead && !gunDefault.body_dead && !gunDefault.body_dead_given && !def.place_reach &&
+                  !gunDefault.place_reach && !gunDefault.place_reach_given &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=1\n").body_dead &&
+                  Lab("enabled=1\nrole=guest\nplace_reach=1\n").place_reach &&
+                  Lab("enabled=1\nrole=guest\nplace_reach=0\n").place_reach_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=0\n").body_dead &&
+                  Lab("enabled=1\nrole=host\nbody_dead=2\nplace_reach=x\n").invalid_values == 2,
+                  "enemy gaps 2: body_dead and place_reach parse, off unless named");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a
