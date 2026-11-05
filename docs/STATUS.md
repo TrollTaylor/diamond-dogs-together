@@ -1,3 +1,37 @@
+## November 5, 2026: horse M2f, a downed partner on the horse after you get off (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new by default: putting a downed partner on the horse stays off unless the lab key is named.
+With the key named, a downed partner who ended up squatting on the horse on their own screen after you got off is now
+laid back down across it (seen in hidden two-copy lab tests, the host carrying the guest); the full test (both carrier
+orders, the take-down and revive, the play rehearsal) did not get through this round. Details: `docs/mounts.md` section
+11 ("Hidden runs, M2f round"). Markers [O]/[I]/[U].
+
+- **Cause found** [O, the victim's own logs in `5a92c73f`, `131f88c6` and the BODY0 run `4585cc5a`]: body 0 lies in
+  prone_idle through the ride; at the carrier's dismount (M1's final placement) it goes into fall / land every frame and
+  ends in crouch_idle when the carrier's body is shown on foot again. In the same tick the victim's copy put its horse
+  back on the carrier's last KEEP pose, sent up to 1 s before: 10-11 m back along the ride, then three more jumps at 1 Hz;
+  in `131f88c6` that horse fell Unconscious 0.25 s later. That this jump starts the fall is [I].
+- **Built** (red first each time): the stance watch and the CRAWL request (`step=stance` / `step=relie`, lab lever
+  `cargo_relie`; 12041530 / a9420cdb); the final placement handed to the cargo (34d66a2c / 8e33e2d5; it did not stop the
+  fall); no KEEP re-place for 2 s after M1's track ends, then only on a KEEP sent after that (cacc4179 / cad4da2f; never
+  reached a dismount live [U]); on the carrier's screen body 1 0.1 m lower and the ground window's low edge at 0.8 m (it
+  drew the body 0.38 m high after a dismount in `5a92c73f`); bursts at most 2 frames, 400 ms apart.
+- **Proven on one body** [O logs + frames, the drop part of `5a92c73f` and `131f88c6`]: with the lever at 0 the victim's
+  own screen shows them squatting on the horse after the dismount; one CRAWL request after the lever went to 1 put them
+  lying prone across it (frames `guest-h2c-stays` / `guest-h2c-relie`); rides 86 / 72 m; the link drop laid them down on
+  both copies.
+- **Gate not passed** (three attempts): no session got the lab (a) / (b) or the play rehearsal through: one missed pickup
+  (`5a92c73f`), three refused captures (`sequence_expiry_or_busy`: `d4aec0a2`, `05758736`, `770368d0`) and two landing
+  refusals (`131f88c6`, `016ec854`) [O]; 5 of the queue's 7 results with those refusals are this round's, cause [U].
+  world_horse_cargo went back to off unless named (25e94d69 / 06ba9917). Never seen live this round: the guest-carrier
+  order, the take-down and revive, the play rehearsal with the cargo, `cargo_relie 1` through a whole dismount, the settle.
+- **Next:** rerun the three scenarios on this tree once the worker refusals are understood; check that the 2 s settle
+  keeps body 0 in prone_idle through the dismount (no `step=relie`), else hold body 0 with its own pose through M1's
+  final or use the cargo slot (DECISIONS cargo_slot: yes).
+- Builds: full 355/355 at cad4da2f; every generator `--check` as base (carry_info, sleep_plugin, native_ui,
+  teammate_targeting). Archives `%USERPROFILE%\mgs-coop-run-archive\horse\` 5a92c73f, d4aec0a2, 131f88c6, 05758736,
+  770368d0, 016ec854.
+
 ## November 5, 2026: horse M3d, ride behind your partner corrected as the skeptic checked it (`wp/horse`; `world_horse_pillion` still on with the gun profile)
 
 **Players get:** getting off the back of your partner's horse (hold E, your partner getting off, or a link drop) now
