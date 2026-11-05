@@ -74,6 +74,8 @@ public:
     std::uint32_t Events(Device, Event*, std::uint32_t capacity, bool peek) noexcept;
     CaptureRequest TakeCapture(std::uint64_t now) noexcept;
     std::uint64_t sequence() const noexcept { return last_sequence_; }
+    // The check that refused the last Accept (nullptr after an accepted command), for the native receipt.
+    const char* refusal() const noexcept { return refusal_; }
     std::uint64_t input_command(Device device) const noexcept {
         return device == Device::keyboard ? keyboard_command_ : mouse_command_;
     }
@@ -89,6 +91,7 @@ private:
     CaptureRequest capture_{};
     LoadingContext loading_{};
     std::uint64_t resume_sequence_{};
+    const char* refusal_{};
 };
 bool ParseCommand(const char* text, std::size_t size, const char* run_id,
                   const char* role, Command& output) noexcept;
@@ -133,6 +136,9 @@ void DeviceConfiguration(const char* api, std::int32_t result, bool typed,
 // Detached fixture-only mock. Not exported by a product build.
 void ConfigureForTest(const Authorization&, bool private_thread, bool ready) noexcept;
 bool AcceptForTest(const Command&, std::uint64_t now) noexcept;
+// One inbox command through Poll's admission path, as if the poll's caller read the clock at `polled`.
+// Returns nullptr when accepted, else its receipt's refusal reason ("unread": not parsed or not newer).
+const char* InboxForTest(const char* text, std::size_t size, std::uint64_t polled) noexcept;
 void SetPrivateForTest(bool) noexcept;
 struct TestStats { std::uint64_t keyboard_consumed{}, mouse_consumed{}; unsigned diagnostic_count{}; };
 TestStats StatsForTest() noexcept;
