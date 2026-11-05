@@ -1,3 +1,55 @@
+## November 5, 2026: enemy round 8 track B - patrol trucks in the same place on both screens: `lrrp_follow` ON by default (gun profile) (`wp/enemy-lrrp`, not pushed)
+
+Design 7.21, protocol section 38 (LRRP_FAST 0x5D). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+Three hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge: `c90ab046` (`lrrp_follow=1`,
+first form), `c784a5a7` (`lrrp_follow=1`, the fixed form) and `0da27fc6` (no key named, at the final code head f91dc7ff,
+lrrp_follow on by default). Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: in Afghanistan free roam the patrol trucks (the LRRP reinforcements driving between outposts)
+  drive on the joining player's screen where they drive on the host's, crew inside; when the crew gets out on the host's
+  screen it gets out on the guest's a few seconds later. In 0.15.1 the guest's truck ran ~72 s behind (its later mission
+  start) and its crew was 90-460 m off for up to 78 s. `lrrp_follow=0` opts out.
+- **Cause** [O `1870d1bf`]: the guest's mission starts 71.6 s after the host's and each copy's own AI drives its LRRP
+  trucks from its own start; VEHICLE_STATE skipped LRRP trucks and corrections skip riders (`vehicle_local`).
+- **Built** (red first each time): native-only lab key `lrrp_follow` (receipt `MGS_COOP_LRRP_CFG_V1`, no CFG bit); LRRP_FAST
+  0x5D, a host-to-guest datagram with its own slot (a partner without it skips it by its length); in
+  `world_vehicle_state.lua` (`S.lf`) the host streams each live LRRP truck no player rides (10 Hz moving, 1 Hz still);
+  the guest's copy is held with `ForceStop` while the host's track lives, put on the host's pose every frame while it
+  moves or is manned and pinned at rest; a crew still seated there while the host's truck rests empty gets
+  `UnsetRelativeVehicle` (2 s) and `StartTravel ""` (5 s). Commits 8b4003fe red / 0ec0072d green, fced1034 red / 987d59ec
+  green (the pin and the unseat), 10884a46 red / f91dc7ff green (the flip). CTest 355/355 at the flip (build-flip-green.log); every
+  contract --check: the known base failures only.
+- **Gate rows** [O]:
+  - PASS truck place error while it moves (guest vs host at the same t_ms): `c784a5a7` p50 0.16 / p90 0.74 m (1525),
+    `0da27fc6` p50 0.14 / p90 0.52 m (1224); |dy| p90 0.04-0.06 m (`c90ab046`, first form: 0.14 / 0.42 m).
+  - PASS riders within 8 m while seated: p90 0.36-0.96 m in both (four riders); in `0da27fc6` 11 of 510 samples of
+    25605's two riders were 10-41 m for ~3 s while the truck was 0.2 m apart [I: a lagging rider read-back].
+  - PASS at the defaults / FAIL named: no truck teleport more than once per 30 s: `0da27fc6` one jump per truck at the
+    pairing (49.5-402.6 m, 0.5-3.5 km from both players), then 5.4-6.7 m catch-ups at least 44 s apart; `c784a5a7` had one
+    pair 14.8 s apart (402 m, then 6.0 m, 610 m from the players: a sample gap ended at the 400 ms extrapolation cap).
+  - PASS riders handed back: every crew seated on the guest's copy while the host's truck rested empty got out after the
+    unseat (25605's 6-8 s after the host's in `c784a5a7`, 4 s / 38 s in `0da27fc6`); 0 `vehicle_local` refusals
+    (`c90ab046`, first form: 76, the crew stayed seated and the released truck was driven 300 m away and put back every
+    30 s - fixed).
+  - PASS frame pair: `c784a5a7` t-10, both binoculars SE: the truck with its headlights at the same spot by the crosshair
+    on both screens, 204 m from the players, logs 0.4 m apart.
+  - PASS 0 latches / faults / game overs (and drive_sank 0) in `c784a5a7` and `0da27fc6`; `0da27fc6` guest place error
+    p50 0.51 / p90 0.91 m (gate 2 m); enemy-latch-alert and enemy-integ-carry both passed there.
+  - NOT JUDGED frame p95 within +2 ms of the key off: the proxy (partner_tick hz per 10 s) was 46 Hz from the first window
+    on both copies in `c784a5a7` and `0da27fc6`, before the pairing too (the PC was loaded [I]); `c90ab046` dropped to 43-51
+    Hz while the truck drove and the cameras looked 300-600 m east; no key-off run of the same parts.
+- **Failing rows**: `0da27fc6` (report) M3 host p90 7.26 m (`1870d1bf` 6.89, as at the old defaults), one host-outcome
+  apply at 38.5 m (1179373153 in the ALERT); `c784a5a7` integ-carry's placebehind (`viewer landing has no new position
+  sample`; the truck had parked 10 m from the host's spot), latch-alert cut at 606.8 s by the timeout, M3 host p90 10.44
+  m, corrections 78/165 (unrealized relays); `c90ab046` integ-carry (2961503 awake: the watch replaced latch-quiet's sleep),
+  drive_sank 1, corrections 18/94.
+- **Frames looked at**: `c90ab046` t-2 (both; the truck 300-600 m away, not in view); `c784a5a7` t-8, t-10 (both; t-8
+  guest black, host a wall); `0da27fc6` s-1 (both; truck not in view), c-b (both: the sleeping guard by the guest).
+- **Not done**: a crew that gets back in on the host's screen stays out on the guest's (25606 at 2 km); the unseat ends
+  the guest copy's LRRP plan; Africa not run; the frame-time row. Incident: stopping my own red build left its CTest
+  hung (0 CPU) with a live CTest-reader marker; the classifier refused Stop-Process, so I removed my own marker and renamed
+  three locked test exes in build/native to `*.stuck-70284`; the hung processes remain.
+
 ## November 5, 2026: enemy round 7 track A - guards at the same height, the far fights: both gates not reached; `drive_vert` and `place_reach` stay off unless named (`wp/enemy-m7`, not pushed)
 
 Design 7.20, protocol section 37. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play

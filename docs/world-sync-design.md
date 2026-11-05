@@ -712,6 +712,21 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   host's spot) and latch-alert was cut at 606.8 s by the timeout. Frame proxy (partner_tick hz per 10 s): 46 Hz from the
   first window on both copies, before the pairing too, so the PC was loaded [I]; session 1 dropped to 43-51 Hz while the
   truck drove and the cameras looked 300-600 m east (59 Hz otherwise); `1870d1bf` 59 Hz: not judged.
+- **Session 3** `0da27fc6` (no key named, the final code head f91dc7ff: lrrp_follow on with the gun profile; join, the short
+  truck part, integ-carry, latch-alert; all four parts passed) [O]: `event=lrrp; step=on` on both roles; truck error while
+  it moved p50 0.14 / p90 0.52 / max 5.65 m (1224 samples), |dy| p90 0.04 m; riders seated on both p50 0.10-0.18 / p90
+  0.36-0.96 m (four riders; 11 of 510 samples of 25605's two riders were 10-41 m apart for ~3 s while the truck itself
+  was 0.2 m apart: a rider read-back lagging on one copy [I]); one jump per truck at the pairing (49.5-402.6 m, 0.5-3.5 km
+  from both players), later catch-ups 5.4-6.7 m at least 44 s apart; every crew seated here while the host's truck rested
+  empty got out after the unseat (25605's two 4 s and 38 s after the host's); 0 `vehicle_local`; report: 0 latches /
+  faults / game overs / drive_sank, guest place error p50 0.51 / p90 0.91 m, corrections 25/26; failing rows as at the old
+  defaults: M3 host p90 7.26 m (`1870d1bf` 6.89), one host-outcome apply at 38.5 m (1179373153 in the ALERT). Frames s-0 /
+  s-1: the truck out of view (far east); c-b: the sleeping guard by the guest's character on both screens. Frame proxy 46
+  Hz from the first window on both (before the pairing too): not judged.
+- **Not done**: a crew that gets back in on the host's screen stays out on the guest's (seen for 25606 at 2 km in
+  `c784a5a7` and `0da27fc6`; its truck had not moved off by the end); the guest's own crew of a parked truck is unseated
+  and its LRRP plan ended (StartTravel ""), so it no longer boards there [I]; the frame-time row needs an unloaded PC and a
+  key-off run of the same parts (`lrrp_follow=0`); Africa (30020) not run.
 - **Old partners**: a partner without 0x5D skips it by its length (`unknown_op`); a guest without the key ignores it and
   its own AI keeps its truck, as in 0.15.1 (unit tests).
 
