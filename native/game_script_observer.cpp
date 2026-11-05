@@ -6297,6 +6297,19 @@ bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     else replacement={off,sizeof(off)-1};
     return true;
 }
+// Enemy round 8 track B (lua/coop/world_vehicle_state.lua S.lf, docs/world-sync-design.md 7.21): MGS_COOP_LRRP_CFG_V1 answers
+// the native-only lab key lrrp_follow (1 on, 0 off; off unless named, no CFG bit) on the runtime thread; otherwise nil (Lua
+// asks again). No game read or call.
+bool SelectLrrpReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_LRRP_CFG_V1'";
+    if(!buffer || size!=sizeof(query)-1 || std::memcmp(buffer,query,size)!=0) return false;
+    static constexpr char none[]="return nil", on[]="return 1", off[]="return 0";
+    replacement={none,sizeof(none)-1};
+    if(!OnRuntimeThread()) return true;
+    if(mgscoop::GetLabConfig().lrrp_follow) replacement={on,sizeof(on)-1};
+    else replacement={off,sizeof(off)-1};
+    return true;
+}
 // Enemy sync M7 (soldier_authority.hpp): MGS_COOP_SOLDIER_AUTH_V1 -- clear | status | <index 0..511> <remote 0|1>, on the
 // runtime thread: the ownership bits the damage callback reads. Reply return <enabled>,<remote count> (status, clear) or
 // return 1|0 (set). No game read or call.
@@ -6562,6 +6575,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if (SelectSupplyReceipt(buffer, size, replacement)) return true;
     if (SelectVspawnReceipt(buffer, size, replacement)) return true;
+    if (SelectLrrpReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -7252,7 +7266,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s; phase=%s\r\n", hooked ? "on" : "off",
                                   labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok",
                                   labc.soldier_act_calm ? "calm" : "all");
-                    } else mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
+                        // Enemy round 8 track C (docs/world-sync-design.md 7.23): the puppets plan their own path (act_plan,
+                        // native only, off unless named; the puppet side runs it).
+                        mgscoop::soldier_act::SetPlan(hooked && labc.act_plan);
+                        LogFormat("soldier_act_plan=%s; given=%u\r\n", hooked && labc.act_plan ? "on" : "off", labc.act_plan_given ? 1u : 0u);
+                    } else {
+                        mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
+                        mgscoop::soldier_act::SetPlan(false);
+                    }
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.
                     const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();

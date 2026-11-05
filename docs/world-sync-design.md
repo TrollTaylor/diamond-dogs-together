@@ -671,6 +671,78 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   the owner copy is at rest in y (the two snaps chased an owner going down and up); the host's M3 placements while the
   guest is downed (`near=host` range refusals), then place_reach's gate again and a no-key run after any flip.
 
+#### 7.21 Enemy round 8 track B: reinforcement trucks in the same place on both screens (lab key `lrrp_follow`, native only)
+
+- **Cause** (archived run `1870d1bf`, no key) [O]: the guest's mission starts 71.6 s after the host's (`vehicle_state;
+  step=on` 337953769 / 338025355). Each copy's own AI drives its LRRP trucks (`veh_trc_0000..0005` = 25600..25605 in
+  30010) along its own travel plan from its own start [I: TppEnemy `lrrpTravelPlan` / `lrrpVehicle`], so the guest's
+  truck runs ~72 s behind: at the join the riders 3970963356 / 2305481811 were 432.9 m apart (`apply d_m`); the guest's
+  truck was still driving in at ~11 m/s from (764, 1940) while the host's copies stood at the outpost (413, 2138). Nothing
+  shared the truck: VEHICLE_STATE skips LRRP trucks on both sides (`S.busy` `lrrp`) and a correction skips a rider
+  (`vehicle_local`), so the riders were `far`, then `vehicle_local` every ~1 s until they got out.
+- **lrrp_follow** (native-only lab key; no CFG bit: Lua asks the receipt `MGS_COOP_LRRP_CFG_V1`; off unless named: the
+  gun profile turned it on at f91dc7ff, back off at 34b9f024 after the review below): the host owns every LRRP truck (the trucks start on its clock). It streams
+  each live one no player rides (not the local player's vehicle, not the partner's RIDE_FAST ride) as LRRP_FAST (0x5D,
+  protocol section 38): 10 Hz while it moves (> 0.5 m/s over 250 ms), 1 Hz at rest, one datagram per 50 ms (one receive
+  slot for all trucks: a newer datagram for one truck replaces an undelivered one for another). The guest's
+  copy gets `ForceStop{enabled=true}` (the E10 stop of its own AI driver) while the host's track lives and is put on the
+  newest sample advanced by its velocity (the sample's age on the receiver's min-offset clock + 100 ms, at most 400 ms
+  ahead) every frame while the host's truck moves or carries riders (no local-player hold; untested near the guest); its
+  riders ride along. At rest it is pinned (put back
+  at once when 1 m+ off; `step=settle` over 3 m). A crew still seated on the guest's copy while the host's truck rests
+  empty gets `UnsetRelativeVehicle` after 2 s and `StartTravel{travelPlan=""}` after 5 s (s10090's get-off; `step=unseat`);
+  once off, the M1..M6 corrections may take them (the runs show they mostly did not: see the review). A track 3 s stale, the local player's ride, unpaired, start and
+  stop release it. In `world_vehicle_state.lua` (`S.lf`); an error there turns only lrrp_follow off. Logs `event=lrrp;
+  step=host|follow|riders|stop|release|settle|jump|unseat|stale|refused|error`.
+- **Session 1** `c90ab046` (key named; join, the truck watch, integ-carry, latch-alert) [O]: truck 25605 carries
+  3970963356 / 2305481811. At the pairing the guest's copy jumped 460 m onto the host's, then followed it for 166 s: guest
+  vs host at the same t_ms p50 0.14 / p90 0.42 / max 3.79 m (1760 samples while it moved), |dy| p90 0.04 m; rider
+  3970963356 seated on both p50 0.21 / p90 0.71 m. At its stop the host's crew got out, the guest's stayed seated; the
+  first form released ForceStop at rest, so the guest's own AI drove the truck and its crew 300 m back east and the 30 s
+  settle put it back six times (305-311 m): fixed by the pin and the unseat. 76 rider corrections refused
+  `vehicle_local`. integ-carry failed: 2961503 was awake (the watch replaced latch-quiet's sleep).
+- **Session 2** `c784a5a7` (key named, the fixed form) [O]: truck error while it moved p50 0.16 / p90 0.74 / max 5.52 m
+  (1525 samples), |dy| p90 0.06 m; riders seated on both p50 0.10-0.18 / p90 0.51-0.95 m (both crews, four riders; each
+  rider's one sample at the pairing, before the first placement, was 368-403 m; the review's interpolated p90 0.75-1.09 m,
+  25605's riders 10.7-49 m in 14 samples each, 25606's 8.1-9.8 m); one jump per truck at the pairing (11.6-402 m; 25605's
+  target 364 m from the guest, still at the seed spot), and truck 25605 caught up 6.0 m 14.8 s after its first jump and 5.1 m later (a sample
+  gap ended at the 400 ms extrapolation cap; 610 / 350 m from the players [I: not in view]). The guest's crews of the four
+  parked trucks (empty on the host's copy) and of 25605 at its stop got out after the unseat (25605's 6-8 s after the
+  host's); 0 `vehicle_local` refusals, but 25605's unseated crew did not follow the host's copies: 3970963356 stood at
+  (407.4, 2123.7) for ~100 s, 43-70.7 m off; 2305481811 26-31 m off for ~80 s (42 of the 87 guest-side `unrealized`
+  refusals; the guest's kill of 2305481811 applied on the host 27.8 / 29.9 m away, `1870d1bf` 0.4 / 1.5 m). Frames t-10
+  (both, binoculars SE): the lit truck at the same spot by the crosshair on both screens (`aim_ent` 191.5 m host /
+  186.8 m guest). 0 latches / faults / game overs / drive_sank.
+  integ-carry failed at its placebehind (`viewer landing has no new position sample`; the truck had parked 10 m from the
+  host's spot) and latch-alert was cut at 606.8 s by the timeout. Frame proxy (partner_tick hz per 10 s): 46 Hz from the
+  first window on both copies, before the pairing too, so the PC was loaded [I]; session 1 dropped to 43-51 Hz while the
+  truck drove and the cameras looked 300-600 m east (59 Hz otherwise); `1870d1bf` 59 Hz: not judged.
+- **Session 3** `0da27fc6` (no key named, the final code head f91dc7ff: lrrp_follow on with the gun profile; join, the short
+  truck part, integ-carry, latch-alert; all four parts passed) [O]: `event=lrrp; step=on` on both roles; truck error while
+  it moved p50 0.14 / p90 0.52 / max 5.65 m (1224 samples; interpolated 0.14 / 0.49 m, 1210), |dy| p90 0.04 m; riders
+  seated on both p50 0.10-0.18 / p90 0.36-0.96 m (interpolated 0.92-1.13 m; 11 of 510 samples of 25605's two riders were
+  10-41 m apart for ~3 s: the guest's rider reads frozen at (956.8, 1968.2) while the truck was within 0.2 m); one jump
+  per truck at the pairing (49.5-402.6 m; 25605's target 364 m from the guest at the seed spot), later three catch-ups
+  of 5.4-6.7 m at least 43.9 s apart; every truck ends with `rl=0`, but 25605's guest crew was out before the host's and
+  got back in and out twice (rl 0-1-0-1-0, ~125 m from the players), and no correction was tried for the unseated
+  riders; 0 `vehicle_local`; report: 0 latches /
+  faults / game overs / drive_sank, guest place error p50 0.51 / p90 0.91 m, corrections 25/26; failing rows as at the old
+  defaults: M3 host p90 7.26 m (`1870d1bf` 6.89), the guest's state-5 apply at 39.5 m (1179373153 in the ALERT). Frames s-0 /
+  s-1: the truck out of view (far east); c-b: the sleeping guard by the guest's character on both screens. Frame proxy 46
+  Hz from the first window on both (before the pairing too): not judged.
+- **Review** (skeptic, all three runs): the truck rows hold; refuted were the riders' p90 (0.75-1.13 m interpolated, with
+  10-49 m outliers in both key-on runs), the pairing jump being out of view, the crews getting out "a few seconds later"
+  (0da27fc6 flapped), the unseated crews being kept with the host's copies (above), the "did not drive off" clause (below)
+  and the gate as a whole (frame time not judged, Africa not run). lrrp_follow is off unless named again (1aa30d55 red /
+  34b9f024 green); turning it on is the user's call (a possible player unseen by reinforcements, below).
+- **Not done**: a crew that gets back in on the host's screen stays out on the guest's, and the guest's truck drives off
+  empty (25606 in `c784a5a7` and `0da27fc6`: `rh=2 rl=0`, ~12.5 m/s, still moving at the end, at (-965, 1570) and
+  (-1433, 1159)); the unseat ends the guest's crew's LRRP plan (StartTravel ""), so it no longer boards [I] and those
+  reinforcements may never reach the guest on the guest's PC; corrections for unseated riders; the frame-time row needs
+  an unloaded PC and a key-off run of the same parts; Africa (30020) not run; a mixed-version run.
+- **Old partners**: a partner without 0x5D skips it by its length (`unknown_op`); a guest without the key ignores it and
+  its own AI keeps its truck, as in 0.15.1 (unit tests).
+
 #### 7.22 Enemy round 8 track A: the quiet place correction, the host's copies while the guest is down (lab keys `quiet_place`, `range_flat`, native only)
 
 Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read only); [I] inferred; [U] unknown.
@@ -788,6 +860,63 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   - **Next for bug 1**: stop the walk-off: after a quiet move, give the guard a stand at the target (the request start
     0x14136f090 mode 0 issues a stand command offline, plan (1)) or end his path (the planner cancel), and move only
     guards in the realized list (read `*(S+0x18)+0x28`, not the realized bit), then the calm gate and a no-key run.
+
+#### 7.23 Enemy round 8 track C: the far mirror's walkers plan their own path (lab key `act_plan`, native only; with `soldier_act`)
+
+- **Why the walkers went wrong** (enemy7 C-fm1 research, read-only): offline the walk-request start 0x1413725f0 plans
+  only for a FOB remote copy (S+0x2a4 bit 2 and the slot's owner byte != S+0x2a8); offline (census `mode=0x782`) it sets
+  R+0x19e bit 1 only, and the path step 0x141372b70 drives the body along the path the soldier's follower already holds:
+  his own brain's last one. The unpack's 15 m warp 0x14136ece0 then snaps him toward the host copy again and again.
+  Session 1 (`fcfb3acc`) shows it in the calm window only [O]: puppets in a walk had their path end p50 55.69 m from
+  R+0x80 (121 samples, 74 % over 10 m; guard 18's frozen at one point 55.7 m away in all 72), the guest's own guards
+  80 % within 1 m. Over the whole run the two look alike (puppets p50 1.86 / p90 65.45 m, own guards p50 0.00 / p90
+  80.92 m), so the pooled figures do not support it.
+- **The planner** (session 1's `soldier_act_planner` line, decompiled read-only): `*(S+0x30)` has vtable 0x23a1610; the
+  follower pair is {the planner, idx}. vt[0] 0x140fa2430 (planner, idx, move) is the soldier route planner's request: it
+  takes the move's type hash (+0x70, low 48 bits), refuses (0xffff) when the guard's slot *(planner+0x48)+idx*0x10
+  {u48 hash, u16 handle +8, counter +0xa, done +0xc} holds another non-zero hash, fills the guard's record
+  (+0x40 stride 0xf0) and submits a path query (planner+0x30 vt[0]); it reads no FOB state. vt[0x10] cancels a handle
+  vt[0x18] accepts (the slot's +8): the query and the slot. vt[0x90] (has a path) = the slot's handle is live and done;
+  vt[0xa0] the path; vt[0xd0] (idx, float) sets record +0xd0. The brains use the same planner with several type hashes:
+  the guest's own guards' census (`afeddbdc`) shows a brain's hash in the slot in 61 % of samples, free in 39 % [O].
+- **Built** (`act_plan`, native only, no CFG bit, no wire; needs `soldier_act`; off unless named):
+  - after the manager update's original (the engine's offline start of each puppet's new request has run), for each
+    puppet whose dest-mode-1 request the hook unpacked in that update, when R+0x19c holds no handle and
+    (R+0x19e & 3) == 2: 0x1413725f0 again with a shadow gate object (+0x70 -> S' with +0x2a4 = 4, +0x2a8 = 0, +0x18 ->
+    +0x18 owner bytes all 1). It plans from his slot position (through the request's waypoint) to R+0x80, stores the
+    handle in R+0x19c and calls vt[0xd0](idx, 10.0f): the FOB remote copy's own code. The next start cancels the handle.
+  - a slot of another type with a live handle (his brain's walk) is cancelled first with vt[0x10] and that handle
+    (`plan_cancel`); another type with no handle is left alone (`plan_busy`); a refused plan counts `plan_none`; when he
+    is released, our handle still in his slot is cancelled (`plan_release`), so his brain's next walk is not refused.
+    The plan call and the cancels run only for the planner class the contract pins (`PlannerKnown`: vtable 0x23a1610).
+    The follower getter vt[0x20] (also before that check) and the follower's vt[0x90] / vt[0xa0] (census, the 300 ms
+    check, the planner line) are called through the object's own vtable with only an in-image check, as the engine
+    calls them (0x14136f0f2 / 0x141372bae); their code (0xfa1cc0, 0xfa1ed0) is pinned only as vtable slot targets.
+  - the gait catch-up of the unpack's own mode 0 rule for a walk (mode 1 copies the gait as sent): the owner copy ahead
+    toward R+0x80 by 2..5 m flat: gait + 1 (cap 3); beyond 5 m: 3; never lowered (`gait_up`).
+  - a warped puppet faces the request's facing (face mode 1: wire +0x50 int16 * pi/32767) or keeps his own yaw (the lent
+    entry had yaw 0).
+  - a walker (action A kind 1) is taken only within 10 m (flat) of the owner copy (`near_wait`).
+  - logs (protocol section 40): census `r19c`, `r198`, the follower's path, `r80` and the slot; `soldier_act_planner`
+    once; `soldier_act_warp15` per unpack whose 15 m warp moved the copy (read back, `first=1` a take);
+    `soldier_act_plan` 300 ms after each plan (the path end against R+0x80); frame counters.
+  - contract (`tools/generate_soldier_act_contract.py`, 31 sites, 13 slots; 34 sites with track A's 3): 0x13725f0 (prologue through the gate, the
+    move hash, the planner call / R+0x19c / vt[0xd0]), 0x136f0e4, 0x136f156, 0x136f203, 0x136f759, 0x1372ba1, 0x1354a00,
+    the planner's vt[0] head, vt[0x10], vt[0x18], vt[0x90], vt[0xd0]; vtable 0x23a1610 slots +0, +0x10, +0x18, +0x20,
+    +0x90, +0xa0, +0xd0; data 0x20a8078 = 10.0f.
+- **Gate** (the plan's, per guard, calm frames): walkers' place error while the owner copy moves p50 <= 1.0 / p90 <= 2.5
+  m; 15 m warps while a puppet <= 1 a run, take warps <= 2; speed ratio >= 0.8 for every walker with >= 20 moving
+  samples; `plan` > 0 with the path end within 1 m of R+0x80 for >= 90 % of plans; matched host / guest frames of one
+  mirrored guard walking at one spot; no guest-only ChangePhase in calm that a puppet started; 0 faults / latches / game
+  overs; frame p95 within + 0.5 ms of mirror off.
+- **Not reached**: the `act_plan` session `afeddbdc` was void: after about 80 s the host's game sat under the modal "You
+  have signed out" (every captured host frame), its request manager update stopped before the guest paired, so no
+  SOLDIER_ACT part was sent and no guard was a puppet [O]. Reference without the plan (`fcfb3acc`, build 946864a, before
+  the slot reads of 49770205): place error p50 4.75 / p90 13.30 m, calm warps 3 takes / 3 held, frame p95 + 0.45 ms with
+  calm-only puppet frames (+ 0.19 ms over the whole run), no matched frame pair (STATUS).
+- **Next**: one rerun of the `act_plan` session; if the plans land (path end within 1 m) but the error stays, the
+  re-apply cadence (1 s) restarts each plan from where he stands: plan only on a changed request or a destination moved
+  over 1 m.
 
 ### 8. Soldier transforms (W6)
 
