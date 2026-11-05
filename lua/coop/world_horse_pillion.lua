@@ -285,10 +285,10 @@ function P.placed(x, y, z, yaw)
 end
 local function seatedTick(now)
  -- M4 (play run 28015a91, -WanSim bad): a RIDE_FAST gap ended the track (stream_lost) for 0.9 s while the ride went on;
- -- a stream loss is held TRACK_GRACE_MS (body 0 at its last target), a final or any other end is not.
+ -- with the shot key (the review of M4) a stream loss is held TRACK_GRACE_MS (body 0 at its last target); else ends.
  if not S.track then
   P.noTrack = P.noTrack or now
-  if S.endWhy ~= "stream_lost" or now - P.noTrack > TRACK_GRACE_MS then return stop("track_end") end
+  if S.endWhy ~= "stream_lost" or not P.shot or now - P.noTrack > TRACK_GRACE_MS then return stop("track_end") end
   capped("track_wait", "step=track_wait;why=stream_lost", 10)
  else
   P.noTrack = nil

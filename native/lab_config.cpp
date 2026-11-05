@@ -330,7 +330,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.world_horse_pillion);
         if (ok) result.world_horse_pillion_given = true;
     }
-    // Horse plan M4, shoot from the back of the horse (lab and play, with the gun profile).
+    // Horse plan M4, shoot from the back of the horse (lab and play, off unless named: ResolveWeaponDefaults).
     else if (Equals(key, "world_horse_shot")) {
         ok = ParseBool(value, result.world_horse_shot);
         if (ok) result.world_horse_shot_given = true;

@@ -181,7 +181,8 @@ bool HoldSeat(SeatHold& h, bool lease, float& back, float& up, bool& pose) noexc
         h.pose = pose;
         return true;
     }
-    if (h.live && h.miss < kSeatGraceTicks) {
+    // The review of M4: the grace only with world_horse_shot named (h.grace); at the defaults a lapse ends the seat.
+    if (h.grace && h.live && h.miss < kSeatGraceTicks) {
         ++h.miss;
         back = h.back;
         up = h.up;
