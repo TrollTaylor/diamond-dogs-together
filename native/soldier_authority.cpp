@@ -64,6 +64,7 @@ unsigned RemoteCount() noexcept {
 namespace {
 std::atomic<std::uint32_t> g_defHits[2]{};
 std::atomic<std::uint64_t> g_defBy[2][kSoldiers / 64]{};
+std::atomic<std::uint16_t> g_shot0[kSoldiers]{};
 } // namespace
 
 void NoteDefense(std::uint32_t target, std::uint16_t attacker) noexcept {
@@ -71,6 +72,7 @@ void NoteDefense(std::uint32_t target, std::uint16_t attacker) noexcept {
     const unsigned index = attacker & 0x1FFu;
     g_defHits[target].fetch_add(1, std::memory_order_relaxed);
     g_defBy[target][index / 64].fetch_or(1ull << (index % 64), std::memory_order_relaxed);
+    if (target == 0) g_shot0[index].fetch_add(1, std::memory_order_relaxed);
 }
 
 DefenseSnapshot DefenseRead() noexcept {
@@ -87,6 +89,15 @@ void DefenseReset() noexcept {
         g_defHits[t].store(0, std::memory_order_relaxed);
         for (auto& w : g_defBy[t]) w.store(0, std::memory_order_relaxed);
     }
+}
+
+std::uint32_t TakeShooterHits(std::uint16_t (&out)[kSoldiers]) noexcept {
+    std::uint32_t total = 0;
+    for (unsigned i = 0; i < kSoldiers; ++i) {
+        out[i] = g_shot0[i].exchange(0, std::memory_order_relaxed);
+        total += out[i];
+    }
+    return total;
 }
 
 bool DefenseList(const DefenseSnapshot& s, unsigned target, char* out, std::size_t capacity) noexcept {

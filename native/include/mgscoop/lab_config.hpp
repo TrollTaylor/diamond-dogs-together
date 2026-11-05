@@ -747,6 +747,10 @@ struct LabConfig {
     bool soldier_perceive_given = false;
     bool soldier_brain = false;
     bool soldier_brain_given = false;
+    // Enemy sync M7 FM1 probe P1 (docs/world-sync-design.md 7.15; soldier_act.hpp): act_census hooks the soldier request
+    // manager update 0x13735c0 read-only and logs the request/order census, the engage bins and the realize bands; the
+    // research command act_probe (U2) needs it. Lab and play; research only, off unless named. No CFG bit, no wire.
+    bool act_census = false;
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and

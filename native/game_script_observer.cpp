@@ -128,6 +128,7 @@
 #include "mgscoop/supply_cbox.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/soldier_perceive.hpp"
+#include "mgscoop/soldier_act.hpp"
 #include "mgscoop/soldier_authority.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -2673,6 +2674,7 @@ void PublishDebugSnapshot() noexcept {
     if (pp::ReadState(partner_addresses, current) == pp::Refusal::none && current.vars_ok) {
         snapshot.pose_valid = true;
         for (unsigned i = 0; i < 3; ++i) snapshot.player_pos[i] = current.vars_pos[i];
+        if (mgscoop::soldier_act::Installed()) mgscoop::soldier_act::SetLocalPlayer(snapshot.player_pos, now);
         if (current.slots_ok) {
             snapshot.player_yaw = current.slot[0][3] * 57.2957795f;
             snapshot.local_yaw_valid = true;
@@ -3304,6 +3306,24 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 StringCchCopyA(line,ARRAYSIZE(line),"teammate_aim=refused;reason=owned_worker_required");
             else mgscoop::teammate_targeting::StatusLine(line,sizeof(line));
             debug::Result(pending.id,worker && (observe || filter || status) ? 1u:0u,line);
+        } else if (pending.id && (std::strcmp(pending.text, "act_status") == 0 || std::strncmp(pending.text, "act_probe", 9) == 0)) {
+            // Enemy sync M7 FM1 probe P1 (soldier_act.hpp): act_status, or act_probe [<dst idx|auto> <src idx|auto> <ms>
+            // <native|raw|auto>] (U2: this copy puppets dst and posts src's request to him every update; auto picks both).
+            namespace sa2=mgscoop::soldier_act;
+            bool ok=true;
+            if (std::strncmp(pending.text, "act_probe", 9) == 0) {
+                char a[16]{},b[16]{},m[16]{};unsigned ms=12000;
+                (void)sscanf_s(pending.text+9," %15s %15s %u %15s",a,static_cast<unsigned>(sizeof(a)),b,static_cast<unsigned>(sizeof(b)),&ms,m,static_cast<unsigned>(sizeof(m)));
+                const auto idx=[](const char* t) noexcept -> std::uint16_t {
+                    if(!*t||std::strcmp(t,"auto")==0) return 0xffff;
+                    const unsigned long v=std::strtoul(t,nullptr,10);return v<512?static_cast<std::uint16_t>(v):0xfffe;};
+                const unsigned mode=std::strcmp(m,"native")==0?0u:std::strcmp(m,"raw")==0?1u:2u;
+                ok=sa2::StartProbe(idx(a),idx(b),ms,mode);
+            }
+            char line[200]{};
+            if(!sa2::StatusLine(line,sizeof(line))) StringCchCopyA(line,ARRAYSIZE(line),"act;overflow");
+            LogFormat("soldier_act_status; %s; ok=%u\r\n",line,ok?1u:0u);
+            debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "perceive_status") == 0) {
             // M7 step 1: the per-soldier pick counters (result), plus the P12a census lines, the soldiers' hits on each
             // player as the defense callback saw them and the current targets (log).
@@ -6875,6 +6895,11 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         // P13: the LOCAL accessor hooks (stock answers until perceive_local names a redirect).
                         if (mgscoop::soldier_perceive::InstallPick(base, Log)) mgscoop::soldier_perceive::InstallLocal(base, Log);
                     } else Log("soldier_perceive=off; reason=key_off\r\n");
+                    // Enemy sync M7 FM1 probe P1 (soldier_act.hpp, docs/world-sync-design.md 7.15): the request manager
+                    // census (read-only) and the act_probe research command, only with lab.ini act_census=1.
+                    if (labc.act_census) {
+                        if (mgscoop::soldier_act::Install(base, game_span, Log)) mgscoop::soldier_act::SetCensus(true);
+                    }
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.
                     const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();

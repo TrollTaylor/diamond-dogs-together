@@ -45,5 +45,8 @@ DefenseSnapshot DefenseRead() noexcept;
 void DefenseReset() noexcept;
 // "<n>:<i>,<i>,..." for one target (soldier indices ascending, as many as fit); false when the head does not fit.
 bool DefenseList(const DefenseSnapshot& s, unsigned target, char* out, std::size_t capacity) noexcept;
+// Enemy sync M7 FM1 probe (soldier_act engage bins): the Defend hits on the local player (target 0) per shooter index since
+// the last take; returns the total and clears.
+std::uint32_t TakeShooterHits(std::uint16_t (&out)[kSoldiers]) noexcept;
 
 } // namespace mgscoop::soldier_authority
