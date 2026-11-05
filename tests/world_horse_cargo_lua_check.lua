@@ -166,11 +166,18 @@ check(f.logged("event=horse_cargo;step=loaded;seat=2;gen=22;role=carrier"), "ste
 check(not f.C.downedPosture(), "the carrier's own downed posture is never the cargo's")
 local w = f.lastWarp(1)
 check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-6 and
- math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and w.rotY == 0, "body 1 on the cargo point (behind the root, up), the horse's yaw")
+ math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6, "body 1 on the cargo point (behind the root, up)")
+-- M2g (runs 770368d0 / d4aec0a2 host-h2-loaded, 4585cc5a host-h2-ride-walk: on the carrier's screen body 1 lay ALONG the horse
+-- over the saddle, held at the horse's yaw; body 0 at a quarter turn lies across it on the victim's own screen): body 1 at a
+-- quarter turn from the horse's yaw too.
+check(math.abs(w.rotY - math.pi / 2) < 1e-3, "body 1 a quarter turn from the horse's yaw (it lies across the horse)")
 check(w.via == "hold1" and f.lastHold1:find(" 14$"), "the carrier's copy holds body 1 by hold1 (C0 + watch + pin)")
 -- M2f (runs 144d99bb / 4585cc5a frames: on the carrier's screen the body sat a little high over the rump at the load, the walk
 -- and after the dismount): 0.1 m lower over the census, the rider and the carrier's ground.
-check(f.C.RISE_MM == 450 and f.C.RIDE_RISE_MM == 400 and f.C.GROUND_MM == 1350, "body 1 0.45 m over the census, 0.4 m over the rider")
+check(f.C.RISE_MM == 450 and f.C.GROUND_MM == 1350, "body 1 0.45 m over the census, kept 1.35 m over the ground")
+-- M2g (runs 770368d0 host-h2-mounted / -ride-walk, 4585cc5a host-h2-ride-walk: riding, its back at the rider's mid-back, about
+-- 0.3 m over the rump): 0.15 m over the rider's own position.
+check(f.C.RIDE_RISE_MM == 150, "riding: body 1 0.15 m over the rider")
 f.horse.x, f.horse.yaw = 102000, 1571
 f.mounted = true
 f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 2.5
@@ -179,6 +186,7 @@ w = f.lastWarp(1)
 check(math.abs(w.x - (102.1 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3 and
  math.abs(w.y - (2.5 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
 check(f.logged("step=pin;how=rider;mounted=1"), "the pin stats line names the rider anchor")
+check(math.abs(w.rotY - (1.571 + math.pi / 2)) < 2e-3, "riding: body 1 a quarter turn from the horse's yaw")
 -- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low behind the rider at a gallop): while riding, body 1 leads by the
 -- rider's last per-tick move (it is drawn after this tick's own move), never by a jump over 0.6 m.
 f.env.vars.playerPosX = 102.4
