@@ -518,6 +518,11 @@ do
     local a, b = lf(h, 25602), lf(h, 25603)
     check(#a >= 16 and #a <= 21 and #b >= 1 and #b <= 3, 'host: the moving truck at 10 Hz (' .. #a .. '), the parked one at 1 Hz (' .. #b .. ')')
     check(#lf(h, 25608) == 0, 'host: never a vehicle that is not an LRRP truck')
+    h.pool[25602].riders = {1195}
+    for i = 1, 30 do h:poll(50) end
+    check(h:has('event=lrrp;step=crew;id=25602;ent=1194;') and h:has('event=lrrp;step=crew;id=25602;ent=1195;') and h:has(';in=0;rl=1'),
+        'host: a rider got out: the crew\'s positions once a second (step=crew)')
+    h.pool[25602].riders = {1194, 1195}
     local s = a[#a]
     check(s[2] >= (h.clock - 100) % 4294967296 and s[2] <= h.clock % 4294967296, 'host: the sender tick is this copy\'s clock')
     check(s[4] >= 118000 and s[5] == 1000 and s[6] == 200000 and s[8] >= 9000 and s[8] <= 11000 and s[9] == 2 and s[10] == 1,
@@ -603,6 +608,10 @@ do
         'crew: the host\'s got out: this copy\'s gets out 2 s later, UnsetRelativeVehicle only')
     g.pool[25602].riders = nil
     for _ = 1, 20 do s2(100000, 0, 0, 0) end
+    -- Every known crew member's position once a second for 40 s after this copy's rider count changed (the gate's
+    -- "within 5 m 20 s after they get out", far crews too: the patrol scan reads only 55 / 60 m around the players).
+    check(g:has('event=lrrp;step=crew;id=25602;ent=1194;') and g:has('event=lrrp;step=crew;id=25602;ent=1195;') and
+        g:has(';in=0;rl=0') and g:count('event=lrrp;step=crew;id=25602;ent=1194;') <= 45, 'crew: positions of the crew out of the truck, 1 Hz')
     g.W.byId = {[1194] = 501, [1195] = 502}
     g.W.ent = {[501] = {id = 1194}, [502] = {id = 1195, st = 2}}
     g.W.place = {state = function(en) return en.st or 0 end}
