@@ -2406,3 +2406,29 @@ No new op, world note or CFG bit. Receipt and log changes only.
 - `soldier_act_frame` adds `payload_ids` (the aim-target swaps of `RemapAimTarget`), `due` (applies the rule asked
   for, counted just before the unpack: applied / due restates only unpack faults), `reapply` (the moving owner's 1 s re-applies), `expired` (fire-drop bits that lapsed), `order_clear`, `leg_wait`.
 - Lua's apart release (`why=apart`) waits for a still owner copy: its position moved under 0.5 m for 2 s.
+
+## 37. Enemy round 7 track A: the y read-backs, drive_sink apart from snaps, the far put-back, no vert thrash (lab keys `drive_vert`, native only; `place_reach`, CFG r[19] bit 2048; design 7.20)
+
+No new op, world note, CFG bit or receipt field. Log lines only, and two behaviours behind existing keys.
+
+- Native `DRIVE_V1` (`drive_vert`): at most 2 vert snaps (`s=3`) of one copy in 10 s from the first snap of that
+  window; a third due snap is not taken and is logged once per window, `world_drive=vert_stop; go; slot; n; gap_cm;
+  left_ms`; `world_drive=stats` adds `vert_stop`.
+- Lua (new chunk `lua/coop/world_readback.lua`, after `world_mirror.lua`; both roles, follow only):
+  - `event=readback; ent; src; at; ms; dy_m; held; far_m`: 0.5 s (`at=500`) and 2 s (`at=2000`) after a vert snap
+    (`src=vert`), a landed drive step that ends a place_reach hold (`src=drive`), a landed kind-3 placement of a held
+    copy or of a copy beyond 60 m of this player (`src=place`) and a put-back (`src=put`). `dy_m` is the copy's
+    GetPosition y minus where it was put (the drive target's y, or the placement's wire y), `held=1` within 1 m,
+    `far_m` its distance from this PC's player when it was put there. `ms` is the real delay (the check runs in the
+    placement tick).
+  - `event=drive_sink; ent; off_m; e_cm; low_ms` (was in `world_snap.lua`): the reply's `v` more than 1.5 m under the
+    target for 2 s in all, summed across readings (a reading level for less than 2 s does not reset it; level for 2 s
+    does). Once per such episode.
+  - place_reach only: a read-back of a copy beyond 60 m more than 1.5 m under where it was put (and under the owner's
+    newest sample of him, when one is at most 3 s old) logs `event=readback_fix; ent; src; far_m; dy_m; put=1` and
+    queues that placement (or the owner's newest sample) again once; its force-realize ends when that put-back is done;
+    or `put=0; why=once|owner|busy|none` (`once`: the put-back fell too; `owner`: the owner went down with him, nothing
+    done). For 10 s after a fix no realize hold starts for him: `event=readback_nohold; ent; why; left_ms` once.
+- `tools/enemy_div_report.py`: `guard_fell` counts the host's `place_div why=fall` lines too; new rows `readback`
+  (held / fell per copy and source), `readback_fell_guards`, `readback_fix`, `vert_snaps`, `vert_stop`
+  (`tests/enemy_div_report_check.py`, run by hand: `python -I tests/enemy_div_report_check.py`).
