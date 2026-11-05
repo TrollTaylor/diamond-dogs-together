@@ -1,3 +1,76 @@
+## November 5, 2026: enemy round 10 track C - the far mirror takes every calm walker, the released walkers walk on, the plans are checked again: 2 of 4 calm walkers within the gate and a matched frame pair, but the calm gate is not reached (a route's corners, released walkers that stand again); `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
+
+Design 7.29, protocol section 46. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Two hidden play
+sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, `soldier_act=1, act_plan=1, act_census=1` named,
+build 0.15.2+74c50ef: `15aa58cb` (scenario `enemy-mirror10-calm.txt`, both players side by side at the logged point B)
+and `689e654c` (`enemy-mirror10b-calm.txt`, side by side at the logged point A, 20 s mirror off / 20 s on with no
+screen capture). Neither void (the first frames of both copies show binoculars, no modal). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`. No default changed, so no run with no key named.
+
+- **What players get**: nothing new at the defaults. `act_plan` and `soldier_act` stay off unless named. Named, all four
+  calm far walkers are now mirrored (round 9: one of four), two of them follow the host copy within the gate (17 p50
+  0.55 m, 18 p50 1.18 m), one pair of frames shows a mirrored guard walking at the same spot on both screens, and a
+  guard the mirror lets go walks his last walk on to its end (round 9: he stood 34-48 s at once); some still stand
+  10-26 s after it.
+- **Built** (red 5e1ae28d, green cc916776, native only, under `act_plan`): walkers are taken whatever their leg or
+  distance (`TakeWait`: no `LegMatch`, no 10 m rule; beyond 15 m the take opens with the unpack's warp); a plan whose path
+  is missing or ends beyond 1 m is checked again up to 4 times 300 ms apart (`PlanCheckVerdict`; only no path at all
+  stops the hold); a partial path is held while he is more than 3 m from its end (`PartialHolds`); at a release a walk
+  in R walks on to R+0x80 (`ReleaseChoose`: our live plan kept, or with no handle and a free slot planned again; it ends
+  once his brain's next request cancels our handle, or after 2 s stood within 1.5 m of R+0x80, or 180 s:
+  `ReleaseWalkStep`). New line `soldier_act_release`, frame counters `rel_keep`, `rel_replan`, `rel_end`, `recheck`; the
+  frame line buffer is 1024 bytes (the round 9 nit). Full build 355/355; every contract check as before (known base).
+- **Gate** (scaled to what a player sees at 95-300 m, design 7.29; per guard, calm frames):
+  - [O] calm walkers in range mirrored: `15aa58cb` 4 of 4 (15, 17, 18, 246: puppets in 84 / 81 / 89 / 58 % of the samples
+    where the host copy walked 95-300 m from the guest; `near_wait` 0, `leg_wait` 0) - PASS.
+    `689e654c` 4 of 4 (84 / 72 / 82 / 42 %) - PASS.
+  - [O] place error while the host copy moves (>= 20 samples, gate p50 1.5 / p90 3.0 m): `15aa58cb` 17 0.55 / 0.67 (122),
+    18 1.18 / 1.98 (214) PASS; 15 3.48 / 10.63 (210) FAIL; 246 7.00 / 14.50 (91) FAIL.
+    `689e654c`: 17 0.29 / 0.89 (92), 18 0.88 / 1.62 (201) PASS; 15 1.99 / 6.56 (196) FAIL (along p50 +0.90 m, p90 +5.7 m;
+    across 1.42 / 3.46 m); 246 1.57 / 3.13 (46; he walked this time) FAIL by 0.07 / 0.13 m.
+  - [O] guard 15 leads: along the host copy's motion he is p50 2.97 m ahead (p90 10.4 m), across 1.28 m (p90 5.3 m), at
+    the host copy's speed (ratio 1.00). The host copy walks the route's line (one leg north 15 m, then east), the plan
+    the straight line to the leg's end (R+0x80): the wire carries only the leg's end, not the host copy's path [O logs,
+    I cause].
+  - [O] guard 246's guest copy does not walk at all: with a path to R+0x80 (fh 1), our live handle and gait 1 to 3 he
+    stood (v 0) while the host copy walked; unmirrored in `c0c3d088` the guest's own 246 stood the same way (ka 1 with a
+    walk to 425.7, 2148.9) - a guest-side state the mirror does not cause [I]; in `689e654c` he walked.
+  - [O] 15 m warps while a puppet (gate <= 1 a run): `15aa58cb` 2 held (246, 15.5 / 15.6 m) - FAIL; `689e654c` 1 held (18,
+    15.9 m) - PASS. Take warps (first apply, 19-49 m, 95-300 m from the guest) 5 and 5.
+  - [O] plans with the path end within 1 m, rechecked: `15aa58cb` 80 of 82 (97.6 %; 15 rechecks, 2 never got a path) -
+    PASS.
+    `689e654c` 65 of 68 (95.6 %) - PASS.
+  - [O] released guards frozen > 5 s: `15aa58cb` 0 with the freeze signature (no path, a walk in R): 28 released walks
+    kept, 4 ended; guard 246 (stuck before) stood 29.9 s after his `apart` release; 16 / 19 / 219 stood 10-16 s in the
+    ALERT after the scripted caution (with a path) - PASS for the release freeze of round 9.
+    `689e654c`: 5 stands of 10-26 s with no path (fh 0) and a walk in R after a release (15 twice, 18, 246 twice) -
+    FAIL. Guard 15 [O]: released by the mirror off, he walked his kept walk to its end (425.7, 2148.9); there R+0x80 became
+    his brain's next route point (363.6, 2159.8) with the same request counter (R+0x1a0 0x19), R+0x19c and his slot
+    cleared by the engine, and no plan came (fh 0) until the mirror took him again 15 s later. A brain re-target with no
+    path is the freeze that is left [O for 15, I for the others].
+  - [O] frame p95 (capture-free seconds, gate + 1 ms): `15aa58cb` mirror off 20.58 ms (9 s) / puppets 22.10 ms (61 s),
+    + 1.52 ms - FAIL (12 puppets, round 9 had 5).
+    `689e654c` (20 s off / 20 s on with no capture): off 21.59 ms (10 s) / puppets 21.79 ms (82 s), + 0.20 ms - PASS.
+  - [O] frames: `15aa58cb` none matched: from B a tree hides the crosshair on both screens for 17 and 15, guard 18's frames
+    show other guards (a watchtower, a roof) but not him at the crosshair on both.
+    `689e654c` (spot A): `w17-2-a` / `w17-2-b`: on both screens one soldier walks left along the top of the same wall at
+    the same spot, in both frames of the pair (0.45 s apart; the host's copy drawn with its marker, the guest's plain);
+    the census has guard 17 a puppet there, walking (host 1.01 / guest 0.94 m/s), 0.84 m apart - PASS (that the soldier
+    is 17 is [I]: the cameras aimed at 17, the soldier is left of the crosshair on both).
+  - [O] no ChangePhase started by a puppet: `15aa58cb` the guest's ALERT request (`req_phase` phase 3) came 12 s after the
+    shot released every puppet (none live); `689e654c` the guest's only phase change was the host's scripted caution (rx).
+    0 latches, faults, game overs in both (`enemy_div_report` PASS).
+- **Failing gate rows**: `15aa58cb`: place error 15 (the route's line) and 246 (a copy that cannot walk); held 15 m warps
+  (246); frame p95 + 1.52 ms; no frame pair. `689e654c`: place error 15 and 246 (by 0.07 / 0.13 m); 5 released guards
+  standing 10-26 s with no path.
+- **Next** (three changes, then one named run, the flip per D-FM1 (a) and the no-key run): (1) after a release, while the
+  guest's brain re-targets a walk with no path (dest mode 1, (R+0x19e & 3) == 2, R+0x19c 0xffff, a free slot, no follower
+  path), plan it with the shadow plan, for that copy only, until his brain's own type shows in his slot (guard 15 in
+  `689e654c`); (2) carry the host copy's path, not only the leg's end (a wire part with its follower's path points, or a
+  plan through the owner positions the order part already sends): guard 15 cuts his route's corners in both runs; (3) do
+  not take a walker whose copy has a walk but has not moved for 5 s (246 in `15aa58cb`: only warps to gain). The frame
+  p95 row passed on 20 s off / 20 s on with no capture (+ 0.20 ms with 12 puppets); keep that A / B.
+
 ## November 5, 2026: enemy round 9 track C - the far mirror's walkers plan their own path: the plans land and the one mirrored calm walker's place error fell from 9 to 1.3 m (p50), but 3 of 4 calm walkers are never taken, released walkers freeze, and the calm gate is not reached; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.26, protocol section 43. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play

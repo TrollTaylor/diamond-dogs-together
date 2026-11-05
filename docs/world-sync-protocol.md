@@ -2565,3 +2565,13 @@ No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. N
   300 ms check did not find the path end far or missing, the 15 m warp would not move him and the catch-up gait is unchanged.
 - The catch-up (`gait_up`) starts beyond 1 m (was 2 m): the owner copy ahead by 1..5 m gait + 1 (cap 3), beyond 5 m 3.
 - `soldier_act_frame` adds `plan_hold` (held re-applies) after `plan_release`.
+
+## 46. Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`; design 7.29)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native only, the puppet side, under `act_plan`.
+
+- `ACT_V1 q` (QueryFresh) no longer waits on `LegMatch` or the 10 m rule with `act_plan` (`leg_wait` / `near_wait` stay 0).
+- `soldier_act_plan` adds `tries` (rechecks, up to 4 at 300 ms); `ms` counts from the plan.
+- New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
+  planned puppet and at the end of a kept walk.
+- `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.
