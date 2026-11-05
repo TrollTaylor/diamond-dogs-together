@@ -6370,16 +6370,20 @@ bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     else replacement={off,sizeof(off)-1};
     return true;
 }
-// Enemy round 8 / 9 track B (lua/coop/world_lrrp.lua S.lf, docs/world-sync-design.md 7.21, 7.25): MGS_COOP_LRRP_CFG_V1 answers
-// the native-only lab key lrrp_follow (1 on, 0 off; off unless named, no CFG bit) on the runtime thread; otherwise nil (Lua
-// asks again). No game read or call.
+// Enemy round 8 / 9 / 10 track B (lua/coop/world_lrrp.lua S.lf, docs/world-sync-design.md 7.21, 7.25, 7.28): MGS_COOP_LRRP_CFG_V1
+// answers the native-only lab key lrrp_follow (1 named on, 2 on by the gun profile's default - Lua then runs it in
+// Afghanistan free roam 30010 only, 0 off; no CFG bit) on the runtime thread; otherwise nil (Lua asks again). No game read
+// or call.
 bool SelectLrrpReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char query[]="return 'MGS_COOP_LRRP_CFG_V1'";
     if(!buffer || size!=sizeof(query)-1 || std::memcmp(buffer,query,size)!=0) return false;
-    static constexpr char none[]="return nil", on[]="return 1", off[]="return 0";
+    static constexpr char none[]="return nil", on[]="return 1", off[]="return 0", byDefault[]="return 2";
     replacement={none,sizeof(none)-1};
     if(!OnRuntimeThread()) return true;
-    if(mgscoop::GetLabConfig().lrrp_follow) replacement={on,sizeof(on)-1};
+    const auto& cfg=mgscoop::GetLabConfig();
+    // Round 10 B: 2 = on by the gun profile's default (Lua runs it in Afghanistan free roam only), 1 = named on.
+    if(cfg.lrrp_follow) replacement=cfg.lrrp_follow_given ? mgscoop::script_bridge::Replacement{on,sizeof(on)-1}
+                                                          : mgscoop::script_bridge::Replacement{byDefault,sizeof(byDefault)-1};
     else replacement={off,sizeof(off)-1};
     return true;
 }
