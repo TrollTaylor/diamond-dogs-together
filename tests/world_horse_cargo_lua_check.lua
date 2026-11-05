@@ -148,6 +148,18 @@ w = f.lastWarp(1)
 check(math.abs(w.x - (102.1 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3 and
  math.abs(w.y - (2.5 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
 check(f.logged("step=pin;how=rider;mounted=1"), "the pin stats line names the rider anchor")
+-- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low behind the rider at a gallop): while riding, body 1 leads by the
+-- rider's last per-tick move (it is drawn after this tick's own move), never by a jump over 0.6 m.
+f.env.vars.playerPosX = 102.4
+f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.x - (102.4 + 0.3 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3,
+ "riding: body 1 leads by the rider's last move (0.3 m a tick)")
+check(f.C.LEAD_MAX_MM == 600, "the lead is capped at 0.6 m")
+f.env.vars.playerPosX = 104.4
+f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.x - (104.4 - f.C.RIDE_BACK_MM / 1000)) < 1e-3, "a 2 m jump between ticks is no motion: no lead")
 f.env.vars.playerPosX, f.env.vars.playerPosY = 100, 2
 local keeps = f.count(6)
 for i = 1, 22 do f.tick(50) end
@@ -254,6 +266,19 @@ check(#f.warps == nw + 1 and math.abs(w.x - 170.0) < 1e-6 and math.abs(w.y - (2.
  math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6, "C.placed: body 0 over the pose M1 just wrote")
 f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
 check(#f.warps == nw + 1, "the tick after a post-placement pin leaves body 0 there")
+-- Round 2 (body 0 slips off at a gallop on the victim's screen): the next placement within 200 ms leads body 0 by the
+-- horse's last per-placement move (0.3 m here), capped at 0.6 m; a slower placement or a jump has no lead.
+f.C.placed(170300, 2400, 310000, 0)
+w = f.lastWarp(0)
+check(math.abs(w.x - (170.3 + 0.3)) < 1e-6, "C.placed: body 0 leads by the horse's last move")
+f.now = f.now + 50
+f.C.placed(172300, 2400, 310000, 0)
+check(math.abs(f.lastWarp(0).x - 172.3) < 1e-6, "a 2 m jump is no motion: no lead")
+f.now = f.now + 400
+f.C.placed(172600, 2400, 310000, 0)
+check(math.abs(f.lastWarp(0).x - 172.6) < 1e-6, "a placement 400 ms after the last: no lead")
+check(f.logged("step=victim_pin;want_cm=") and f.logged(";lag_cm=") and f.logged(";src="),
+ "the victim_pin line carries the body's lag behind its last target and the target's source")
 f.W.horseShare = {}
 for i = 1, 25 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
 check(#f.places == 2, "unridden and drifted over 0.5 m from the KEEP pose: re-placed (at most 1 Hz)")
@@ -313,6 +338,24 @@ check(f.C.state == "off" and f.sent(5) and f.sent(5)[6] == 6 and f.lastWarp(0), 
 f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
 f.rx(4, 0, 33, 101000, 2000, 300000, 0); f.D.records[2].generation = 34; f.tick(50)
 check(f.C.state == "off" and f.sent(5)[6] == 8, "the victim respawned: victim_gone")
+-- Round 2 (runs 83ac3950 / 547b431e: victim_gone left body 0 on the horse on the victim's own screen): a new downed
+-- generation lays body 0 beside its horse while it is still at the horse (within 5 m), never a body that is elsewhere.
+f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
+f.rx(4, 0, 33, 101000, 2000, 300000, 0); f.tick(50); f.tick(50)
+local nv = #f.warps
+f.env.vars.playerPosX, f.env.vars.playerPosY, f.env.vars.playerPosZ = 101.0, 3.4, 299.6
+f.D.records[2].generation = 34; f.tick(50)
+w = f.lastWarp(0)
+check(f.C.state == "off" and f.sent(5)[6] == 8 and #f.warps == nv + 1 and math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and
+ math.abs(w.x - (101.0 - f.C.SIDE_MM / 1000)) < 1e-6 and f.logged("why=victim_gone;side=cargo;placed=1"),
+ "victim_gone at the horse: body 0 laid beside it")
+f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
+f.rx(4, 0, 33, 101000, 2000, 300000, 0); f.tick(50); f.tick(50)
+nv = #f.warps
+f.env.vars.playerPosX, f.env.vars.playerPosZ = 160.0, 380.0
+f.D.records[2].generation = 34; f.tick(50)
+check(f.C.state == "off" and #f.warps == nv and f.logged("why=victim_gone;side=cargo;placed=0"),
+ "victim_gone with body 0 elsewhere (a respawn): left where it is")
 
 -- Wire hygiene.
 f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
