@@ -23,7 +23,7 @@ local function str32(s) local h = 7; for i = 1, #s do h = (h * 33 + s:byte(i)) %
 -- A fake pool: id -> {alive, x, y, z (m), yaw (rad), type, riders, life, zero, parts, sv}.
 local function Fixture(role, opts)
     opts = opts or {}
-    local c = {logs = {}, tx = {}, placed = {}, lifeSet = {}, clock = 100000, mission = opts.mission or 30020}
+    local c = {logs = {}, tx = {}, placed = {}, lifeSet = {}, force = {}, cmds = {}, clock = 100000, mission = opts.mission or 30020}
     c.pool, c.names = {}, {}
     local env = setmetatable({}, {__index = _G})
     env._G = env
@@ -46,7 +46,10 @@ local function Fixture(role, opts)
     W.nextRid = function() return 1 end
     W.tick = function() c.ticks = (c.ticks or 0) + 1 end
     W.h = function(name) return str32(name) end
+    W.tick32 = function(ms) return ms % 4294967296 end
     W.receipt = function(source)
+        -- Enemy round 8 track B: the native-only lab key lrrp_follow (1 on, 0 off).
+        if source == "return 'MGS_COOP_LRRP_CFG_V1'" then c.cfgAsked = (c.cfgAsked or 0) + 1; return opts.lrrp and 1 or 0 end
         local first, n = source:match("^return 'MGS_COOP_VEHICLE_LIFE_V1' %-%- (%d+) (%d+)$")
         assert(first, 'only the life receipt: ' .. source)
         c.reads = (c.reads or 0) + 1
@@ -61,7 +64,7 @@ local function Fixture(role, opts)
     W.api = {
         send = function(target, cmd)
             local v = c.pool[target]
-            if not v then return nil end
+            if not v then c.cmds[#c.cmds + 1] = {id = target, cmd = cmd.id}; return nil end
             if cmd.id == 'IsAlive' then return v.alive == true and not v.released end
             if v.released then return nil end
             if cmd.id == 'GetPosition' then return vector(v), v.yaw or 0 end
@@ -71,6 +74,7 @@ local function Fixture(role, opts)
                 for i = 1, 4 do r[i] = v.riders and v.riders[i] or 65535 end
                 return r
             end
+            if cmd.id == 'ForceStop' then c.force[#c.force + 1] = {id = target, on = cmd.enabled}; return nil end
             if cmd.id == 'SetBodyLife' then
                 c.lifeSet[#c.lifeSet + 1] = {id = target, life = cmd.life}
                 if not c.lifeIgnored then v.life = cmd.life end
@@ -478,5 +482,101 @@ if arg[3] then
     check(W.vehicleStateOn and not W.vehicleGoneOn and W.vehicleWreckOn, 'CFG r[15] = 6: VEHICLE_STATE and the wreck key')
     W = Composed(8, 1)
     check(not W.vehicleStateOn and not W.vehicleGoneOn and not W.vehicleWreckOn, 'an out-of-range r[15] (8) is off')
+end
+-- Enemy round 8 track B (docs/world-sync-design.md 7.21, protocol section 38): the LRRP truck owner path, native-only lab
+-- key lrrp_follow (receipt MGS_COOP_LRRP_CFG_V1). Before this branch S.lf, op 93 and the receipt did not exist: every
+-- check below failed (red observed first).
+do
+    local function lf(t, id) local r = {} for _, s in ipairs(t:sent(93)) do if s[3] == id then r[#r + 1] = s end end return r end
+    local function forces(t, id, on) local n = 0 for _, f in ipairs(t.force) do if f.id == id and f.on == on then n = n + 1 end end return n end
+    local function placedOf(t, id) local r = {} for _, p in ipairs(t.placed) do if p.id == id then r[#r + 1] = p end end return r end
+    -- Off (receipt 0, the default): the host streams nothing, the guest never stops or moves its truck.
+    local h = Fixture('host')
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(type(h.S.lf) == 'table' and h.W.OP.LRRP_FAST == 93 and type(h.H[93]) == 'function', 'S.lf, op 93 LRRP_FAST and its handler')
+    check(#h:sent(93) == 0 and (h.cfgAsked or 0) >= 1, 'off: the key is asked; no LRRP truck is streamed')
+    local g = Fixture('guest')
+    g:add(25602, 500.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    g:start(); g:pair()
+    g.H[93]({1000, 25602, 100000, 1000, 200000, 0, 10000, 2, 1}); g:polls(4, 50)
+    check(#g.placed == 0 and #g.force == 0, 'off (a guest without the key): its truck is never stopped or moved')
+    -- Host on: a moving LRRP truck at 10 Hz, a parked one at 1 Hz, never a non-LRRP vehicle or the local player's ride.
+    h = Fixture('host', {lrrp = true})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:add(25603, 300.0, 200.0, 4, 'veh_trc_0001')
+    h:add(25608, -653.0, 877.7, 1, 'veh_lv_0000')
+    h:start(); h:pair()
+    for i = 1, 40 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    local a, b = lf(h, 25602), lf(h, 25603)
+    check(#a >= 16 and #a <= 21 and #b >= 1 and #b <= 3, 'host: the moving truck at 10 Hz (' .. #a .. '), the parked one at 1 Hz (' .. #b .. ')')
+    check(#lf(h, 25608) == 0, 'host: never a vehicle that is not an LRRP truck')
+    local s = a[#a]
+    check(s[2] >= (h.clock - 100) % 4294967296 and s[2] <= h.clock % 4294967296, 'host: the sender tick is this copy\'s clock')
+    check(s[4] >= 118000 and s[5] == 1000 and s[6] == 200000 and s[8] >= 9000 and s[8] <= 11000 and s[9] == 2 and s[10] == 1,
+        'host: xyz mm, speed ~10 m/s, 2 riders, flags 1 moving')
+    check(b[#b][8] == 0 and b[#b][9] == 0 and b[#b][10] == 0, 'host: the parked truck at speed 0, no riders, not moving')
+    check(h:has('event=lrrp;step=host;id=25602') and h:has('event=lrrp;step=riders;id=25602;n=2;r1=1194:?;r2=1195:?'),
+        'host: a step=host line and a riders line for the moving truck')
+    h.riding = true; h.env.vars.playerVehicleGameObjectId = 25602
+    local before = #lf(h, 25602)
+    for i = 1, 10 do h.pool[25602].x = 120 + i * 0.5; h:poll(50) end
+    check(#lf(h, 25602) == before, 'host: the truck the local player rides is not streamed (RIDE_FAST has it)')
+    -- Guest on: the host's samples of a truck driving at 10 m/s; the guest's copy 400 m back on its own route.
+    g = Fixture('guest', {lrrp = true})
+    g:add(25602, 500.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    g:add(25608, -653.0, 877.7, 1, 'veh_lv_0000')
+    g:start(); g:pair()
+    for i = 0, 10 do g.H[93]({5000 + i * 100, 25602, 100000 + i * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
+    local p = placedOf(g, 25602)
+    check(forces(g, 25602, true) == 1 and forces(g, 25602, false) == 0, 'guest: ForceStop on once while the host\'s truck drives')
+    check(#p >= 10, 'guest: the truck is placed every frame (' .. #p .. ')')
+    check(p[#p].x >= 110000 and p[#p].x <= 112500 and math.abs(p[#p].z - 200000) <= 10, 'guest: on the newest sample, advanced by its speed')
+    check(g:count('event=lrrp;step=jump;id=25602') == 1 and g:has('event=lrrp;step=jump;id=25602;d_m=400.0'), 'guest: one jump line, the first placement 400 m')
+    check(g:has('event=lrrp;step=follow;id=25602;mode=follow'), 'guest: a step=follow line')
+    g.H[93]({6200, 25608, 1000, 1000, 1000, 0, 10000, 0, 1}); g:polls(3, 50)
+    check(#placedOf(g, 25608) == 0 and forces(g, 25608, true) == 0 and g:has('step=refused;id=25608;reason=not_lrrp'),
+        'guest: an id that is no LRRP truck here is refused')
+    g.H[93]({5500, 25602, 0, 0, 0, 0, 0, 0, 0}); g:poll(50)
+    check(g.S.lf.tr[25602].b.tick == 6000, 'guest: an older sender tick is dropped')
+    -- At rest and empty on the host (session 1 c90ab046: a released truck was driven 300 m away by the guest's own AI with
+    -- its crew and put back every 30 s): ForceStop stays on, the truck is pinned (put back at once when 1 m+ off), and a
+    -- crew still seated here is unseated: UnsetRelativeVehicle after 2 s at rest, StartTravel "" after 5 s.
+    for i = 0, 15 do g.H[93]({6100 + i * 100, 25602, 111000, 1000, 200000, 0, 0, 0, 0}); g:poll(100) end
+    check(forces(g, 25602, false) == 0 and not g:has('event=lrrp;step=release;id=25602'), 'guest: at rest and empty there, ForceStop stays on')
+    local function sentTo(gid, cmd) local k = 0 for _, s in ipairs(g.cmds) do if s.id == gid and s.cmd == cmd then k = k + 1 end end return k end
+    check(sentTo(1194, 'UnsetRelativeVehicle') == 0, 'guest: no unseat before 2 s at rest')
+    local n = #placedOf(g, 25602)
+    g.pool[25602].x = 131.0
+    for i = 16, 25 do g.H[93]({6100 + i * 100, 25602, 111000, 1000, 200000, 0, 0, 0, 0}); g:poll(100) end
+    check(#placedOf(g, 25602) == n + 1 and g:has('event=lrrp;step=settle;id=25602') and math.abs(g.pool[25602].x - 111.0) < 0.01,
+        'guest: moved 20 m at rest: put back at once, once')
+    check(sentTo(1194, 'UnsetRelativeVehicle') == 1 and sentTo(1195, 'UnsetRelativeVehicle') == 1 and sentTo(1194, 'StartTravel') == 0 and
+        g:has('event=lrrp;step=unseat;id=25602;ent=1194;k=1'), 'guest: its crew still seated 2 s into the rest: UnsetRelativeVehicle once each')
+    for i = 26, 55 do g.H[93]({6100 + i * 100, 25602, 111000, 1000, 200000, 0, 0, 0, 0}); g:poll(100) end
+    check(sentTo(1194, 'StartTravel') == 1 and sentTo(1195, 'StartTravel') == 1 and sentTo(1194, 'UnsetRelativeVehicle') == 1,
+        'guest: still seated 5 s in: StartTravel "" once each, never again')
+    g.pool[25602].riders = nil
+    -- The host's truck drives again: still stopped here, placed every frame.
+    n = #placedOf(g, 25602)
+    for i = 56, 60 do g.H[93]({6100 + i * 100, 25602, 111000 + (i - 55) * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
+    check(forces(g, 25602, true) == 1 and #placedOf(g, 25602) >= n + 5, 'guest: driving again: followed, ForceStop never lifted')
+    check(g:has('event=lrrp;step=riders;id=25602;n=2;r1=1194:?'), 'guest: a riders line of its own')
+    -- Stale 3 s: ForceStop off, the track dropped.
+    g:polls(35, 100)
+    check(forces(g, 25602, false) == 1 and g:has('event=lrrp;step=stale;id=25602') and g.S.lf.tr[25602] == nil, 'guest: 3 s stale: released')
+    -- The local player's ride, unpaired and stop release it too.
+    for i = 0, 3 do g.H[93]({20000 + i * 100, 25602, 200000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
+    check(forces(g, 25602, true) == 2, 'guest: a new track stops it again')
+    g.riding = true; g.env.vars.playerVehicleGameObjectId = 25602
+    n = #placedOf(g, 25602)
+    for i = 4, 7 do g.H[93]({20000 + i * 100, 25602, 200000 + i * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
+    check(forces(g, 25602, false) == 2 and #placedOf(g, 25602) == n, 'guest: the local player rides it: released, never moved')
+    g.riding = false; g.env.vars.playerVehicleGameObjectId = 65535
+    for i = 8, 10 do g.H[93]({20000 + i * 100, 25602, 200000 + i * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
+    check(forces(g, 25602, true) == 3, 'guest: off it again: followed again')
+    for _, f in ipairs(g.W.stopHooks) do f(true) end
+    check(forces(g, 25602, false) == 3 and next(g.S.lf.tr) == nil, 'guest: stop releases every truck it stopped')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')

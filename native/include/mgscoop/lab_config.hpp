@@ -783,6 +783,11 @@ struct LabConfig {
     // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
     bool drive_vert = false;
     bool drive_vert_given = false;
+    // Enemy round 8 track B (docs/world-sync-design.md 7.21, no CFG bit; Lua asks the receipt MGS_COOP_LRRP_CFG_V1): the host
+    // streams its LRRP trucks (LRRP_FAST 0x5D) and the guest's copy follows them, its own AI stopped (ForceStop) while the
+    // host's truck moves or carries riders. Lab and play; off unless named (lab_config.cpp).
+    bool lrrp_follow = false;
+    bool lrrp_follow_given = false;
     // Enemy round 8 track A (docs/world-sync-design.md 7.22, native only, no CFG bit). quiet_place: a correction the guest's
     // Lua makes of a guard off its player's screen moves him with the engine's quiet network-position warp 0x136ece0 in the
     // request manager update (no set-transform message: after 499 of 539 applied place warps of the census runs the guard

@@ -2434,6 +2434,27 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
   got / cut by a newer arm / open), `readback_fix`, `vert_snaps`, `vert_stop`
   (`tests/enemy_div_report_check.py`, run by hand: `python -I tests/enemy_div_report_check.py`).
 
+## 38. Enemy round 8 track B: LRRP trucks follow the host (lab key `lrrp_follow`, native only; design 7.21)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x5D | LRRP_FAST | host to guest | U (its own newest-value slot), level 3, play too | 26 | sender tick (u32 ms), truck id (u16, 25600..26111), x / y / z (i32 mm), yaw (i32 mrad, +-31416), speed (u16 mm/s), NPC riders (u8, 0..8), flags (u8: 1 moving) |
+
+- Sent only on a host with `lrrp_follow` (off unless named, the gun profile too, since 34b9f024; receipt `MGS_COOP_LRRP_CFG_V1` ->
+  `return 1`; `return 0` off; nil off the runtime thread, asked again in 5 s); never for a truck the host's player rides or one with a live RIDE_FAST track.
+  10 Hz moving, 1 Hz at rest, at most one per 50 ms (the receiver's one slot keeps the newest sender tick, so trucks take
+  turns, and a newer datagram for one truck replaces an undelivered one for another: a design limit).
+- The guest applies it only with `lrrp_follow`, only for an id that is an authored LRRP truck on its copy (else
+  `event=lrrp; step=refused; reason=not_lrrp` once per id), never while its own player rides it. Older sender ticks are
+  dropped. A partner without 0x5D skips it by its length (`unknown_op`).
+- The guest keeps ForceStop on while a track lives (moving, manned or at rest) and pins the truck at rest; a crew still
+  seated there while the host's truck rests empty gets `UnsetRelativeVehicle` (2 s) and `StartTravel{travelPlan=""}` (5 s).
+- Lines: `event=lrrp; step=host; id; x; y; z; yaw; v; riders; n` (4 Hz while moving or manned, else every 5 s);
+  `step=follow; id; mode=follow|rest; x; y; z` (read back after the placement); `d_m` (the copy before it); `v; rh; rl`
+  (host / local riders); `jumps; n` (4 Hz following, 2 s at rest); `step=riders; id; n; r1=hash:x:z; ...` beside each
+  host / follow line with riders (W.log keeps 160 characters); `step=stop|release; why`, `step=settle; d_m`,
+  `step=jump; d_m; mode; jumps` (a placement over 5 m), `step=unseat; id; ent; k`, `step=stale`.
+
 ## 39. Enemy round 8 track A: the quiet place correction, the host's range on the ground plane (lab keys `quiet_place`, `range_flat`, native only; design 7.22)
 
 No new op, world note or CFG bit. One optional receipt token, log lines, and two behaviours behind native-only lab keys,

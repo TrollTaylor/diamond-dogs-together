@@ -1,33 +1,14 @@
--- M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4; op 51 = 0x33, host to guest, reliable,
--- world queue, level 3; docs/world-sync-protocol.md section 17). Vehicles nobody drives were per copy:
--- a jeep pushed, left or shot on the host's copy stayed untouched on the guest's (STATUS 7561ab63).
--- With lab.ini world_vehicle_state=1 (CFG r[15] bit 2; off in the lab, on in play unless named) on both copies
--- (30010, 30020; Mother Base 30050 in the lab only until a hidden run covers it, M4 review):
---   host:  scans its TppVehicle2 pool, SLICE ids every TICK_MS (a 24-vehicle pool in 1.5 s), plus at
---          once any id a Damage message names: IsAlive, GetPosition (pos, rotY), GetVehicleType and the
---          native read MGS_COOP_VEHICLE_LIFE_V1 (body life, zero-parts mask, the engine's ene_veh_state
---          word). It sends a live vehicle's state when it moved > 0.5 m / 5 deg or its life, state word
---          or parts changed (at most every MIN_GAP_MS per vehicle), all of them once after each PAIRED
---          (the sweep, flag 2) and each again after REFRESH_MS (flag 4: corrects a guest-local push).
---          Skipped (logged once per reason change): the local player's vehicle, an occupied rider[] seat
---          (an NPC, the local passenger), a vehicle the partner drives here (a RIDE_FAST track latched
---          10 s: world_vehicle.lua V.busy; the guest's seat chain never writes rider[]), an authored LRRP
---          truck (lrrpVehicle in f30010/f30020_enemy.lua: each copy's own AI drives it until M8).
---   guest: applies it only while linked, to the vehicle its locator hash names here (veh_lv_/trc_/wav_
---          and the Mother Base veh_clNN_clNN_0000), or for an unnamed one (never index 0, the relief
---          vehicle: M3) the same id when it is alive, of that type and the nearest of its type to the
---          reported position within 40 m (a named one too must lie within 40 m: far); never an LRRP
---          truck, one this copy lost or is watching (VEHICLE_GONE), and only while nobody rides it here
---          (V.busy) and, for a move, the local player stands more than 3.5 m from where it would go and
---          from where it stands: otherwise held (re-checked every tick) for HOLD_MS.
---          SetPosition{position, rotY} when it is > 0.5 m / 5 deg off (read back: err_mm; a failed
---          placement is refused place_failed), SetBodyLife{life} whenever this copy's body life differs
---          (host-authoritative both ways, so guest-only hits never add up to a guest-only destruction;
---          a host life of 0 is written as 1: destruction is VEHICLE_GONE's). With world_vehicle_damage the
---          guest reports its own drops first (world_vehicle_damage.lua: S.lifeHook / S.lifeSeen below).
--- Lab levers (lab mode only; native refuses them outside the one-PC lab): debug vehicle_push <id|nearest>
--- <dx> <dz> (this copy's vehicle moved, a stand-in for a shove), debug vehicle_life <id|nearest> <life>
--- (this copy's body life; 0 is the E5 wreck attempt); debug vehicle_state_status [id] is read-only.
+-- M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4; op 51 = 0x33, host to guest, reliable, world queue, level 3;
+-- protocol section 17). Lab key world_vehicle_state (CFG r[15] bit 2; 30010, 30020; Mother Base in the lab only).
+--   host:  scans its TppVehicle2 pool (SLICE ids per TICK_MS, and any id a Damage message names): pose, type and the native
+--          MGS_COOP_VEHICLE_LIFE_V1 read; sends a vehicle that moved > 0.5 m / 5 deg or whose life, state word or parts
+--          changed (MIN_GAP_MS apart), all once after PAIRED (flag 2), each again after REFRESH_MS (flag 4). Skipped (one
+--          line per reason): the local player's vehicle, an occupied seat, the partner's ride (V.busy), an LRRP truck.
+--   guest: only while linked, the vehicle its locator hash names here (an unnamed one: same id, alive, that type, the
+--          nearest of its type within 40 m; never index 0); never an LRRP truck, one it lost or watches, one ridden here;
+--          a move is held (HOLD_MS) while the local player stands within 3.5 m. SetPosition when > 0.5 m / 5 deg off (read
+--          back err_mm), SetBodyLife when this copy's life differs (host-authoritative; 0 is written as 1).
+-- Lab levers (lab only): debug vehicle_push <id|nearest> <dx> <dz>, vehicle_life <id|nearest> <life>, vehicle_state_status.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" then
@@ -400,6 +381,179 @@ function W.tick(...)
     end
   end)
   if not ok then fail(err) end
+end
+
+-- Enemy round 8 B (design 7.21, protocol 38; native lab key lrrp_follow, off unless named): the host streams its LRRP
+-- trucks (LRRP_FAST 93: 10 Hz moving, 1 Hz still); the guest's copy is held (ForceStop) and put on the host's every
+-- frame while it moves or is manned there, pinned at rest; a crew still seated here at rest is unseated (s10090's get-off).
+local LF = {OP = 93, SEND_MS = 50, MOVE_MS = 100, REST_MS = 1000, STALE_MS = 3000, JUMP_MM = 5000, SETTLE_MM = 3000,
+  MOVING = 500, AHEAD_MS = 100, MAX_AHEAD_MS = 400, UNSEAT_MS = 2000, TRAVEL_MS = 5000}
+S.lf = LF
+W.OP.LRRP_FAST = LF.OP
+function LF.reset() LF.cfg, LF.askAt, LF.tr, LF.hs, LF.next, LF.refused = nil, nil, {}, {}, 0, {} end
+LF.reset()
+function LF.on()
+  if not S.on() then return false end
+  local t = now()
+  if LF.cfg == nil and (not LF.askAt or t - LF.askAt >= 5000) then
+    LF.askAt = t
+    local ok, r = pcall(W.receipt, "return 'MGS_COOP_LRRP_CFG_V1'")
+    if ok and (r == 0 or r == 1) then LF.cfg = r == 1 end
+  end
+  return LF.cfg == true
+end
+-- NPC riders of `id`: count, gids, and "r1=hash:x:z;..." (a line of its own: W.log keeps 160 chars).
+local function riders(id)
+  local r, n, gids, s = send(id, {id = "GetRiderId"}), 0, {}, ""
+  if type(r) == "table" then
+    for _, v in pairs(r) do
+      if integer(v, 0, NULL - 1) then
+        n = n + 1
+        gids[n] = v
+        local h = type(W.byId) == "table" and W.byId[v]
+        local okP, p = pcall(W.api.send, v, {id = "GetPosition"})
+        local okX, x, z = pcall(function() return p:GetX(), p:GetZ() end)
+        s = s .. fmt(";r%d=%s:%s", n, h and fmt("%.0f", h) or tostring(v), okP and okX and fmt("%.1f:%.1f", x, z) or "?")
+      end
+    end
+  end
+  return n, gids, s
+end
+local function ridden(id)
+  local g, rp = G(), W.ridePose
+  if g and type(g.localVehicle) == "function" and g.localVehicle() == id then return "local" end
+  local tr = type(rp) == "table" and type(rp.fast) == "table" and rp.fast.tracks
+  if type(tr) == "table" and tr[id] ~= nil then return "partner" end
+end
+function LF.hostTick(t)
+  if t < LF.next then return end
+  LF.next = t + LF.SEND_MS
+  local best, bh
+  for id in pairs(S.lrrp) do
+    local h = LF.hs[id] or {sent = -1e9, v = 0, logAt = -1e9}
+    LF.hs[id] = h
+    local x, y, z, yaw
+    if S.alive(id) and not ridden(id) then x, y, z, yaw = S.pose(id) end
+    h.x, h.y, h.z, h.yaw = x, y, z, yaw
+    if x then
+      if not h.pt or t - h.pt >= 250 then
+        if h.pt and t > h.pt then h.v = math.min(65535, floor(sqrt((x - h.px) ^ 2 + (z - h.pz) ^ 2) * 1000 / (t - h.pt))) end
+        h.px, h.pz, h.pt = x, z, t
+      end
+      if t - h.sent >= (h.v >= LF.MOVING and LF.MOVE_MS or LF.REST_MS) and (not bh or h.sent < bh.sent) then best, bh = id, h end
+    end
+  end
+  if not best then return end
+  local n, _, list = riders(best)
+  local moving = bh.v >= LF.MOVING
+  if W.tx(LF.OP, W.tick32(t), best, bh.x, bh.y, bh.z, bh.yaw, bh.v, math.min(n, 8), moving and 1 or 0) ~= true then return end
+  bh.sent, bh.n = t, (bh.n or 0) + 1
+  if t - bh.logAt >= ((moving or n > 0) and 250 or 5000) then
+    bh.logAt = t
+    L("event=lrrp;step=host;id=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%d;v=%d;riders=%d;n=%d", best, bh.x / 1000, bh.y / 1000, bh.z / 1000, bh.yaw, bh.v, n, bh.n)
+    if n > 0 then L("event=lrrp;step=riders;id=%d;n=%d%s", best, n, list) end
+  end
+end
+local function force(id, tr, on, why)
+  if tr.stop == on then return end
+  tr.stop = on
+  send(id, {id = "ForceStop", enabled = on})
+  L("event=lrrp;step=%s;id=%d;why=%s", on and "stop" or "release", id, why)
+end
+-- An error turns lrrp_follow off, never VEHICLE_STATE.
+local function lfail(err)
+  LF.cfg = false
+  pcall(function() for id, tr in pairs(LF.tr) do if tr.stop then send(id, {id = "ForceStop", enabled = false}) end end end)
+  LF.tr = {}
+  L("event=lrrp;step=error;msg=%s", string.sub(tostring(err), 1, 100))
+end
+H[LF.OP] = function(...)
+  local ok, err = pcall(function(v)
+  if W.host or type(v) ~= "table" or #v < 9 or not LF.on() or not linked() then return end
+  local id, t = v[2], now()
+  if not S.lrrp[id] then
+    if not LF.refused[id] then LF.refused[id] = true; L("event=lrrp;step=refused;id=%d;reason=not_lrrp", id) end
+    return
+  end
+  local tr = LF.tr[id]
+  if not tr then tr = {jumps = 0, n = 0, logAt = -1e9, un = {}}; LF.tr[id] = tr end
+  local b = tr.b
+  if b and ((v[1] - b.tick) % 4294967296 >= 2147483648 or v[1] == b.tick) then return end
+  local off = t - v[1]
+  if not tr.off or off < tr.off or off - tr.off > 10000 then tr.off = off else tr.off = tr.off + (off - tr.off) * 0.02 end
+  tr.a, tr.b, tr.at = b, {tick = v[1], x = v[3], y = v[4], z = v[5], yaw = v[6], v = v[7], n = v[8], f = v[9]}, t
+  end, ...)
+  if not ok then lfail(err) end
+end
+function LF.frame(t)
+  for id, tr in pairs(LF.tr) do
+    local b, a = tr.b, tr.a
+    local busy = ridden(id)
+    if t - tr.at > LF.STALE_MS or busy then
+      force(id, tr, false, busy and "ride_" .. busy or "stale")
+      if not busy then LF.tr[id] = nil; L("event=lrrp;step=stale;id=%d;jumps=%d;n=%d", id, tr.jumps, tr.n) end
+    else
+      local ahead = math.min(t - (b.tick + tr.off) + LF.AHEAD_MS, LF.MAX_AHEAD_MS)
+      local tx, ty, tz = b.x, b.y, b.z
+      local dt = a and (b.tick - a.tick) % 4294967296
+      if dt and dt >= 20 and dt <= 1500 and b.f % 2 == 1 then
+        tx, ty, tz = tx + (b.x - a.x) * ahead / dt, ty + (b.y - a.y) * ahead / dt, tz + (b.z - a.z) * ahead / dt
+      end
+      local follow = b.f % 2 == 1 or b.n > 0
+      tr.restAt = not follow and (tr.restAt or t) or nil
+      local x, _, z = S.pose(id)
+      local d = x and hdist(x, z, tx, tz) or -1
+      force(id, tr, true, follow and (b.n > 0 and "riders" or "moving") or "rest")
+      if not follow and d > LF.SETTLE_MM then L("event=lrrp;step=settle;id=%d;d_m=%.1f", id, d / 1000) end
+      local rp = W.ridePose
+      if x and (follow and d >= 1 or d >= 1000) and type(rp) == "table" and rp.place and rp.place(id, floor(tx), floor(ty), floor(tz), b.yaw) then
+        tr.n = tr.n + 1
+        if d > LF.JUMP_MM then
+          tr.jumps = tr.jumps + 1
+          L("event=lrrp;step=jump;id=%d;d_m=%.1f;mode=%s;jumps=%d", id, d / 1000, follow and "follow" or "rest", tr.jumps)
+        end
+      end
+      local logs = t - tr.logAt >= (follow and 250 or 2000)
+      if logs or tr.restAt and t - (tr.seatAt or 0) >= 500 then
+        tr.seatAt = t
+        local n, gids, list = riders(id)
+        -- The host's crew got out and this copy's is still seated: UnsetRelativeVehicle after 2 s, StartTravel "" after 5 s.
+        for _, v in ipairs(tr.restAt and gids or {}) do
+          local k = tr.un[v] or 0
+          if k < 2 and t - tr.restAt >= (k == 0 and LF.UNSEAT_MS or LF.TRAVEL_MS) then
+            tr.un[v] = k + 1
+            send(v, k == 0 and {id = "UnsetRelativeVehicle"} or {id = "StartTravel", travelPlan = "", keepInAlert = false})
+            L("event=lrrp;step=unseat;id=%d;ent=%s;k=%d", id, type(W.byId) == "table" and W.byId[v] and fmt("%.0f", W.byId[v]) or tostring(v), k + 1)
+          end
+        end
+        if logs then
+          tr.logAt = t
+          local x2, y2, z2 = S.pose(id)
+          L("event=lrrp;step=follow;id=%d;mode=%s;x=%.2f;y=%.2f;z=%.2f;d_m=%.2f;v=%d;rh=%d;rl=%d;jumps=%d;n=%d", id, follow and "follow" or "rest",
+            (x2 or 0) / 1000, (y2 or 0) / 1000, (z2 or 0) / 1000, d / 1000, b.v, b.n, n, tr.jumps, tr.n)
+          if n > 0 then L("event=lrrp;step=riders;id=%d;n=%d%s", id, n, list) end
+        end
+      end
+    end
+  end
+end
+local function releaseAll(why)
+  for id, tr in pairs(LF.tr) do force(id, tr, false, why) end
+  LF.tr = {}
+end
+W.startHooks[#W.startHooks + 1] = function()
+  pcall(releaseAll, "start")
+  LF.reset()
+  if LF.on() then L("event=lrrp;step=on;role=%s", W.host and "host" or "guest") end
+end
+if type(W.unpairedHooks) == "table" then W.unpairedHooks[#W.unpairedHooks + 1] = function() pcall(releaseAll, "unpaired") end end
+W.stopHooks[#W.stopHooks + 1] = function() pcall(releaseAll, "stop") end
+local tickLF = W.tick
+function W.tick(...)
+  if tickLF then tickLF(...) end
+  if not LF.on() or not linked() then return end
+  local ok, err = pcall(function() if W.host then LF.hostTick(now()) else LF.frame(now()) end end)
+  if not ok then lfail(err) end
 end
 
 -- Lab levers (debug_vehicle.lua): this copy only.

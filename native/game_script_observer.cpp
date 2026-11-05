@@ -6297,6 +6297,19 @@ bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     else replacement={off,sizeof(off)-1};
     return true;
 }
+// Enemy round 8 track B (lua/coop/world_vehicle_state.lua S.lf, docs/world-sync-design.md 7.21): MGS_COOP_LRRP_CFG_V1 answers
+// the native-only lab key lrrp_follow (1 on, 0 off; off unless named, no CFG bit) on the runtime thread; otherwise nil (Lua
+// asks again). No game read or call.
+bool SelectLrrpReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_LRRP_CFG_V1'";
+    if(!buffer || size!=sizeof(query)-1 || std::memcmp(buffer,query,size)!=0) return false;
+    static constexpr char none[]="return nil", on[]="return 1", off[]="return 0";
+    replacement={none,sizeof(none)-1};
+    if(!OnRuntimeThread()) return true;
+    if(mgscoop::GetLabConfig().lrrp_follow) replacement={on,sizeof(on)-1};
+    else replacement={off,sizeof(off)-1};
+    return true;
+}
 // Enemy sync M7 (soldier_authority.hpp): MGS_COOP_SOLDIER_AUTH_V1 -- clear | status | <index 0..511> <remote 0|1>, on the
 // runtime thread: the ownership bits the damage callback reads. Reply return <enabled>,<remote count> (status, clear) or
 // return 1|0 (set). No game read or call.
@@ -6562,6 +6575,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if (SelectSupplyReceipt(buffer, size, replacement)) return true;
     if (SelectVspawnReceipt(buffer, size, replacement)) return true;
+    if (SelectLrrpReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
