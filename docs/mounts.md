@@ -362,8 +362,9 @@ The viewer's copy now holds a body for the partner's horse: its own D-Horse (ind
   sits in the saddle on this screen whatever the two streams' delays are.
 - **Handoff.** Within 4 m of a horse the partner rides, an ACTION-only pad mask (`MgsCoopHorseHold`) stops a second
   driver (probe P5); it goes with the final pose, and the first E mounts the horse where it was left. Both players
-  riding at once (`step=two_drivers`) places nothing. A census generation change, a stale track (1.5 s) or a context
-  change ends the ride. Travel / Bring partner here and the guest's checkpoint wait while anyone rides it
+  riding at once (`step=two_drivers`, a same-moment E race) places nothing and ends the partner's ride on this copy; no
+  new track opens until this copy's player is off (Lua check only). A census generation change, a stale track (1.5 s)
+  or a context change ends the ride. Travel / Bring partner here and the guest's checkpoint wait while anyone rides it
   (`checkpoint_wait; reason=horse`). On this copy a hit by the horse the partner rides counts as `mirror`.
 - **Proof.** `tools/worker/scenarios/horse-shared.txt` (lab) and `horse-shared-play.txt` (play): runs `3b2f0955`
   (lab) and `9d98fa2c` (play, `-WanSim bad`), both copies, both role orders.

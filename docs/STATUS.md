@@ -81,7 +81,9 @@ switch). Details: `docs/mounts.md` section 10.
   `companion_host_owned`; the horse's legs while placed (they may slide); a jump; E19-horse (guards shooting the
   unridden horse on the viewer's copy); the key-off live run (the Lua check keeps the `not_mirror` refusal); a two-PC
   session. D-Walker riders stay hidden.
-- **Checks.** Failing-first pairs 8f80a855/03ede6e1, 934d6692/7a82836e, fbbc1cf6/99fd6250, 69cebd1c/6c7fc4c5 (the gun-profile flip).
+- **Checks.** Failing-first pairs 8f80a855/03ede6e1, 934d6692/7a82836e, fbbc1cf6/99fd6250, 69cebd1c/6c7fc4c5 (the gun-profile flip),
+  63d46230/452e3db2 (the skeptic review: two drivers only skipped the placement and the partner's ride lingered until
+  stream_lost; it now ends with `why=two_drivers` and no new track opens while this copy's player rides; Lua check only).
   `tools/build.ps1 -Jobs 4`: 352/352. Generators --check: horse_drive ok; carry_info / sleep_plugin differ and
   native_ui / teammate_targeting need local evidence, as on the base. Merging after M7: the world chunk lists
   (CMake, bootstrap, composed checks), the `game_script_observer.cpp` registration line, `partner_driver.cpp` and the
