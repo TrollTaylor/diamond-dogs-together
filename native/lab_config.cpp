@@ -2037,6 +2037,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
+    // Enemy gaps 2 (docs/world-sync-design.md 7.17): place_reach follows the gun profile in lab and play since its runs
+    // 9023e5c6, 8281b868 and 3c9d1250 (named): the host's place error for the guest's guards p90 2.78 / 2.63 / 1.95 m
+    // (798b51dd without it 6.97 m), the guest's within 60 m 1.44 / 1.49 / 1.83 m, 0 latches; a named 0 opts out.
+    // body_dead stays off unless named (no corpse was carried in its runs).
+    if (!c.place_reach_given) c.place_reach = gun;
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both
