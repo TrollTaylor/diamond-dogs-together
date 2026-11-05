@@ -74,6 +74,10 @@ void TestParse() {
     // BODY0 round: bit 2 (4) the write watch on body 0's transform, bit 3 (8) the pin (horse_body_watch).
     Check(Parse("hold0 30010 7 0 0 0 0 14", r) && r.reset == 14 && Parse("hold0 30010 7 0 0 0 0 4", r) && r.reset == 4,
           "hold0 resets 0..15 (C0 + watch + pin = 14)");
+    // free0: the take-down / lay-down ends the pin before its Warp (else the pin would put the body back on the horse).
+    Check(Parse("free0 30010 7", r) && r.verb == hd::Verb::free0 && r.mission == 30010 && r.epoch == 7 && !Parse("free0 30010", r) &&
+              !Parse("free0 30010 7 1", r),
+          "free0 <mission> <epoch>");
     Check(!Parse("hold0 30010 7 0 0 0 0 16", r) && !Parse("hold0 30010 7 0 0 0 0", r) && !Parse("hold0 30050 7 0 0 0 0 1", r) &&
               !Parse("hold0 30010 7 0 0 0 31417 1", r),
           "hold0: seven numbers, free roam, yaw and reset bounds");
@@ -358,6 +362,8 @@ void TestBodyWatch() {
     Check(w::Dr7(0x10 | (3ull << 24), true) == (0x10ull | (3ull << 24) | 5ull | (1ull << 16) | (3ull << 18) | (1ull << 20) | (3ull << 22)),
           "Dr7: DR2's bits untouched");
     Check(w::Ours(1) && w::Ours(2) && w::Ours(3) && !w::Ours(4) && !w::Ours(0x4000), "Ours: B0 / B1 only");
+    // The pin holds only within kPinMs of the last hold0 (a later Warp of body 0 is not undone).
+    Check(w::PinLive(1000, 1000 + w::kPinMs) && !w::PinLive(1000, 1001 + w::kPinMs) && !w::PinLive(0, 10), "PinLive");
     w::Table t{};
     const std::uint32_t ret[w::kRets] = {0x9c1b90, 0x123, 0, 0};
     w::Note(t, 0x1ad566c, 7, 0, ret);

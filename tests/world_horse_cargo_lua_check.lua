@@ -26,6 +26,7 @@ local function fixture(o)
    local r = {}; for k, v in pairs(f.horse) do r[k] = v end; return r
   end
   -- hold0 (round 2): this copy's body 0 moved natively; recorded as a body-0 warp (via hold0) unless refused.
+  if verb and verb:find("^free0 ") then f.frees = (f.frees or 0) + 1; return {ready = true, freed = true} end
   if verb and verb:find("^hold0 ") then
    local x, y, z, yaw, rs = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
    f.holds[#f.holds + 1] = verb
@@ -349,6 +350,7 @@ f.holdOff = nil
 f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET)
 -- The take-down from the carrier: body 0 at the exact point.
 f.rx(5, 4, 33, 151000, 2400, 309000, 1571)
+check((f.frees or 0) >= 1, "the take-down frees the pin (free0) before body 0's lay-down Warp")
 check(f.C.state == "off" and f.called("000") and f.logged("step=unloaded;seat=2;why=taken_down;side=cargo;placed=1") and
  f.logged("from=partner"), "UNLOADED taken_down: off, the local hold cleared")
 w = f.lastWarp(0)
