@@ -18,6 +18,10 @@ end
 local SRC = slurp(assert(arg[1]))
 local GONE = slurp(assert(arg[2]))
 check(#SRC:gsub('\r\n', '\n') <= 32000, 'the chunk (LF, as CMake splices it) is within the 32000-byte world chunk limit')
+-- Enemy round 9 B (design 7.25): lrrp_follow moved to its own chunk lua/coop/world_lrrp.lua (spliced after this one).
+local LRRP = arg[4] and slurp(arg[4])
+check(LRRP and #LRRP:gsub('\r\n', '\n') <= 32000 and LRRP:find('W.vehicleState', 1, true) and not SRC:find('LRRP_FAST', 1, true),
+    'world_lrrp.lua (arg 4) is its own chunk within 32000 bytes; world_vehicle_state.lua no longer carries lrrp_follow')
 local function str32(s) local h = 7; for i = 1, #s do h = (h * 33 + s:byte(i)) % 4294967291 end; return h end
 
 -- A fake pool: id -> {alive, x, y, z (m), yaw (rad), type, riders, life, zero, parts, sv}.
@@ -64,7 +68,7 @@ local function Fixture(role, opts)
     W.api = {
         send = function(target, cmd)
             local v = c.pool[target]
-            if not v then c.cmds[#c.cmds + 1] = {id = target, cmd = cmd.id}; return nil end
+            if not v then c.cmds[#c.cmds + 1] = {id = target, cmd = cmd.id, t = cmd}; return nil end
             if cmd.id == 'IsAlive' then return v.alive == true and not v.released end
             if v.released then return nil end
             if cmd.id == 'GetPosition' then return vector(v), v.yaw or 0 end
@@ -99,6 +103,7 @@ local function Fixture(role, opts)
     env.e = {MgsCoopWorld = W}
     setfenv(assert(loadstring(GONE)), env)()
     setfenv(assert(loadstring(SRC)), env)()
+    if LRRP then setfenv(assert(loadstring(LRRP)), env)() end
     c.env, c.W, c.S, c.H = env, W, W.vehicleState, W.handlers
     function c:add(id, x, z, t, name, extra)
         self.pool[id] = {alive = true, x = x, y = 1, z = z, yaw = 0, type = t or 1, life = 3000, parts = 4}
@@ -455,6 +460,7 @@ if arg[3] then
         local W = env.e.MgsCoopWorld
         setfenv(assert(loadstring(GONE)), env)()
         setfenv(assert(loadstring(SRC)), env)()
+        if LRRP then setfenv(assert(loadstring(LRRP)), env)() end
         W.cfg = function() return {3, role, 1, 1, 7, 0, 1, 1, 0, 0, 0, 0, 0, 0, r15} end
         W.log = function(text) logs[#logs + 1] = text end
         W.begin()
@@ -542,7 +548,7 @@ do
     check(g.S.lf.tr[25602].b.tick == 6000, 'guest: an older sender tick is dropped')
     -- At rest and empty on the host (session 1 c90ab046: a released truck was driven 300 m away by the guest's own AI with
     -- its crew and put back every 30 s): ForceStop stays on, the truck is pinned (put back at once when 1 m+ off), and a
-    -- crew still seated here is unseated: UnsetRelativeVehicle after 2 s at rest, StartTravel "" after 5 s.
+    -- crew still seated here is unseated: UnsetRelativeVehicle after 2 s at rest (round 9 B: never StartTravel "").
     for i = 0, 15 do g.H[93]({6100 + i * 100, 25602, 111000, 1000, 200000, 0, 0, 0, 0}); g:poll(100) end
     check(forces(g, 25602, false) == 0 and not g:has('event=lrrp;step=release;id=25602'), 'guest: at rest and empty there, ForceStop stays on')
     local function sentTo(gid, cmd) local k = 0 for _, s in ipairs(g.cmds) do if s.id == gid and s.cmd == cmd then k = k + 1 end end return k end
@@ -554,13 +560,15 @@ do
         'guest: moved 20 m at rest: put back at once, once')
     check(sentTo(1194, 'UnsetRelativeVehicle') == 1 and sentTo(1195, 'UnsetRelativeVehicle') == 1 and sentTo(1194, 'StartTravel') == 0 and
         g:has('event=lrrp;step=unseat;id=25602;ent=1194;k=1'), 'guest: its crew still seated 2 s into the rest: UnsetRelativeVehicle once each')
-    for i = 26, 55 do g.H[93]({6100 + i * 100, 25602, 111000, 1000, 200000, 0, 0, 0, 0}); g:poll(100) end
-    check(sentTo(1194, 'StartTravel') == 1 and sentTo(1195, 'StartTravel') == 1 and sentTo(1194, 'UnsetRelativeVehicle') == 1,
-        'guest: still seated 5 s in: StartTravel "" once each, never again')
+    -- Round 9 B: StartTravel "" ended the crew's LRRP plan (c784a5a7 / 0da27fc6: 25606's crew never boarded again and the
+    -- guest's truck drove off empty): never sent; a guard still seated is unseated again at most every 5 s.
+    for i = 26, 85 do g.H[93]({6100 + i * 100, 25602, 111000, 1000, 200000, 0, 0, 0, 0}); g:poll(100) end
+    check(sentTo(1194, 'StartTravel') == 0 and sentTo(1195, 'StartTravel') == 0 and sentTo(1194, 'UnsetRelativeVehicle') == 2,
+        'guest: still seated: never StartTravel "", UnsetRelativeVehicle again 5 s later (' .. sentTo(1194, 'UnsetRelativeVehicle') .. ')')
     g.pool[25602].riders = nil
     -- The host's truck drives again: still stopped here, placed every frame.
     n = #placedOf(g, 25602)
-    for i = 56, 60 do g.H[93]({6100 + i * 100, 25602, 111000 + (i - 55) * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
+    for i = 86, 90 do g.H[93]({6100 + i * 100, 25602, 111000 + (i - 85) * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
     check(forces(g, 25602, true) == 1 and #placedOf(g, 25602) >= n + 5, 'guest: driving again: followed, ForceStop never lifted')
     check(g:has('event=lrrp;step=riders;id=25602;n=2;r1=1194:?'), 'guest: a riders line of its own')
     -- Stale 3 s: ForceStop off, the track dropped.
@@ -578,5 +586,70 @@ do
     check(forces(g, 25602, true) == 3, 'guest: off it again: followed again')
     for _, f in ipairs(g.W.stopHooks) do f(true) end
     check(forces(g, 25602, false) == 3 and next(g.S.lf.tr) == nil, 'guest: stop releases every truck it stopped')
+
+    -- Enemy round 9 B (design 7.25, protocol 42): the guest's crew follows the host's. Out at the host's spot
+    -- (UnsetRelativeVehicle only, its own LRRP plan kept), in again when the host's boards (SetRelativeVehicle
+    -- rideFromBeginning into this truck, as TppEnemy.AssignSoldiersToCP seats an LRRP crew), never a guard down here.
+    local function cmdsOf(t, gid, cmd) local r = {} for _, s in ipairs(t.cmds) do if s.id == gid and s.cmd == cmd then r[#r + 1] = s end end return r end
+    g = Fixture('guest', {lrrp = true})
+    g:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    g:start(); g:pair()
+    local tick = 1000
+    local function s2(x, v, nn, f) tick = tick + 100; g.H[93]({tick, 25602, x, 1000, 200000, 0, v, nn, f}); g:poll(100) end
+    for _ = 1, 5 do s2(100000, 0, 2, 0) end
+    check(#cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 0 and #cmdsOf(g, 1194, 'SetRelativeVehicle') == 0, 'crew: seated on both: nothing sent')
+    for _ = 1, 30 do s2(100000, 0, 0, 0) end
+    check(#cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 1 and #cmdsOf(g, 1195, 'UnsetRelativeVehicle') == 1 and #cmdsOf(g, 1194, 'StartTravel') == 0,
+        'crew: the host\'s got out: this copy\'s gets out 2 s later, UnsetRelativeVehicle only')
+    g.pool[25602].riders = nil
+    for _ = 1, 20 do s2(100000, 0, 0, 0) end
+    g.W.byId = {[1194] = 501, [1195] = 502}
+    g.W.ent = {[501] = {id = 1194}, [502] = {id = 1195, st = 2}}
+    g.W.place = {state = function(en) return en.st or 0 end}
+    for _ = 1, 20 do s2(100000, 0, 2, 0) end
+    check(#cmdsOf(g, 1194, 'SetRelativeVehicle') == 0, 'crew: the host\'s boarded 2 s ago: not yet')
+    for _ = 1, 15 do s2(100000, 0, 2, 0) end
+    local b1 = cmdsOf(g, 1194, 'SetRelativeVehicle')[1]
+    check(b1 and b1.t.targetId == 25602 and b1.t.rideFromBeginning == true and #cmdsOf(g, 1195, 'SetRelativeVehicle') == 0 and
+        g:has('event=lrrp;step=board;id=25602;ent=501;k=1'), 'crew: 3 s after the host\'s boarded: SetRelativeVehicle into this truck; never the guard asleep here')
+    for _ = 1, 60 do s2(100000, 0, 2, 0) end
+    check(#cmdsOf(g, 1194, 'SetRelativeVehicle') == 2, 'crew: still out: boarded again only 5 s later')
+    g.pool[25602].riders = {1194}
+    local nb = #cmdsOf(g, 1194, 'SetRelativeVehicle')
+    for _ = 1, 60 do s2(100000, 0, 1, 0) end
+    check(#cmdsOf(g, 1194, 'SetRelativeVehicle') == nb and #cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 1, 'crew: seated as the host\'s: nothing more')
+    check(g:has('event=lrrp;step=cost;role=guest;'), 'a cost line every 10 s')
+    -- The lab lever (both roles): vehicle_state_status lrrp 0 pauses lrrp_follow on this copy, 1 resumes it.
+    local okL, msgL = g.S.lever({'vehicle_state_status', 'lrrp', '0'})
+    check(okL == true and msgL == 'lrrp_follow;on=0' and next(g.S.lf.tr) == nil and not g.S.lf.on() and forces(g, 25602, false) == 1,
+        'lever: lrrp 0 pauses it here and releases every truck')
+    s2(100000, 0, 1, 0)
+    check(next(g.S.lf.tr) == nil, 'lever: paused, a datagram is ignored')
+    okL, msgL = g.S.lever({'vehicle_state_status', 'lrrp', '1'})
+    check(okL == true and msgL == 'lrrp_follow;on=1' and g.S.lf.on(), 'lever: lrrp 1 resumes')
+
+    -- The pairing jump near the guest's player (c784a5a7 / 0da27fc6: the target 364 m from the guest): while the player is
+    -- within 400 m of either end the truck stays this copy's own (as 0.15.2); it jumps once the player is 400 m+ from both.
+    g = Fixture('guest', {lrrp = true})
+    g:add(25603, 5100.0, 5000.0, 4, 'veh_trc_0001')
+    g:start(); g:pair()
+    tick = 1000
+    local function s3(x, v, f) tick = tick + 100; g.H[93]({tick, 25603, x, 1000, 5000000, 0, v, 0, f}); g:poll(100) end
+    for i = 1, 10 do s3(5600000 + i * 1000, 10000, 1) end
+    check(#placedOf(g, 25603) == 0 and forces(g, 25603, true) == 0 and g:has('event=lrrp;step=defer;id=25603'),
+        'near: the 500 m pairing jump waits, the truck stays this copy\'s')
+    g.env.vars.playerPosX = 4000
+    for i = 11, 15 do s3(5600000 + i * 1000, 10000, 1) end
+    check(forces(g, 25603, true) == 1 and g:count('event=lrrp;step=jump;id=25603') == 1 and #placedOf(g, 25603) >= 4, 'far: then it jumps and follows')
+    g.env.vars.playerPosX = 5600
+    for _ = 1, 3 do s3(5616000, 0, 0) end
+    local x0 = g.pool[25603].x
+    s3(5636000, 0, 0)
+    check(math.abs(g.pool[25603].x - x0) <= 1.05 and math.abs(g.pool[25603].x - x0) >= 0.5 and g:has('event=lrrp;step=catch;id=25603'),
+        'near: a 20 m catch-up moves at most 1 m a frame (' .. (g.pool[25603].x - x0) .. ')')
+    for _ = 1, 30 do s3(5636000, 0, 0) end
+    check(math.abs(g.pool[25603].x - 5636.0) < 0.01 and g:count('event=lrrp;step=jump;id=25603') == 1, 'near: it arrives a metre a frame, no jump')
+    s3(5700000, 0, 0)
+    check(forces(g, 25603, false) == 1 and g:count('event=lrrp;step=jump;id=25603') == 1, 'near: 64 m off: released to its own AI, no jump')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')
