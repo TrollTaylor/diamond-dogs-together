@@ -292,6 +292,24 @@ seatBoth(h, g)
 g.final(g.horse.x, g.horse.y, g.horse.z, 0)
 g.tick(33)
 check(g.P.state == "off" and g.logged("why=track_end;side=passenger;placed=1"), "the track's end: laid off")
+-- M4 (play run 28015a91, -WanSim bad): a gap in the driver's RIDE_FAST ended this copy's track (stream_lost) for 0.9 s
+-- while the ride went on, and the seat with it. A stream loss is held up to 2 s (body 0 at its last target, step=
+-- track_wait); the stream back keeps the seat; a loss past 2 s still lays the passenger off.
+h, g = fixture(), fixture({host = false})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+local guard = 0
+while g.S.track and guard < 60 do g.tick(50); guard = guard + 1 end
+check(g.S.track == nil and g.P.state == "seated" and g.logged("event=horse_pillion;step=track_wait;why=stream_lost"),
+    "a stream loss: still seated, waiting for the track")
+g.t = g.t + 1500
+g.ride(3)
+check(g.S.track ~= nil and g.P.state == "seated", "the stream back: still seated")
+guard = 0
+while g.S.track and guard < 60 do g.tick(50); guard = guard + 1 end
+for _ = 1, 50 do g.tick(50) end
+check(g.P.state == "off" and g.logged("why=track_end;side=passenger;placed=1"), "a stream loss past 2 s: laid off")
 -- Link drop: no KEEP for 3.5 s on either side.
 h, g = fixture(), fixture({host = false})
 h.rides, h.horse.occupied = true, true
