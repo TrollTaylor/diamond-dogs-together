@@ -190,7 +190,10 @@ function S.apply(t)
  if L and type(px) == "number" and type(pz) == "number" then
   local d = sqrt((px * 1000 - L[1]) ^ 2 + (pz * 1000 - L[3]) ^ 2)
   local hold, free = holdRange()
-  if not S.hold and d < hold then
+  -- BODY0 round: never for this copy's downed player held on the horse (its release at the dismount crouched the body).
+  local HC = W.horseCargo
+  local cargo = type(HC) == "table" and HC.state == "cargo"
+  if not S.hold and d < hold and not cargo then
    if setHold(true) and type(W.log) == "function" then W.log(fmt("event=horse_hold;step=action_masked;dist_cm=%d", round(d / 10))) end
   elseif S.hold and d > free then release("far") end
  end

@@ -57,6 +57,7 @@ local RESET = 14
 -- of body 1 drew it low behind the rider at a trot / gallop on the carrier's screen); a refusal keeps the Lua Warp.
 local RESET1 = 14
 C.RESET1 = RESET1
+local WARP_WHY = {off = true, request = true, pins = true, receipt = true}
 C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
 local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
@@ -141,6 +142,7 @@ local function hold1(x, y, z, a)
  if r and r.ready == true then return true end
  local why = r and tostring(r.reason) or "receipt"
  if C.hold1Why ~= why then C.hold1Why = why; capped("hold1_refused", "step=hold1_refused;reason=" .. why) end
+ if not WARP_WHY[why] then return false end
  return warp(1, x, y, z, a)
 end
 local function pin(h)
@@ -216,6 +218,9 @@ local function warp0(x, y, z, a, src)
  if r and r.ready == true then C.via = "hold0"; return true end
  local why = r and tostring(r.reason) or "receipt"
  if C.holdWhy ~= why then C.holdWhy = why; capped("hold0_refused", "step=hold0_refused;reason=" .. why) end
+ -- Run 144d99bb (b): a transient refusal (body, at the mount) Warped body 0 once and Warp's A0 reset left it prone; the pin
+ -- holds the last target 300 ms, so only a native without hold0 (off, request, pins, no receipt) falls back to the Warp.
+ if not WARP_WHY[why] then return false end
  C.via = "warp"
  return warp(0, x, y, z, a)
 end
