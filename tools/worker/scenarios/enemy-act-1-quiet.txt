@@ -61,6 +61,12 @@ guest hold s 1500
 guest hold s 1500
 wait 1500
 guest run position
+# The walk stops near z 2025 (runs 125d916b, 0a271c10: ~105 m from the outpost). 40 m further south, dropped from 10 m
+# over the last walked height (godmode heals the fall), about 150 m from the outpost (the census bands and the
+# mirror lines measure where it lands).
+guest run teleport 424.60 283.00 1985.00 0
+wait 5000
+guest run position
 host run position
 host run act_status
 guest run act_status
