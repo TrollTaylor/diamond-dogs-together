@@ -6297,7 +6297,7 @@ bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     else replacement={off,sizeof(off)-1};
     return true;
 }
-// Enemy round 8 track B (lua/coop/world_vehicle_state.lua S.lf, docs/world-sync-design.md 7.21): MGS_COOP_LRRP_CFG_V1 answers
+// Enemy round 8 / 9 track B (lua/coop/world_lrrp.lua S.lf, docs/world-sync-design.md 7.21, 7.25): MGS_COOP_LRRP_CFG_V1 answers
 // the native-only lab key lrrp_follow (1 on, 0 off; off unless named, no CFG bit) on the runtime thread; otherwise nil (Lua
 // asks again). No game read or call.
 bool SelectLrrpReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
