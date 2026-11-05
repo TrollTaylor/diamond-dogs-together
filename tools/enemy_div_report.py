@@ -213,6 +213,65 @@ def analyse(host, guest):
     r['m3_host_err_samples_before_down'] = ds
     r['m3_host_err_p50_m_before_down'] = quantile(db, 0.5)
     r['m3_host_err_p90_m_before_down'] = quantile(db, 0.9)
+    # Enemy round 8 track A (range_flat, design 7.22): the windows the guest is down (entered .. abandoned / grant, else
+    # the log end) and the host's M3 error and placements in them (runs ddcdec94 / 90d9b4d1: 110 range refusals).
+    wins, open_at = [], None
+    for l in guest:
+        if 'event=downed' not in l:
+            continue
+        m = re.search(r't_ms=(\d+)', l)
+        if not m:
+            continue
+        if 'step=entered' in l and open_at is None:
+            open_at = int(m.group(1))
+        elif open_at is not None and ('step=abandoned' in l or 'step=grant' in l):
+            wins.append([open_at, int(m.group(1))])
+            open_at = None
+    if open_at is not None:
+        wins.append([open_at, None])
+    r['guest_down_windows'] = wins
+
+    def down_at(t):
+        return any(a <= t and (b is None or t <= b) for a, b in wins)
+
+    wb, ws, wp = [0] * 7, 0, {'applied': 0, 'refused': 0}
+    for l in host:
+        if 'event=place_err' not in l and 'event=hplace' not in l:
+            continue
+        f = fields(l)
+        try:
+            t = int(f.get('t_ms', 0) or 0)
+        except ValueError:
+            continue
+        if not down_at(t):
+            continue
+        if 'event=hplace' in l:
+            k = 'applied' if f.get('result') == 'applied' else 'refused'
+            wp[k] += 1
+            continue
+        try:
+            h = [int(x) for x in f.get('h', '').split(',')]
+        except ValueError:
+            continue
+        if len(h) == 7:
+            wb, ws = [a + b for a, b in zip(wb, h)], ws + int(f.get('n', 0))
+    r['m3_host_err_samples_while_down'] = ws
+    r['m3_host_err_p50_m_while_down'] = quantile(wb, 0.5)
+    r['m3_host_err_p90_m_while_down'] = quantile(wb, 0.9)
+    r['m3_hplace_while_down'] = wp
+    # quiet_place: the guest's corrections moved by the quiet warp and their read-backs (x/z and y within 1 m).
+    qw = [fields(l) for l in guest if l.startswith('world_place=warp') and 'leaf=quiet' in l]
+    ql = [fields(l) for l in guest if l.startswith('world_place=quiet')]
+    qr = [fields(l) for l in guest if 'event=readback' in l and 'src=quiet' in l]
+
+    def within(f):
+        try:
+            return abs(float(f.get('dy_m', 'x'))) <= 1.0 and float(f.get('dxz_m', 'x')) <= 1.0
+        except ValueError:
+            return False
+    r['quiet'] = {'warps': len(qw), 'moved': sum(1 for f in ql if f.get('moved') == '1'),
+                  'bias': sum(1 for f in ql if f.get('bias') == '1'), 'readback': len(qr),
+                  'readback_within_1m': sum(1 for f in qr if within(f))}
     owners = [fields(l) for l in host if 'event=owner;' in l or 'event=owner; ' in l]
     r['m3_owner_changes'] = len(owners)
     last, fast = {}, 0
@@ -368,6 +427,12 @@ def main(argv=None):
                   r['m3_host_err_samples'], r['m3_host_err_p50_m'] and round(r['m3_host_err_p50_m'], 2),
                   r['m3_host_err_p90_m'] and round(r['m3_host_err_p90_m'], 2), r['m3_guest_place_first'], r['m3_engage'],
                   r['m3_phase_down'], r['m3_phase_down_applied']))
+        if r['guest_down_windows']:
+            print('  M3 while the guest is down %s: host place error %d samples p50 %s m p90 %s m; placements %s' % (
+                r['guest_down_windows'], r['m3_host_err_samples_while_down'],
+                r['m3_host_err_p50_m_while_down'] and round(r['m3_host_err_p50_m_while_down'], 2),
+                r['m3_host_err_p90_m_while_down'] and round(r['m3_host_err_p90_m_while_down'], 2), r['m3_hplace_while_down']))
+        print('  quiet moves (guest): %s' % r['quiet'])
         if r['guest_downed_at'] is not None:
             print('  M3: the guest was first downed at t_ms %d; host place error before it %d samples p50 %s m p90 %s m' % (
                 r['guest_downed_at'], r['m3_host_err_samples_before_down'],
