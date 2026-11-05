@@ -2508,3 +2508,51 @@ No new op, world note, CFG bit or receipt field; Lua unchanged. Native only, the
   - `soldier_act_frame` adds `plan; plan_skip; warp15; plan_ok; plan_far; plan_nopath; near_wait; gait_up; plan_fault;
     plan_cancel; plan_busy; plan_none; plan_release`.
 - `soldier_act=installed` prints the contract's site and slot counts (31 and 13 on this track; 34 and 13 merged with track A's quiet-warp sites).
+
+## 41. Enemy round 9 track A: the quiet move only for a guard at rest, the partner's network pose while range-hidden (lab keys `quiet_place` and `range_flat`, native only; design 7.24)
+
+No new op, world note, receipt token or CFG bit. `quiet_place` stays off unless named (design 7.24: its named run asked
+18 times for 6 guards and moved 2; both were 6-20 m from the original target at the 5 s read-back, one following his
+running host copy, one a scripted goto beside him); the range pose below is off unless `range_flat` is named (land step).
+
+- Native `GuestWarpReceipt` with `quiet_place`: a correction named quiet (section 39) is staged for the quiet warp only
+  when `soldier_act::QuietCheck` answers `ok` on the hook's newest rest view of the guard (at most 1.5 s old): realized,
+  in the realized list the warp reads (`*(S+0x18)+0x28`, u16 entries, count u32 `+0x44`), his slot speed on the ground
+  plane over about 0.5 s at most 0.5 m/s, and no path of his follower (planner vt[0x20], follower vt[0x90] / vt[0xa0])
+  ending more than 2 m (x/z) from both where he stands and the target. Any other answer sends the set-transform message
+  as before. `world_place=warp` adds `quiet=<ok|unknown|stale|unrealized|unlisted|moving|path>` when a quiet move was
+  asked. The hook (`soldier_act_quiet=on; rest=on`) refreshes the rest views every 250 ms before the engine's update,
+  and `QuietOne` checks the list again before the warp (not listed: no warp, `world_place=quiet ... moved=0`).
+- Lua `event=readback; src=quiet` (`lua/coop/world_readback.lua`): a third read-back at 5 s (`at=5000`), as at 0.5 s and 2 s
+  (x/z `dxz_m` and y `dy_m` from the target, the body's GetPosition).
+- Native snapshot `remote_range_valid / remote_range_src / remote_range_pos` (`soldier_warp::RemoteRangeSource`): the
+  body driver's command while it has one (as before); while this PC hides the partner's body for range
+  (`partner_range=hide`, beyond 200 m, and from every 30010/30020 mission start until `partner_range=near`) the
+  partner's network pose sample when at most 1 s old and `range_flat` is named; else unknown. The host's M3 placement
+  range (`HostWarpReceipt`), the soft-follow range (`DriveReceipt`) and `WORLD_PEER_V1` (the owner rule) read it, on
+  both roles; both receipts measure the range from the pose the nearer test used (`soldier_warp::RangePlayer`). One
+  `partner_range_pose=<none|cmd|net>; hidden; age_ms` line when the source changes; `world_place=host_warp` adds
+  `g_src`. Off at the defaults since the land step (at 554b2fa9 it was on: `DriveReceipt` then measured from the
+  command pose, and the `dee3baf6` host placement FAIL, 30 `g_src=net unrealized`, came from it).
+- Contract `native/soldier_act_contract.hpp` (34 sites, 13 slots): `slots_list = 0x28, slots_list_count = 0x44` (pinned by
+  the site 0x136ed8c).
+- `tools/enemy_div_report.py` `quiet`: `why` (the `quiet=` counts), `readback_5s`, `walk_on_within_2m_5s`, `moves_read`,
+  `moves_both_within_1m`.
+
+## 42. Enemy round 9 track B: the LRRP crews (lab key `lrrp_follow`, native only; design 7.25)
+
+No new op; LRRP_FAST 0x5D is unchanged (section 38). The code is now its own world chunk, `lua/coop/world_lrrp.lua`,
+spliced after `world_vehicle_state.lua`.
+
+- Guest, at rest: a rider this copy has and the host's truck no longer has gets `UnsetRelativeVehicle` 2 s after the
+  host's count dropped, again at most every 5 s per guard; none once the host's count rose at that stop, until the host's
+  truck moves. `StartTravel{travelPlan=""}` is never sent.
+- Guest, crewless: while the host's truck has riders and this copy's known crew is out, and the host's truck moves (flags
+  1) or is 5 m+ off, ForceStop is lifted and the truck is not placed (`step=crew_wait; id; d_m; near_m; rh; rl`, every
+  2 s); taken again once manned here.
+- Guest, jumps: within 400 m of this player (either end) a move over 30 m waits (`step=defer`, same fields), 5..30 m
+  slides 1 m a frame (`step=catch; id; d_m; near_m`, once per catch-up); `step=jump` adds `near_m`.
+- Both roles: `step=crew; id; ent; x; z; in; rl` 1 Hz for 60 s after a rider-count change (on the guest also the host's
+  count); `step=cost; role; n; avg_ms; max_ms; tracks` every 10 s; `step=lever; on; role` for the lab lever
+  `vehicle_state_status lrrp 0|1` (pauses / resumes lrrp_follow on that copy, any mode).
+
