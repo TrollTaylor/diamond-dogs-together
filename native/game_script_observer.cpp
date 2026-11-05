@@ -2713,6 +2713,21 @@ void PublishDebugSnapshot() noexcept {
     }
     const auto sample = mgscoop::partner_net::SampleRemote(snapshot.interp_ms);
     snapshot.remote_age_ms = sample.age_ms;
+    // Enemy round 9 track A (bug 2, design 7.24): the nearer-player rules' partner pose; the network sample while this PC
+    // hides the partner's body for range (the driver then has no command). One line when the source changes.
+    {
+        namespace sw = mgscoop::soldier_warp;
+        const auto src = sw::RemoteRangeSource(mission.have_cmd, mission.range_hidden, sample.valid, sample.age_ms);
+        snapshot.remote_range_src = static_cast<unsigned char>(src);
+        snapshot.remote_range_valid = src != sw::RemoteSource::none;
+        for (unsigned i = 0; i < 3; ++i)
+            snapshot.remote_range_pos[i] = src == sw::RemoteSource::cmd ? snapshot.remote_pos[i]
+                                         : src == sw::RemoteSource::net ? (i == 0 ? sample.x : i == 1 ? sample.y : sample.z) : 0.0f;
+        static std::atomic<unsigned> last_src{0};
+        if (last_src.exchange(static_cast<unsigned>(src)) != static_cast<unsigned>(src))
+            LogFormat("partner_range_pose=%s; hidden=%u; age_ms=%u\r\n", sw::RemoteSourceName(src), mission.range_hidden ? 1u : 0u,
+                      unsigned(sample.age_ms));
+    }
     snapshot.remote_action_flags = sample.flags;
     snapshot.remote_equip = sample.equip_id;
     snapshot.remote_act = sample.anim_valid ? sample.act : 0;
@@ -2923,9 +2938,12 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): a correction off this player's screen of a guard
     // realized here is staged for the request manager hook, which moves him with the engine's network-position warp
     // 0x136ece0 in its next update (soldier_act::QuietOne; no set-transform message). Same grant, gate, range and budget.
+    // Enemy round 9 track A (design 7.24): only a guard at rest in his own brain and in the realized list the warp reads
+    // (soldier_act::QuietCheck); any other gets the set-transform message as before (quiet=<why> on the warp line).
     const unsigned quiet_idx = request.go_id & 0x1ffu;
-    const bool quiet_move = quiet && labc.quiet_place && grant.kind == mgscoop::world::place::correct && (request.go_id >> 9) == 2u &&
-                            mgscoop::soldier_act::QuietRealized(quiet_idx) == 1;
+    const bool quiet_asked = quiet && labc.quiet_place && grant.kind == mgscoop::world::place::correct && (request.go_id >> 9) == 2u;
+    const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos) : mgscoop::soldier_act::QuietWhy::unknown;
+    const bool quiet_move = quiet_asked && quiet_why == mgscoop::soldier_act::QuietWhy::ok;
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
     else if (quiet_move) {
@@ -2954,9 +2972,10 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
             char line[512]{};
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
-        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s\r\n", unsigned(seq),
+        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s%s%s\r\n", unsigned(seq),
                   unsigned(grant.kind), grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out,
-                  unsigned(result.handled), quiet_move ? "quiet" : sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
+                  unsigned(result.handled), quiet_move ? "quiet" : sw::LeafName(result.chain), result.refusal ? result.refusal : "none",
+                  quiet_asked ? "; quiet=" : "", quiet_asked ? mgscoop::soldier_act::QuietWhyName(quiet_why) : "");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
@@ -2997,7 +3016,8 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
     const auto now = mgscoop::partner_net::NowMs();
-    const bool remote_fresh = snapshot.remote_valid && !(snapshot.remote_age_ms > 1000);
+    // Enemy round 9 track A (bug 2): the guest's network pose too while the host hides the guest's body for range.
+    const bool remote_fresh = snapshot.remote_range_valid && !(snapshot.remote_age_ms > 1000);
     if (!snapshot.host || !snapshot.world_paired || std::strcmp(snapshot.link_state, "connected") != 0 || now < snapshot.tick_ms ||
         now - snapshot.tick_ms > 1000 || !snapshot.pose_valid)
         return refuse("pose");
@@ -3005,14 +3025,14 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     bool guest_nearer = false;
     const float target[3] = {grant.pos[0], grant.pos[1], grant.pos[2]};
     const float own[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
-    const float guest[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
+    const float guest[3] = {snapshot.remote_range_pos[0], snapshot.remote_range_pos[1], snapshot.remote_range_pos[2]};
     // Enemy round 8 track A (range_flat, design 7.22): on the ground plane (x/z), as the M3 owner rule (a code fact; the
     // seen near=host refusals of ddcdec94 / 8b581a26 came while the guest's body was hidden for range, pose unknown).
     const float nearer = labc.range_flat ? sw::NearerSquaredFlat(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer)
                                          : sw::NearerSquared(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer);
     for (unsigned i = 0; i < 3; ++i) {
         request.pos[i] = grant.pos[i];
-        request.player[i] = guest_nearer ? snapshot.remote_pos[i] : snapshot.player_pos[i];
+        request.player[i] = guest_nearer ? snapshot.remote_range_pos[i] : snapshot.player_pos[i];
     }
     if (labc.range_flat) sw::FlattenRange(request);
     if (!(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
@@ -3042,10 +3062,11 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
         // Enemy round 8: the guest's pose age and its height over the target (dgy_m; about -270 m while the guest's pose is
         // unknown and read as 0, 8b581a26).
         LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s; flat=%u; "
-                  "g_age_ms=%u; dgy_m=%.1f\r\n", unsigned(seq),
+                  "g_age_ms=%u; dgy_m=%.1f; g_src=%s\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),
                   sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none",
-                  labc.range_flat ? 1u : 0u, snapshot.remote_age_ms, snapshot.remote_pos[1] - grant.pos[1]);
+                  labc.range_flat ? 1u : 0u, snapshot.remote_age_ms, snapshot.remote_range_pos[1] - grant.pos[1],
+                  sw::RemoteSourceName(static_cast<sw::RemoteSource>(snapshot.remote_range_src)));
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
@@ -3143,11 +3164,12 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     }
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
-    const bool remote_fresh = snapshot.remote_valid && !(snapshot.remote_age_ms > 1000);
+    // Enemy round 9 track A (bug 2): the partner's network pose too while this PC hides their body for range.
+    const bool remote_fresh = snapshot.remote_range_valid && !(snapshot.remote_age_ms > 1000);
     if (!snapshot.world_paired || std::strcmp(snapshot.link_state, "connected") != 0 || !snapshot.pose_valid) return refuse("pose");
     bool remote_nearer = false;
     const float own[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
-    const float remote[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
+    const float remote[3] = {snapshot.remote_range_pos[0], snapshot.remote_range_pos[1], snapshot.remote_range_pos[2]};
     // Enemy round 8 track A (range_flat): the host's soft follow of a guest-owned guard on the ground plane too.
     const bool flat = labc.range_flat && labc.role == mgscoop::LabRole::host;
     const float nearer = flat ? sw::NearerSquaredFlat(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer)
@@ -3261,9 +3283,10 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
 const char* WorldPeerReceipt() noexcept {
     PublishDebugSnapshot();
     const auto snapshot = mgscoop::debug_menu::GetSnapshot();
-    const bool valid = snapshot.remote_valid && snapshot.world_paired && std::strcmp(snapshot.link_state, "connected") == 0;
-    if (!mgscoop::world::FormatPeerReply(valid, snapshot.remote_pos[0], snapshot.remote_pos[2], snapshot.remote_age_ms, debug_reply,
-                                         ARRAYSIZE(debug_reply)))
+    // Enemy round 9 track A (bug 2): the partner's network pose too while this PC hides their body for range (the owner rule).
+    const bool valid = snapshot.remote_range_valid && snapshot.world_paired && std::strcmp(snapshot.link_state, "connected") == 0;
+    if (!mgscoop::world::FormatPeerReply(valid, snapshot.remote_range_pos[0], snapshot.remote_range_pos[2], snapshot.remote_age_ms,
+                                         debug_reply, ARRAYSIZE(debug_reply)))
         return nullptr;
     return debug_reply;
 }
@@ -7253,7 +7276,8 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     // quiet corrections (GuestWarpReceipt stages them; soldier_act::QuietOne).
                     if (labc.quiet_place && labc.soldier_follow && labc.role == mgscoop::LabRole::guest) {
                         const bool hooked = mgscoop::soldier_act::Install(base, game_span, Log);
-                        LogFormat("soldier_act_quiet=%s\r\n", hooked ? "on" : "off");
+                        mgscoop::soldier_act::SetQuietRest(hooked);  // round 9: the rest views QuietCheck reads
+                        LogFormat("soldier_act_quiet=%s; rest=%s\r\n", hooked ? "on" : "off", hooked ? "on" : "off");
                     }
                     // FM1, the far mirror (soldier_act.hpp, lua/coop/world_mirror.lua): the same hook, the mirror on this
                     // copy's role, and the bullet / noise filters for the mirror puppets' shots (installed here, not only

@@ -84,6 +84,18 @@ r2 = rep.analyse(host2, guest2)
 check(r2['guest_down_windows'] == [[1000, 1200]] and r2['m3_host_err_samples_while_down'] == 10 and
       r2['m3_host_err_p90_m_while_down'] > 15.0 and r2['m3_hplace_while_down'] == {'applied': 1, 'refused': 1},
       'the host M3 error and placements while the guest is down')
-check(r2['quiet'] == {'warps': 1, 'moved': 1, 'bias': 0, 'readback': 2, 'readback_within_1m': 1},
+check(all(r2['quiet'][k] == v for k, v in {'warps': 1, 'moved': 1, 'bias': 0, 'readback': 2, 'readback_within_1m': 1}.items()),
       'the guest\'s quiet moves and their read-backs (x/z and y within 1 m)')
+# Enemy round 9 track A (design 7.24): the reasons a quiet move was not taken (quiet=<why> on the warp line), the 5 s
+# read-back (the walk-on row: x/z within 2 m) and the per-move rows (0.5 s and 2 s both within 1 m).
+guest3 = guest2 + [
+    'world_place=warp; seq=8; kind=3; ent=1904171355; go=1255; age_ms=0; r=0; h=1; leaf=typed; refused=none; quiet=moving',
+    'world_place=warp; seq=9; kind=3; ent=1926520947; go=1270; age_ms=0; r=0; h=1; leaf=quiet; refused=none; quiet=ok',
+    'world_lua=event=readback; ent=1926520947; src=quiet; at=5000; ms=5010; dy_m=0.20; held=1; far_m=56; dxz_m=1.90; t_ms=1320',
+]
+r3 = rep.analyse(host2, guest3)
+q3 = r3['quiet']
+check(q3['why'] == {'moving': 1, 'ok': 1} and q3['readback_5s'] == 1 and q3['walk_on_within_2m_5s'] == 1 and
+      q3['moves_both_within_1m'] == 0 and q3['moves_read'] == 1,
+      'the quiet reasons, the 5 s walk-on read-back and the per-move read-back rows')
 print('enemy_div_report_check: %d checks passed' % checks)

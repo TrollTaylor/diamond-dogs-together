@@ -231,6 +231,15 @@ float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (
 float NearerSquaredFlat(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
                         bool& self_nearer) noexcept;
 void FlattenRange(Request& request) noexcept;
+// Enemy round 9 track A (bug 2, docs/world-sync-design.md 7.24): the partner pose the nearer-player rules (the host's M3
+// placement and soft-follow range, PEER for the owner rule) use. The body driver's command while it has one (as before);
+// while this PC hides the partner's body for range (partner_range=hide, beyond 200 m) the driver has none, and the
+// partner's network pose sample, at most kRangePoseMaxAgeMs old, stands in (run 8b581a26: 142 of 142 host placements
+// refused while the guest's pose read 0). Unknown otherwise.
+enum class RemoteSource : unsigned char { none, cmd, net };
+inline constexpr unsigned kRangePoseMaxAgeMs = 1000;
+RemoteSource RemoteRangeSource(bool have_cmd, bool range_hidden, bool net_valid, unsigned net_age_ms) noexcept;
+const char* RemoteSourceName(RemoteSource source) noexcept;
 // Whether a guest process needs the startup Verify() byte gate for either rule.
 bool GuestMayWarp(bool lab, bool play, bool key) noexcept;
 

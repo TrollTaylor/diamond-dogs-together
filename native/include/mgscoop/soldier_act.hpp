@@ -102,6 +102,28 @@ bool QuietBias(const float (&slot)[3], const float (&target)[3], float (&biased)
 // call minus the target). False when it does not fit.
 bool FormatQuietLine(std::uint32_t go, std::uint16_t seq, unsigned moved, unsigned bias, float err_m, float dy_m, char* out,
                      std::size_t capacity) noexcept;
+// Enemy round 9 track A (quiet_place, docs/world-sync-design.md 7.24): the quiet move only for a guard at rest in his own
+// brain and in the realized list the warp reads. Run 1befcef4: after 22 of his 43 quiet moves guard 1904171355 walked
+// 9.4-14.1 m on along his brain's old path (the warp leaves it; the set-transform message's kind 3 had stopped him), and
+// in 5 of the 8 off-target moves the body did not move while the slot table read the target (0x136ece0 writes the slot,
+// then moves the body only for an idx in the u16 list *(S+0x18)+0x28, count +0x44). The hook keeps a rest view of every
+// realized guard (every kRestMs): listed, his slot speed on the ground plane over the last two refreshes (-1 unknown), and
+// his follower's path (planner vt[0x20], follower vt[0x90] / vt[0xa0]: has, its last point).
+struct RestView {
+    std::uint64_t at;  // 0: none
+    bool realized, listed, has;
+    float speed_mps;
+    float pos[3], end[3];
+};
+enum class QuietWhy : std::uint8_t { ok, unknown, stale, unrealized, unlisted, moving, path };
+inline constexpr std::uint64_t kRestMs = 250, kRestStaleMs = 1500;
+inline constexpr float kRestSpeedMps = 0.5f, kRestPathM = 2.0f;
+// ok only when the view is at most kRestStaleMs old, realized, listed, his speed known and at most kRestSpeedMps, and no
+// path of his ends more than kRestPathM (x/z) from both where he stands and the target (he would walk there after it).
+QuietWhy QuietChoose(const RestView& r, const float (&target)[3], std::uint64_t now_ms) noexcept;
+const char* QuietWhyName(QuietWhy why) noexcept;
+// Whether idx is among the first count entries of the realized list.
+bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept;
 
 // Enemy round 8 track C (docs/world-sync-design.md 7.23; native-only lab key act_plan, off unless named; no CFG bit, no
 // wire): the walk-request start 0x1413725f0 plans a path only for a FOB remote copy (S+0x2a4 bit 2 and the owner byte !=
@@ -221,9 +243,10 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
 bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm = nullptr) noexcept;
 // The owner copy's position (mm) in guard idx's mailbox (the order part, flag bit 0); false when none.
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept;
-// Enemy round 8 (quiet_place): 1 when guard idx is realized on this copy (the slot table's realized bit), 0 when not, -1
-// when the manager is not known yet (the hook has not run) or unreadable. Runtime thread; read only.
-int QuietRealized(unsigned idx) noexcept;
+// Enemy round 9 (quiet_place, design 7.24): QuietChoose on the hook's newest rest view of guard idx (unknown before the
+// hook has made one). Runtime thread; read only. SetQuietRest turns the hook's rest views on (the guest with the key).
+QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept;
+void SetQuietRest(bool on) noexcept;
 // Stages a quiet move of guard idx (go: his GameObjectId, for the line) to pos / yaw: the hook runs 0x136ece0 in its next
 // update (before the engine's own) and logs world_place=quiet. False when the hook is not installed or idx is out of range.
 bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept;
