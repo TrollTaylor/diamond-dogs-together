@@ -61,8 +61,11 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
         r.verb = Verb::hold0;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
             !number(-1000000000, 1000000000, v[3]) || !number(-1000000000, 1000000000, v[4]) || !number(-31416, 31416, v[5]) ||
-            !number(0, 3, v[7]))
+            !number(0, 15, v[7]))
             return false;
+    } else if (word("free0")) {
+        r.verb = Verb::free0;
+        if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;
     } else if (word("pad")) {
         r.verb = Verb::pad;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;

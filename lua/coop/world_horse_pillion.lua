@@ -28,13 +28,13 @@ local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 30
 -- Body 0 on the passenger's copy: back mm behind the placed census root along its heading, rise mm over it (the rider
 -- sits 0.10 m forward and 0.49 m up of the root, probe P2; the rear seat is 0.45 m behind the rider), squatting; mode 2
 -- hold0 with the A0 reset (round 2: lag mostly 6-9 cm, peaks 74-80 cm, crouched), 0 hold0 without a reset, 4 the
--- Lua Warp, 5 both, 3 hold0 with the C0 reset alone (BODY0 round, world_horse_cargo's body 0). Body 1 on the driver's copy: dback mm behind and dup mm over the driver's own root (native RearSeat).
+-- Lua Warp, 5 both, 3 hold0 with the C0 reset alone, 6 with C0 + the write watch + pin (BODY0 round). Body 1 on the driver's copy: dback mm behind and dup mm over the driver's own root (native RearSeat).
 -- Run ba6b4bb5: at 0.6 m body 0 stood on the ground under its target (dy 1-1.8 m), and body 1 at the driver's root height
 -- on the ground beside the horse. Runs bdd49a57 / a295d660: 1.2 m / 0.7 m (clear of the horse) changed neither the
 -- host-driven horse standing still nor the passenger's copy's horse falling, and floated: 0.8 m / 0.3 m. seat 1: the
 -- driver's copy seats body 1 with the DM overlay; 0 (lab lever) not, a test of the stall (the passenger's KEEP carries it).
 local V = {back = 350, rise = 800, mode = 2, dback = 450, dup = 300, seat = 1}
-local RESET = {[0] = 0, 1, 1, 2, 1, 1}
+local RESET = {[0] = 0, 1, 1, 2, 1, 1, 14}
 P.V = V
 local floor, sin, cos, sqrt, fmt = math.floor, math.sin, math.cos, math.sqrt, string.format
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
@@ -62,7 +62,7 @@ end
 function P.on() return type(S.on) == "function" and S.on() and int(W.role, 1, 2) and P.keyOn() end
 function P.busy() return P.state ~= "off" end
 function P.setPose(back, rise, mode, dback, dup, seat)
- if not (int(back, -1000, 1500) and int(rise, -500, 2000) and (mode == 0 or mode == 2 or mode == 3 or mode == 4 or mode == 5) and int(dback, 0, 1500) and
+ if not (int(back, -1000, 1500) and int(rise, -500, 2000) and (mode == 0 or mode == 2 or mode == 3 or mode == 4 or mode == 5 or mode == 6) and int(dback, 0, 1500) and
   int(dup, -500, 1500) and (seat == nil or seat == 0 or seat == 1)) then return false end
  V.back, V.rise, V.mode, V.dback, V.dup, V.seat = back, rise, mode, dback, dup, seat or V.seat
  return true
@@ -135,6 +135,7 @@ local function stop(why, remote)
  local s = P.state
  if s == "seated" then
   local h, x, y, z, a = P.h, nil, nil, nil, nil
+  if V.mode == 6 then receipt(fmt("free0 %d %d", W.mission == 30020 and 30020 or 30010, int(W.epoch, 1, 65535) and W.epoch or 1)) end
   if h then x, y, z, a = besideLeft(h); warp(x, y, z, a) end
   setMask(false)
   stance("STAND")

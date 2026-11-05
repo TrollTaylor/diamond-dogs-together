@@ -48,9 +48,11 @@ C.LEAD_MAX_MM = LEAD_MAX_MM
 local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
 -- Body 0's mover: 4 the Lua Warp (the lying pose, with spells on the ground under the moving horse), 0..3 hold0 with
 -- Warp's resets (bit 0 A0, bit 1 C0): none (a242d867 / c2927350) and A0 (8cfe8e97 / 7f3155c8) kept it with the horse
--- but in the airborne pose on both screens. Default 2, hold0 + C0 alone: C0.vt+0x90 sets bit 0x20 of the 0x580 record's
--- +0x2C0, which C0.vt+0xD0 (0x14128E010) clears while it answers "no fall" for that frame (static; the lever picks 0..4).
-local RESET = 2
+-- but in the airborne pose on both screens. hold0 + C0 alone (2; C0.vt+0x90 sets bit 0x20 of the 0x580 record's +0x2C0,
+-- which C0.vt+0xD0 0x14128E010 clears while it answers "no fall") kept the lying pose, but a later write of the frame
+-- dropped the body under the horse (run cfd2b604, drop 136-288 cm): default 14 adds the native write watch (4) and pin (8)
+-- on body 0's transform (horse_body_watch). The lever picks 0..15 (4 the Lua Warp); free0 ends the pin before a lay-down.
+local RESET = 14
 C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
 local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
@@ -59,7 +61,7 @@ C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_M
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
 function C.setVictimPose(placed, rise, back, down, reset)
- if not (int(placed, 0, 3000) and int(rise, 0, 3000) and int(back, -1000, 1500) and int(down, 0, 20000) and int(reset, 0, 4)) then
+ if not (int(placed, 0, 3000) and int(rise, 0, 3000) and int(back, -1000, 1500) and int(down, 0, 20000) and int(reset, 0, 15)) then
   return false
  end
  V.placed, V.rise, V.back, V.down, V.reset = placed, rise, back, down, reset
@@ -213,6 +215,9 @@ local function stop(now, why, place, remote, p)
   if place and not p and h then
    local _, y = mine()
    p = beside(h, -1, s == "carrier" and not mounted() and y or h.y)
+  end
+  if s == "cargo" then
+   receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- free0 %d %d", W.mission == 30020 and 30020 or 30010, int(W.epoch, 1, 65535) and W.epoch or 1))
   end
   if place and p then warp(s == "carrier" and 1 or 0, p[1], p[2], p[3], p[4] + (s == "cargo" and pi / 2 or 0)) end
   if not remote then send(UNLOADED, CODE[why] or 0, C.gen, p and p[1], p and p[2], p and p[3], p and p[4] * 1000) end

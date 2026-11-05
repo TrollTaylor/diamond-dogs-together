@@ -22,6 +22,9 @@
 //     under the moving horse for a second or more at a time: runs a49c4d76 / 20aef564 / d2a5cafa. With no reset body 0
 //     stayed at its target but played the airborne pose (a242d867): reset bit 0 adds A0.vt+0x80(id), bit 1 C0.vt+0x90(id)
 //     after the move, C0 first as Warp, each only when body 0's A0 / C0 class and slot target equal body 1's.)
+//     BODY0 round: reset bits 2 / 4 and 3 / 8 add horse_body_watch's write watch and pin on body 0's transform (run
+//     cfd2b604: the C0 reset keeps the lying pose but a later write of the frame dropped the body under the horse).
+//   free0 <mission> <epoch>                     -> {ready=true,freed=true}  (the watch and pin end before a lay-down Warp)
 //   pad <mission> <epoch>                       -> {ready=true,e=0|1,masked=0|1} | refusal  (M3, world_horse_pillion: the
 //     local E before the pad masks: (src+0x48 ?: PP+0x460) & ACTION without & ~PP+0x28. The ride hold's ACTION mask
 //     hides E from the downed poll (probe P5), so the rear-seat claim beside a partner-ridden horse reads it here.)
@@ -51,13 +54,14 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
 
-enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1 };
+enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0 };
 struct Request {
     Verb verb{};
     std::uint32_t mission{}, epoch{};
     std::int32_t x{}, y{}, z{}, yaw{};
     std::uint8_t anchor{};
-    std::uint8_t reset{};  // hold0: bit 0 A0.vt+0x80, bit 1 C0.vt+0x90 after the move (Warp's resets, C0 first)
+    std::uint8_t reset{};  // hold0: bit 0 A0.vt+0x80, bit 1 C0.vt+0x90 after the move (Warp's resets, C0 first);
+                           // bit 2 the write watch, bit 3 the pin (native/include/mgscoop/horse_body_watch.hpp)
     std::int32_t back{}, up{};  // seat1: the rear seat behind (0..1500 mm) and over (-500..1500 mm) the driver's root
     std::uint8_t seat_pose{};   // seat1: 1 the DM overlay seats body 1 (stateRideOnIdle), 0 not (a lab test)
 };

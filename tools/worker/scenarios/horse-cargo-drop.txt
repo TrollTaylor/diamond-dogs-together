@@ -2,7 +2,8 @@
 # worldtrigger are lab only). The host carries the downed guest onto the shared horse again and rides a left loop at a
 # gallop while the guest's copy tries body 0's movers (horse_probe cargo_pose <placed_mm> <census_mm> <back_mm> <down_mmps>
 # <reset>; frames h2p-<variant>-* on the victim's screen, h2p-<variant>-gallop-carrier on the carrier's): 1 the Lua Warp
-# (reset 4), 2 hold0 + C0 (the default), 2lo / 2hi the same 0.4 m lower / higher, 3 hold0 + both resets; the host
+# (reset 4), 6 hold0 + C0 + the native write watch (logs body 0's writers, no pin), 14 C0 + watch + pin (the default),
+# 14lo the same 0.4 m lower, 15 both resets + watch + pin; the host
 # gets off, then the guest's world link goes off: both copies lay the body beside the horse (why=stream_lost on the
 # host; the guest's copy lays body 0 down when its world goes off). Frames h2c-loaded and h2c-dropped on both screens.
 logmark both
@@ -57,31 +58,31 @@ guest burst h2p-1-gallop 4 250
 host capture h2p-1-gallop-carrier
 host hold w+shift+a 1500 nowait
 guest burst h2p-1-gallop-b 4 250
-guest run horse_probe cargo_pose 1300 900 440 1000 2
+guest run horse_probe cargo_pose 1300 900 440 1000 6
 host hold w+shift+a 1500 nowait
-guest burst h2p-2-gallop 4 250
-host capture h2p-2-gallop-carrier
+guest burst h2p-6-gallop 4 250
+host capture h2p-6-gallop-carrier
 host hold w+shift+a 1500 nowait
-guest burst h2p-2-gallop-b 4 250
-guest run horse_probe cargo_pose 900 500 440 1000 2
+guest burst h2p-6-gallop-b 4 250
+guest run horse_probe cargo_pose 1300 900 440 1000 14
 host hold w+shift+a 1500 nowait
-guest burst h2p-2lo-gallop 4 250
-host capture h2p-2lo-gallop-carrier
+guest burst h2p-14-gallop 4 250
+host capture h2p-14-gallop-carrier
 host hold w+shift+a 1500 nowait
-guest burst h2p-2lo-gallop-b 4 250
-guest run horse_probe cargo_pose 1700 1300 440 1000 2
+guest burst h2p-14-gallop-b 4 250
+guest run horse_probe cargo_pose 900 500 440 1000 14
 host hold w+shift+a 1500 nowait
-guest burst h2p-2hi-gallop 4 250
-host capture h2p-2hi-gallop-carrier
+guest burst h2p-14lo-gallop 4 250
+host capture h2p-14lo-gallop-carrier
 host hold w+shift+a 1500 nowait
-guest burst h2p-2hi-gallop-b 4 250
-guest run horse_probe cargo_pose 1300 900 440 1000 3
+guest burst h2p-14lo-gallop-b 4 250
+guest run horse_probe cargo_pose 1300 900 440 1000 15
 host hold w+shift+a 1500 nowait
-guest burst h2p-3-gallop 4 250
-host capture h2p-3-gallop-carrier
+guest burst h2p-15-gallop 4 250
+host capture h2p-15-gallop-carrier
 host hold w+shift+a 1500 nowait
-guest burst h2p-3-gallop-b 4 250
-guest run horse_probe cargo_pose 1300 900 440 1000 2
+guest burst h2p-15-gallop-b 4 250
+guest run horse_probe cargo_pose 1300 900 440 1000 14
 host release
 wait 2500
 guest capture h2p-stopped

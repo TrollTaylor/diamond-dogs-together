@@ -153,6 +153,9 @@ guest run downed_status
 guest require down=1
 # Taken down: the carry key (R) held 0.3 s beside the horse lays them on the ground beside it at the carrier's side, at
 # the same spot on both copies (held on, the coop pickup would then shoulder them from the ground). The victim stays down.
+# Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
+host debug goto_carry
+wait 1500
 logmark both
 host hold r 400
 host release
@@ -277,6 +280,9 @@ guest run cargo_status
 guest require cargo;state=carrier
 wait 1000
 both capture h2b-stays
+# Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
+guest debug goto_carry
+wait 1500
 logmark both
 guest hold r 400
 guest release
