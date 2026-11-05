@@ -2436,7 +2436,8 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
 
 ## 39. Enemy round 8 track A: the quiet place correction, the host's range on the ground plane (lab keys `quiet_place`, `range_flat`, native only; design 7.22)
 
-No new op, world note or CFG bit. One optional receipt token, log lines, and two behaviours behind native-only lab keys.
+No new op, world note or CFG bit. One optional receipt token, log lines, and two behaviours behind native-only lab keys,
+both off unless named (design 7.22: quiet_place's no-key run failed the place_sink row; range_flat's gate failed).
 
 - `MGS_COOP_WORLD_WARP_V1 -- <seq> <goId> 1` (guest, `lua/coop/world_place_guest.lua` `P.step`): the trailing ` 1` is
   sent for a correction whose sample was off this player's screen (`place_div ... view=off`); without it the receipt is

@@ -750,6 +750,28 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   - **Next for bug 2**: give the M3 / drive nearer rule (and PEER) the guest's network pose sample
     (`partner_net::SampleRemote` x / y / z, age at most 1 s) when the body is range-hidden or unrealized, keep the x/z
     plane (range_flat), then the same down part (the fall through the world reproduces it: 90d9b4d1, 8b581a26).
+- **Session 3, `1befcef4`** (no key named, at the code head cde0cbb4 with quiet_place on by default; enemy-prove-1-join,
+  enemy-latch-quiet, enemy-integ-carry, enemy-latch-alert; build 0.15.1+aaf852f, docs only after cde0cbb4) [O]:
+  - 115 quiet moves of 7 guards (72 biased: under 15 m), all `moved=1`; 106 within 1 m of the target at the 3-frame
+    read-back, 8 more than 2 m off (4 guards: 1926520947 4 of 5 at 34 m, 667680985 once 91.9 m, 2305481811 twice,
+    1740692850 once) while the slot table read the target: the warp wrote the slot but did not move the body [O], most
+    likely a guard not in the realized list `*(S+0x18)+0x28` although his realized bit was set [I]. 4 corrections went
+    by the message (`leaf=typed`, among them 246's, 0.01 m).
+  - FAIL (the no-key row 0 drive_sink / place_sink / guard_fell): 22 `place_sink` of one guard, 1904171355: each quiet
+    move landed (`land_dy_m` -0.03..0.02) and he then walked 12.6-14.1 m on and stood 2.15 m under his owner's sample
+    (round 7's `1870d1bf` at the old defaults, same parts: 0). The 2 s read-backs show the same walk-off for others
+    (guard 15: 10-17 m x/z, y held): the quiet warp leaves the brain's path, so a guard walks on along it, where the
+    message's kind 3 had stopped him [I, plan (3) of enemy7 track C]. Also 1 `guard_fell` on the HOST (its copy of
+    3268415846 10.6 m under the guest's sample, `place_div why=fall`; the host has no quiet move) [U cause].
+  - PASS: 0 latches, faults, game overs; guest place error p50 0.69 / p90 1.88 m; corrections 119 of 126 (7
+    `vehicle_local`); 0 `drive_sink`; host M3 p50 1.7 / p90 6.64 m (reported; its 5 m row fails as at the defaults).
+    0 guest `req_phase` in calm (1 in the ALERT part, another CP, phase 3).
+  - Frames looked at: c-b (both: the sleeping guard's ZZZ by the barriers beside the guest's character).
+  - **Decision**: quiet_place back off unless named (f8441a11 red / green): a row failed by the flipped key. range_flat
+    off unless named (gate failed). Nothing changes at the defaults; the receipt's quiet token and the log fields stay.
+  - **Next for bug 1**: stop the walk-off: after a quiet move, give the guard a stand at the target (the request start
+    0x14136f090 mode 0 issues a stand command offline, plan (1)) or end his path (the planner cancel), and move only
+    guards in the realized list (read `*(S+0x18)+0x28`, not the realized bit), then the calm gate and a no-key run.
 
 ### 8. Soldier transforms (W6)
 

@@ -1,3 +1,57 @@
+## November 5, 2026: enemy round 8 track A - the false radio report and the host's drift while the guest is down: both fixes built, neither turned on; `quiet_place` and `range_flat` stay off unless named (`wp/enemy-m7`, not pushed)
+
+Design 7.22, protocol section 39. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
+sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge: `bcd95b14` (`quiet_place=1, range_flat=1,
+act_census=1`; enemy8-quiet-calm + enemy8-down-alert), `8b581a26` (`range_flat=1, act_census=1`, quiet_place at its
+then default ON; same parts) and `1befcef4` (no key named, code head cde0cbb4 with quiet_place ON by default:
+enemy-prove-1-join, enemy-latch-quiet, enemy-integ-carry, enemy-latch-alert). Two queue jobs ran no game (the worker
+refused the new keys' names until 07c0767a; the worker's own CTest flaked once on a drain-window timing check). Archives
+under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. Both fixes are test switches (`quiet_place=1`, `range_flat=1` in
+  lab.ini). Only log lines change at the defaults (`world_place=host_warp` adds `flat; g_age_ms; dgy_m`; read-backs add
+  `dxz_m`).
+- **Bug 1, the false radio report** [O]: at the seed the guest's copy of guard 246 (56 m off, off the guest's screen)
+  got the default-on place correction, the set-transform message, went to action kind 3, radioed a possible intruder
+  and the outpost went to CAUTION (runs fbf3522a, 0d801772; f11fe8a1 kind 3 only). Census runs of rounds 5-7 (9 runs):
+  282 of 539 applied place warps, 54 of 57 guard-runs, were followed by kind 3 within 0.5 s; kind 13 within 30 s once.
+  Built `quiet_place` (native only): an off-screen correction moves the guard through the engine's network-position
+  warp 0x14136ece0 in the request manager hook (Ghidra, read only: it touches only the slot table and the body's
+  controller; no message, no puppet bit, no FOB state); every quiet move is read back at 0.5 s and 2 s (x/z and y).
+  - `bcd95b14` (named): gate PASS: 246's correction 8.7 s after align was quiet, read back 0.08 / 0.15 m x/z and 0.00 m
+    y at 0.5 / 2 s, kind 1 for the next 118 s (no 3, no 13), 0 guest `req_phase` in calm, 0 latches / faults / game
+    overs. Frames q246-a / c / d (both): no radio subtitle or caution on the guest's screen; 246 not picked out [U].
+  - Turned on (64ab8909 / cde0cbb4), then back OFF (f8441a11 red / green): the no-key run `1befcef4` failed the place_sink
+    row. 115 quiet moves of 7 guards: 106 landed within 1 m, but 8 (4 guards) left the body 2-92 m off while the slot
+    read the target (1926520947: 4 of 5, 34 m), and guard 1904171355 walked 12.6-14.1 m on after every quiet move and
+    stood 2.15 m under his owner (22 `place_sink`; 1870d1bf at the old defaults: 0). The 2 s read-backs show the walk-off
+    for others too (guard 15: 10-17 m). [I] the quiet warp leaves his brain's path; the message's kind 3 had stopped him.
+  - `8b581a26`: no quiet move (246 only 36.5 m off and not sampled in calm this time).
+- **Bug 2, the host's copies while the guest is down** [O]: the round 7 downs were falls, not gunfire: a goto put the
+  guest on the outpost's cliff edge and they fell (ddcdec94 to y 92 m; 90d9b4d1 and 8b581a26 through the world to
+  y -79.65 m). Two causes: (1) the host's M3 range rule is 3D while the owner rule is x/z; (2) beyond 200 m (3D) the
+  host hides the guest's body (`partner_range=hide`), which clears the driver's `have_cmd`, so the receipts (and the
+  PEER answer the owner rule reads) treat the guest's pose as unknown and keep only the host's leg. Built `range_flat`
+  (native only: the host's M3 placement and drive range on x/z). `8b581a26`: gate FAIL: the host refused 142 of 142
+  placements while the guest was down (48 s; `near=host flat=1`, the guest's y read as 0), host M3 error while down
+  p50 17.1 / p90 27.4 m (bins; ddcdec94 without it 27.1 m). Frames dd-1: "WOUNDED" over a void on the guest's screen,
+  "TEAMMATE WOUNDED" on the host's.
+- **The no-key run `1befcef4`** (quiet_place on by default): PASS 0 latches / faults / game overs; guest place error
+  p50 0.69 / p90 1.88 m (gate 2 m); 0 `drive_sink`; corrections 119 / 126 (7 `vehicle_local`); reported host M3 p50 1.7
+  / p90 6.64 m. FAIL 22 `place_sink` (one guard, after quiet moves) and 1 `guard_fell` (the host's copy of 3268415846,
+  10.6 m under the guest's sample; the host makes no quiet move; cause [U]). Frames c-b (both): the sleeping guard's
+  ZZZ by the barriers beside the guest's character.
+- **Failing rows**: `bcd95b14` down gate not reached (no down: the guest stood on the goto point); host M3 p90 7.46 m.
+  `8b581a26` down gate (142 / 142 refused, p90 27.4 m); corrections 0 / 5 (refused `far`: the guest under the world);
+  guest p50 22.5 / p90 28.5 m and host M3 p90 26.3 m (both from the down). `1befcef4` place_sink 22, guard_fell 1,
+  host M3 p90 6.64 m.
+- **Checks**: CTest 355 / 355 at 9276ae08 (full); the worker's audited CTest passed before each of the three sessions;
+  FINALCTEST; every `generate_*_contract.py --check` as round 7 except soldier_act (20 sites: three new windows of
+  0x136ece0); `tests/enemy_div_report_check.py` 8 checks (new rows: while the guest is down, the quiet moves).
+- **Next**: bug 1: after a quiet move give the guard a stand at the target (the request start's offline mode 0 stand)
+  or end his path, and move only guards in the realized list; bug 2: use the guest's network pose sample while their
+  body is hidden for range, with range_flat's x/z plane; the fall through the world reproduces it (design 7.22).
+
 ## November 5, 2026: enemy round 7 track A - guards at the same height, the far fights: both gates not reached; `drive_vert` and `place_reach` stay off unless named (`wp/enemy-m7`, not pushed)
 
 Design 7.20, protocol section 37. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
