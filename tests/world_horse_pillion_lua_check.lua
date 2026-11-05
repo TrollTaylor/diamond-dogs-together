@@ -122,6 +122,12 @@ far.ride(1)
 far.W.downed.rawHeldAt = far.now
 far.tick(10)
 check(far.logged("event=horse_pillion;step=e_free;dist_cm=310;hold=0"), "an unmasked E 3.1 m from the ridden horse: step=e_free")
+-- The driver's ride while a passenger sits behind: the ridden path every 2 s (runs 306525db / c4428efa: a horse that does not move).
+h2 = fixture()
+h2.rides, h2.horse.occupied = true, true
+h2.W.handlers[OP]({1, 1, 2, 1, 0, 4, 0, 0, 0, 0})
+for _ = 1, 50 do h2.horse.x = h2.horse.x + 100; h2.tick(50) end
+check(h2.logged("event=horse_pillion;step=drive;moved_cm="), "step=drive: the driver's ridden path every 2 s")
 -- The host grants while it rides the shared horse and drives with the guest behind.
 h.rides, h.horse.occupied = true, true
 deliver(h, claim)
@@ -131,8 +137,11 @@ check(h.logged("event=horse_pillion;step=grant;seat=1;token=1") and h.logged("st
 h.tick(33)
 -- Run ba6b4bb5 (lab): body 1 at the driver's own root height was drawn on the ground beside the horse (pushed out of the
 -- horse) and the host's horse stood still under the ride keys until the passenger left: 0.3 m over the rider's root.
-check(#h.seats >= 1 and h.seats[#h.seats][1] == 450 and h.seats[#h.seats][2] == 300, "the driver leases seat1 450 300 every tick")
-check(h.logged("step=seat1;ok=1;back_mm=450;up_mm=300"), "step=seat1 ok")
+-- Runs 306525db / c4428efa (attempt 2): with body 1 0.3 m over the driver's root the driver's horse still stood still
+-- (census static 12-17 s under the ride keys) and the passenger's copy's horse fell unconscious: the bodies go clear of the
+-- horse (body 1 0.7 m over the driver's root, body 0 1.2 m over the placed root) to test the collision.
+check(#h.seats >= 1 and h.seats[#h.seats][1] == 450 and h.seats[#h.seats][2] == 700, "the driver leases seat1 450 700 every tick")
+check(h.logged("step=seat1;ok=1;back_mm=450;up_mm=700"), "step=seat1 ok")
 deliver(g, grant)
 check(g.P.state == "seated" and g.logged("step=seated;seat=1;how=grant;token=1"), "the guest is seated")
 local mask = g.masks[#g.masks]
@@ -143,8 +152,8 @@ g.ride(1)
 local hold = g.holds[#g.holds]
 local pl = g.places[#g.places]
 -- Run ba6b4bb5: body 0 0.6 m over the root stood on the ground 1-1.8 m under its target (seat_pin dy_cm 99-176): 0.8 m.
-check(hold and hold[1] == pl.x and hold[2] == pl.y + 800 and hold[3] == pl.z - 350 and hold[5] == 1,
-    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 0.8 m up), hold0 with the A0 reset")
+check(hold and hold[1] == pl.x and hold[2] == pl.y + 1200 and hold[3] == pl.z - 350 and hold[5] == 1,
+    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 1.2 m up), hold0 with the A0 reset")
 check(g.P.busy() and g.S.busy(), "seated: busy (Travel / Bring wait)")
 -- KEEP both ways at 1 Hz.
 local n0 = #g.tx
