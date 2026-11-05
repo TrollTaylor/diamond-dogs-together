@@ -19,7 +19,9 @@ inline constexpr std::uint8_t kWatchBit = 4, kPinBit = 8;
 inline constexpr std::size_t kRips = 16, kRets = 4;
 inline constexpr std::uint32_t kIdleMs = 500;    // no hold0 this long: disarm
 inline constexpr std::uint32_t kReportMs = 2000; // the receipt logs the writer table this often
-inline constexpr std::uint32_t kPinMs = 100;     // the pin holds only this long after a hold0
+// The pin holds only this long after a hold0: longer than world_horse_cargo's 200 ms without a pin after M1's last placement
+// (run 911ce293: with 100 ms body 0 dropped to the ground under the horse right after the dismount and the horse fell).
+inline constexpr std::uint32_t kPinMs = 300;
 // The pin is live at now_ms when the last hold0 (last_ms, 0 none) was at most kPinMs before.
 bool PinLive(std::uint64_t last_ms, std::uint64_t now_ms) noexcept;
 // DR7 with our two watches set (on) or cleared (off), the other bits kept: L0 / L1, RW 01 (write), LEN 11 (4 bytes).

@@ -1,13 +1,12 @@
 # Horse plan M2, a downed partner on the shared D-Horse: the play rehearsal (-Mode play -WanSim bad) of horse-cargo.txt
 # (boot, the lab fast boot and worldtrigger are lab only: the title, the paired wait, then the afgh-ledge spot by
 # teleport; no link-drop part). The same lines, frames and NEVER lines as horse-cargo.txt parts (a) and (b). Lab key
-# world_horse_cargo (off unless named); world_horse_share is never named (the gun profile's default); (m1) comes last.
+# world_horse_cargo and world_horse_share are never named (the gun profile's defaults); (m1) comes last.
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-M2-play
 #     -ScenarioPath tools/worker/scenarios/horse-cargo-play.txt -Mode play -WanSim bad -PartnerProfile native
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
 labsetting nametag=1
 labsetting coop_hud=compact
-labsetting world_horse_cargo=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120
@@ -132,6 +131,10 @@ host hold w+shift+a 1500
 host hold w+shift+a 1500 nowait
 host burst h2-ride-gallop5 2 400
 guest burst h2-ride-gallop5-victim 3 400
+host hold w+shift 1500
+host hold w+shift 1500 nowait
+host burst h2-ride-gallop6 2 400
+guest burst h2-ride-gallop6-victim 3 400
 host release
 wait 2500
 both capture h2-ride-stopped
@@ -268,6 +271,10 @@ guest hold w+shift+a 1500
 guest hold w+shift+a 1500 nowait
 guest burst h2b-ride-gallop5 2 400
 host burst h2b-ride-gallop5-victim 3 400
+guest hold w+shift 1500
+guest hold w+shift 1500 nowait
+guest burst h2b-ride-gallop6 2 400
+host burst h2b-ride-gallop6-victim 3 400
 guest release
 wait 2500
 both capture h2b-ride-stopped

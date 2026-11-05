@@ -1,5 +1,5 @@
-# Horse plan M2, a downed partner on the shared D-Horse (lab key world_horse_cargo, off unless named; world_horse_share
-# is never named: the gun profile turns it on; docs/mounts.md "Downed partner on the horse"). Both role orders; the link
+# Horse plan M2, a downed partner on the shared D-Horse (world_horse_cargo and world_horse_share are never named: the
+# gun profile turns them on; docs/mounts.md "Downed partner on the horse"). Both role orders; the link
 # drop and the lab body-0 levers are part 2 (horse-cargo-drop.txt); the M1 regression (m1) runs in horse-cargo-play.txt
 # (in the lab it passed in run d2a5cafa and is left out here so part 2 runs at the boot spot):
 # (a) the host's rifle downs the guest (wounded), the host carries them (R hold), holds E beside the horse: the stock
@@ -19,7 +19,6 @@
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
 labsetting nametag=1
 labsetting coop_hud=compact
-labsetting world_horse_cargo=1
 boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
 logmark both
 both debug godmode 1
@@ -131,6 +130,10 @@ host hold w+shift+a 1500
 host hold w+shift+a 1500 nowait
 host burst h2-ride-gallop5 2 400
 guest burst h2-ride-gallop5-victim 3 400
+host hold w+shift 1500
+host hold w+shift 1500 nowait
+host burst h2-ride-gallop6 2 400
+guest burst h2-ride-gallop6-victim 3 400
 host release
 wait 2500
 both capture h2-ride-stopped
@@ -267,6 +270,10 @@ guest hold w+shift+a 1500
 guest hold w+shift+a 1500 nowait
 guest burst h2b-ride-gallop5 2 400
 host burst h2b-ride-gallop5-victim 3 400
+guest hold w+shift 1500
+guest hold w+shift 1500 nowait
+guest burst h2b-ride-gallop6 2 400
+host burst h2b-ride-gallop6-victim 3 400
 guest release
 wait 2500
 both capture h2b-ride-stopped

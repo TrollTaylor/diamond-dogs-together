@@ -25,6 +25,8 @@
 //     BODY0 round: reset bits 2 / 4 and 3 / 8 add horse_body_watch's write watch and pin on body 0's transform (run
 //     cfd2b604: the C0 reset keeps the lying pose but a later write of the frame dropped the body under the horse).
 //   free0 <mission> <epoch>                     -> {ready=true,freed=true}  (the watch and pin end before a lay-down Warp)
+//   hold1 <mission> <epoch> <x> <y> <z> <yaw> <reset 0..15> -> as hold0 for body 1 (world_horse_cargo, the carrier's copy:
+//     the downed partner on its horse; also while this copy's player rides; run cfd2b604 drew body 1 low behind the rider)
 //   pad <mission> <epoch>                       -> {ready=true,e=0|1,masked=0|1} | refusal  (M3, world_horse_pillion: the
 //     local E before the pad masks: (src+0x48 ?: PP+0x460) & ACTION without & ~PP+0x28. The ride hold's ACTION mask
 //     hides E from the downed poll (probe P5), so the rear-seat claim beside a partner-ridden horse reads it here.)
@@ -54,7 +56,7 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
 
-enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0 };
+enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1 };
 struct Request {
     Verb verb{};
     std::uint32_t mission{}, epoch{};

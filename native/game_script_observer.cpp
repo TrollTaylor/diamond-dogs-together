@@ -5237,7 +5237,7 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     }
     const auto refuse=[&](const char* why) noexcept {
         ++horse_drive_log.refusals;
-        if((q.verb==hd::Verb::place || q.verb==hd::Verb::hold0 || q.verb==hd::Verb::seat1) && horse_drive_log.last!=why) {
+        if((q.verb==hd::Verb::place || q.verb==hd::Verb::hold0 || q.verb==hd::Verb::hold1 || q.verb==hd::Verb::seat1) && horse_drive_log.last!=why) {
             horse_drive_log.last=why;
             LogFormat("horse_drive=refused; reason=%s; n=%u; places=%u\r\n",why,horse_drive_log.refusals,horse_drive_log.places);
         }
@@ -5304,32 +5304,36 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     }
     // M2 hold0 (world_horse_cargo): this copy's own downed body 0 lying on its horse, moved as the partner driver's xform
     // mover moves body 1 (T.vt+0x70 then T.vt+0x68, no C0 / A0 reset; the partner contract's pinned T slots).
-    if(q.verb==hd::Verb::hold0) {
+    // BODY0 round hold1: the carrier's copy holds body 1 (the downed partner) the same way (world_horse_cargo only; also
+    // while this copy's player rides the horse).
+    if(q.verb==hd::Verb::hold0 || q.verb==hd::Verb::hold1) {
+        const unsigned kb=q.verb==hd::Verb::hold1?1u:0u;
         hd::HoldScope hs{};
-        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=labc.world_horse_pillion;hs.pins=sc.pins;hs.field=sc.field;
+        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=kb==0 && labc.world_horse_pillion;hs.pins=sc.pins;
+        hs.field=sc.field;
         pp::Census bodies{};
-        hs.body=!pp::ResolveCensus(partner_addresses,player,bodies) && bodies.k[0].id==0 && bodies.k[0].t && bodies.k[0].t68 &&
-            bodies.k[0].t70;
-        hs.mounted=a.occupied && a.rider==0;
+        hs.body=!pp::ResolveCensus(partner_addresses,player,bodies) && bodies.k[0].id==0 && bodies.k[kb].id==kb && bodies.k[kb].t &&
+            bodies.k[kb].t68 && bodies.k[kb].t70;
+        hs.mounted=kb==0 && a.occupied && a.rider==0;
         if(const char* why=hd::HoldRefusal(hs)) return refuse(why);
-        const auto& b0=bodies.k[0];const auto& b1=bodies.k[1];
-        // Warp's resets on request, only for body 0's objects of body 1's class and slot (as ApplyTransform's guard).
+        const auto& b0=bodies.k[0];const auto& b1=bodies.k[1];const auto& bh=bodies.k[kb];
+        // Warp's resets on request, only while body 0's and body 1's objects share their class and slot (ApplyTransform's guard).
         const bool wantC=(q.reset&2)!=0,wantA=(q.reset&1)!=0;
-        if(wantC && (!b0.c0 || !b0.c090 || b0.c0_vt!=b1.c0_vt || b0.c090!=b1.c090)) return refuse("reset");
-        if(wantA && (!b0.a0 || !b0.a080 || b0.a0_vt!=b1.a0_vt || b0.a080!=b1.a080)) return refuse("reset");
+        if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=b1.c0_vt || b0.c090!=b1.c090)) return refuse("reset");
+        if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=b1.a0_vt || b0.a080!=b1.a080)) return refuse("reset");
         // BODY0 round: the write watch (bit 2) and pin (bit 3) on body 0's transform (native/include/mgscoop/horse_body_watch.hpp),
         // set up before hold0's own write (its trap is order 0; the pin target is what it writes).
         namespace hbw=mgscoop::horse_body_watch;
         const bool watch=(q.reset&(hbw::kWatchBit|hbw::kPinBit))!=0;
         if(watch) {
-            if(const char* why=hbw::BeforeHold(reinterpret_cast<std::uintptr_t>(base),span,b0.t,float(q.x)/1000.f,float(q.y)/1000.f,
+            if(const char* why=hbw::BeforeHold(reinterpret_cast<std::uintptr_t>(base),span,bh.t,float(q.x)/1000.f,float(q.y)/1000.f,
                                                float(q.z)/1000.f,(q.reset&hbw::kPinBit)!=0)) return refuse(why);
         }
-        if(const char* why=hd::HoldBody(reinterpret_cast<std::uintptr_t>(base),b0.t,b0.t_vt,b0.t70,b0.t68,float(q.x)/1000.f,
-                                        float(q.y)/1000.f,float(q.z)/1000.f,float(q.yaw)/1000.f,wantC?b0.c0:0,wantC?b0.c090:0,
-                                        wantA?b0.a0:0,wantA?b0.a080:0,b0.id)) return refuse(why);
+        if(const char* why=hd::HoldBody(reinterpret_cast<std::uintptr_t>(base),bh.t,bh.t_vt,bh.t70,bh.t68,float(q.x)/1000.f,
+                                        float(q.y)/1000.f,float(q.z)/1000.f,float(q.yaw)/1000.f,wantC?bh.c0:0,wantC?bh.c090:0,
+                                        wantA?bh.a0:0,wantA?bh.a080:0,bh.id)) return refuse(why);
         if(!horse_drive_log.holds++ || horse_drive_log.last) {
-            LogFormat("horse_drive=held; n=%u; body=0\r\n",horse_drive_log.holds);
+            LogFormat("horse_drive=held; n=%u; body=%u\r\n",horse_drive_log.holds,kb);
             horse_drive_log.last=nullptr;
         }
         // Every 2 s: the writers of body 0's centre / foot y since the last report (rva, count, thread, order after hold0,
