@@ -79,6 +79,17 @@ do
             if type(px) ~= "number" or type(pz) ~= "number" or type(list) ~= "table" or #list == 0 then return end
             px, pz = px * 1000, pz * 1000
             local quiet = not (M.shotAt and now - M.shotAt < M.SHOT_MS)
+            -- Every puppet is checked every update for the guest's approach (the round robin below visits a guard only
+            -- every ~0.8 s with ~280 roster entries; a puppet within R must go back to his own brain within 500 ms).
+            for h in pairs(M.pp) do
+                local en = W.ent[h]
+                local x, _, z = nil, nil, nil
+                if en and type(en.id) == "number" then x, _, z = pos(en.id) end
+                local d = x and flat(x, z, px, pz)
+                local R = en and M.rOf(en) or M.R[0]
+                if en and type(en.id) == "number" and (not d or d < R * 1000) then M.set(h, en, false, "near", d, R)
+                elseif not en or type(en.id) ~= "number" then M.pp[h] = nil end
+            end
             for _ = 1, math.min(M.SCAN, #list) do
                 M.i = M.i % #list + 1
                 local h = list[M.i]
