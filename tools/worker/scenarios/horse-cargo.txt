@@ -2,8 +2,8 @@
 # "Downed partner on the horse"). Both role orders, then a link drop:
 # (a) the host's rifle downs the guest (wounded), the host carries them (R hold), holds E beside the horse: the stock
 #     put-down, then the body across the horse's back on both screens (HORSE_SEAT seat 2); the host's first E mounts;
-#     walk / trot / gallop; the dismount keeps them on; an R hold 1 s takes them down beside the horse on both screens;
-#     the 3 s E revive.
+#     walk / trot / gallop; the dismount keeps them on; the carry key (R) held beside the horse picks them up off it
+#     (the coop pickup), the stock put-down lays them beside the horse on both screens; the 3 s E revive.
 # (b) the same with the roles swapped (the guest carries the host; the host grants its own load).
 # (c) loaded again (host carries guest), then the guest's world link off: both copies lay the body down (stream_lost).
 # A first E at the horse mounts at the start of the session and after each load.
@@ -134,7 +134,8 @@ wait 1000
 both capture h2-stays
 guest run downed_status
 guest require down=1
-# Taken down: an R hold 1 s beside the horse, at the same spot on both copies.
+# Taken down: the carry key (R) held beside the horse picks them up off it (the coop pickup, as the stock unload of a
+# guard); then the stock put-down beside the horse, at the same spot on both copies.
 host hold r 1200
 host release
 wait 2500
@@ -144,6 +145,12 @@ host run cargo_status
 host require cargo;state=off
 guest run cargo_status
 guest require cargo;state=off
+host run coop_carry_bodies
+host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+both capture h2-taken-off
+host hold r 900
+host release
+wait 3500
 host run position
 guest run position
 both capture h2-unloaded
@@ -250,9 +257,17 @@ host run cargo_status
 host require cargo;state=off
 guest run cargo_status
 guest require cargo;state=off
+guest run coop_carry_bodies
+guest expect carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+both capture h2b-taken-off
+guest hold r 900
+guest release
+wait 3500
 host run position
 guest run position
 both capture h2b-unloaded
+host run downed_status
+host require down=1
 guest debug goto_carry
 wait 1500
 guest hold e 1500 nowait

@@ -186,4 +186,11 @@ f.W.horseCargo = {busy = function() return true end}
 check(f.S.busy() and f.W.travel.blocked() == 3, "M2: a body on the horse: busy")
 f.W.horseCargo.busy = function() return false end
 check(not f.S.busy() and f.W.travel.blocked() == nil, "M2: unloaded: not busy")
+-- M2: each placement tells world_horse_cargo.lua the pose just written (a body loaded on this horse follows it the same frame).
+f = fixture()
+local heard = {}
+f.W.horseCargo = {placed = function(x, y, z, yaw) heard[#heard + 1] = {x, y, z, yaw} end, busy = function() return false end}
+for i = 0, 8 do f.fast(5000 + i * 50, 10000 + i * 200, 2000, 30000, 100); f.tick(50) end
+check(#heard >= 1 and heard[#heard][4] == 100 and heard[#heard][1] == f.places[#f.places].x,
+    "M2: world_horse_cargo hears each placement with the pose written")
 print("world_horse_share_lua_check: " .. checks .. " checks passed")

@@ -7,7 +7,7 @@ local function fixture(o)
  o = o or {}
  local f = {now = 1000, tx = {}, logs = {}, cargo = {}, warps = {}, places = {}, hostage = false, mounted = false, role = 0,
   physical = {ready = true, carrying = false, carried = false, localCarried = false, peerCarrying = false},
-  horse = {ready = true, id = HORSE, realized = true, occupied = false, pending = 0, x = 101000, y = 2000, z = 300000, yaw = 0, gen = 5},
+  horse = {ready = true, id = HORSE, realized = true, occupied = false, pending = 0, x = 101000, y = 3000, z = 300000, yaw = 0, gen = 5},
   share = o.share ~= false, key = o.key ~= false}
  local host = o.host ~= false
  local D = {records = {}, target = 0, progress = 0}
@@ -133,11 +133,11 @@ check(f.C.state == "off" and not f.called("010"), "mounted: nothing")
 f = fixture()
 load(f)
 local l = f.sent(4)
-check(l and l[3] == 2 and l[4] == 1 and l[6] == 0 and l[7] == 22 and l[8] == 101000 and l[9] == 2000 and l[10] == 300000 and l[11] == 0,
+check(l and l[3] == 2 and l[4] == 1 and l[6] == 0 and l[7] == 22 and l[8] == 101000 and l[9] == 3000 and l[10] == 300000 and l[11] == 0,
  "LOADED: seat 2, the host, the victim's generation, this copy's horse pose")
 check(f.logged("event=horse_cargo;step=loaded;seat=2;gen=22;role=carrier"), "step=loaded seat=2")
 local w = f.lastWarp(1)
-check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (2.0 + f.C.RISE_MM / 1000)) < 1e-6 and
+check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-6 and
  math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and w.rotY == 0, "body 1 on the cargo point (behind the root, up), the horse's yaw")
 f.horse.x, f.horse.yaw = 102000, 1571
 f.mounted = true
@@ -191,8 +191,8 @@ check(f.C.state == "off", "a key held on and on: the hold goes after 3 s anyway"
 f = fixture(); load(f); f.horse.y = 4000; f.tick(50)
 w = f.lastWarp(1)
 check(math.abs(w.y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6 and f.logged("how=ground"), "a census 2 m high: the body kept 1.45 m over the ground")
-f.horse.y = 2000; f.tick(50)
-check(math.abs(f.lastWarp(1).y - (2.0 + f.C.RISE_MM / 1000)) < 1e-6, "a census in the window: the census cargo point")
+f.horse.y = 3000; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (2.0 + f.C.RISE_MM / 1000 + 1.0)) < 1e-6, "a census in the window: the census cargo point")
 -- Out of reach: nothing.
 f = fixture(); load(f); f.env.vars.playerPosX = 110; f.hold("R", 1200)
 check(f.C.state == "carrier", "the R hold out of reach: still on")
@@ -241,8 +241,9 @@ f.physical.localCarried = false
 f.tick(50)
 check(#f.places == 1 and f.places[1].x == 150000 and f.places[1].z == 310000, "its own horse put on the carrier's pose (unridden)")
 w = f.lastWarp(0)
-check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.RISE_MM / 1000)) < 1e-6 and
- math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6, "body 0 warped to its own horse's cargo point")
+check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.VICTIM_RISE_MM / 1000)) < 1e-6 and
+ math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6 and math.abs(w.rotY - math.pi / 2) < 1e-6,
+ "body 0 warped to its own horse's cargo point, a quarter turn (across the back)")
 check(f.C.busy(), "the victim's copy is busy too")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
@@ -251,6 +252,14 @@ f.horse.x = 160000
 f.rx(6, 0, 33, 150000, 2500, 310000, 0)
 f.tick(50)
 check(#f.places == 1 and math.abs(f.lastWarp(0).x - 160.0) < 1e-6, "while tracked: body 0 on the horse M1 placed, no re-place")
+-- Right after M1 places the horse (the same frame), body 0 goes on the pose just written; the next tick does not move it.
+local nw = #f.warps
+f.C.placed(170000, 2400, 310000, 0)
+w = f.lastWarp(0)
+check(#f.warps == nw + 1 and math.abs(w.x - 170.0) < 1e-6 and math.abs(w.y - (2.4 + f.C.VICTIM_PLACED_MM / 1000)) < 1e-6 and
+ math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6, "C.placed: body 0 over the pose M1 just wrote")
+f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
+check(#f.warps == nw + 1, "the tick after a post-placement pin leaves body 0 there")
 f.W.horseShare = {}
 for i = 1, 25 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
 check(#f.places == 2, "unridden and drifted over 0.5 m from the KEEP pose: re-placed (at most 1 Hz)")
@@ -259,8 +268,13 @@ f.rx(5, 4, 33, 151000, 2400, 309000, 1571)
 check(f.C.state == "off" and f.called("000") and f.logged("step=unloaded;seat=2;why=taken_down;side=cargo;placed=1") and
  f.logged("from=partner"), "UNLOADED taken_down: off, the local hold cleared")
 w = f.lastWarp(0)
-check(math.abs(w.x - 151.0) < 1e-6 and math.abs(w.y - 2.4) < 1e-6 and math.abs(w.z - 309.0) < 1e-6 and math.abs(w.rotY - 1.571) < 1e-6,
- "body 0 at the carrier's point")
+check(math.abs(w.x - 151.0) < 1e-6 and math.abs(w.y - 2.4) < 1e-6 and math.abs(w.z - 309.0) < 1e-6 and
+ math.abs(w.rotY - (1.571 + math.pi / 2)) < 1e-6, "body 0 at the carrier's point")
+-- A zero point (the carrier picked them up off the horse): nothing placed, the carry replica takes over.
+f.rx(4, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
+nw = #f.warps
+f.rx(5, 4, 33, 0, 0, 0, 0)
+check(f.C.state == "off" and #f.warps == nw and f.logged("why=taken_down;side=cargo;placed=0"), "UNLOADED without a point: body 0 left to the carry")
 check(f.count(5) == 1, "a remote end sends nothing back")
 
 -- Automatic lay-downs.
@@ -286,8 +300,16 @@ check(f.C.state == "off" and f.sent(5)[6] == 7, "a context change (mission end):
 f = loaded(); f.W.paired = false; f.tick(50)
 check(f.C.state == "off" and f.lastWarp(1) and f.logged("why=stream_lost"), "unpaired (link drop): laid down locally")
 f = loaded(); f.rx(5, 6, 22, 0, 0, 0, 0)
-check(f.C.state == "off" and f.logged("why=stream_lost;side=carrier;placed=1") and f.count(5) == 0,
- "the victim's own end: the carrier lays body 1 beside its horse, sends nothing back")
+check(f.C.state == "off" and f.logged("why=stream_lost;side=carrier;placed=0") and f.count(5) == 0,
+ "the victim's own end without a point: body 1 back to the partner driver, nothing sent back")
+f = loaded(); f.rx(5, 6, 22, 101500, 2000, 299000, 0)
+check(f.C.state == "off" and f.logged("why=stream_lost;side=carrier;placed=1") and math.abs(f.lastWarp(1).x - 101.5) < 1e-6,
+ "the victim's own end with its point: body 1 laid there")
+-- The carry key beside the loaded horse picks them up (the coop pickup): off at once, nothing placed, UNLOADED without a point.
+f = loaded(); local nw2 = #f.warps; f.role = 1; f.tick(50)
+local up = f.sent(5)
+check(f.C.state == "off" and up and up[6] == 4 and up[8] == 0 and up[10] == 0 and #f.warps == nw2 and
+ f.logged("step=take_down;key=r;how=pickup"), "picked up off the horse: taken_down, no point, nothing placed")
 -- The victim's copy without KEEP for 3.5 s lays itself down beside its horse.
 f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
 f.rx(4, 0, 33, 101000, 2000, 300000, 0)
