@@ -1992,9 +1992,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.soldier_snap_given) c.soldier_snap = gun;
     if (!c.soldier_route_given) c.soldier_route = gun;
     if (!c.soldier_body_given) c.soldier_body = gun;
-    // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): place_lift stays off unless named, the gun profile
-    // included. The gaps runs 7c174346 / 0b4a1509 / 3e2611fc named it, and the first default run with it on (e583ee62)
-    // latched the warp off on both copies after 5 set-transform anomalies each (cause unknown; docs/STATUS.md 2026-11-04).
+    // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): follows the gun profile in lab and play. The gaps runs
+    // 7c174346 / 0b4a1509 / 3e2611fc landed 124 of 127 corrections at the owner's own height; the latch of e583ee62 was
+    // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
+    // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
+    if (!c.place_lift_given) c.place_lift = gun;
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both

@@ -228,19 +228,22 @@ do
         end
         -- The other copy's body placement (flag 8, world_place_guest.lua P.sample): this copy's body (lying here too)
         -- more than 1 m off goes there through the same FIFO and native placement (kind 3; P.check lets a dead one go).
+        -- Enemy latch: P.check first. Refused here (a dead guard reads NPC_STATE_DISABLE on both copies: disabled_local),
+        -- this body stays where it lies and so is not "carried" either (run e583ee62: 384 / 383 body_tx echoed).
         function P.body(c, en)
             if not W.bodyOn then return end
             local st = P.state(en)
             local x, _, z = pos(en.id)
             if not (st and st >= 2 and st <= 5 and x) then return end
             local d = flat(x, z, c.x, c.z)
-            local fix = d > 1000 and #P.q < 16 and not (P.cur and P.cur.h == c.h)
-            L("event=place_body;seq=%d;ent=%.0f;div_m=%.1f;state=%d;fix=%d", c.seq, c.h, d / 1000, st, fix and 1 or 0)
-            if fix then
-                c.body = true
-                P.q[#P.q + 1] = c
-            end
-            if S.bd[c.h] then S.bd[c.h].restX, S.bd[c.h].restZ = c.x, c.z end
+            c.body = true
+            local why = d > 1000 and P.check(c, en)
+            local fix = d > 1000 and not why and #P.q < 16 and not (P.cur and P.cur.h == c.h)
+            L("event=place_body;seq=%d;ent=%.0f;div_m=%.1f;state=%d;fix=%d;why=%s", c.seq, c.h, d / 1000, st, fix and 1 or 0,
+                why or "none")
+            if fix then P.q[#P.q + 1] = c end
+            local b = S.bd[c.h]
+            if b then b.restX, b.restZ = why and x or c.x, why and z or c.z end
         end
         -- M6 hold-ups: a hold-up applied here (W1 state 1) also raises this copy's hands (SetForceHoldup, handler 0x135D0B2).
         local applyOne = W.enemy.applyOne

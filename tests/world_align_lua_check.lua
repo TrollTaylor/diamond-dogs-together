@@ -626,6 +626,11 @@ if arg[7] and arg[8] then
     check(refusal(function(gg) gg.warp = {{refused = 'grant'}} end, 'grant'), 'no grant')
     check(refusal(function(gg) gg.warp = {{refused = 'range'}} end, 'range'), 'range')
     check(refusal(function(gg) gg.warp = {{refused = 'anomaly'}} end, 'native_other'), 'other native refusals')
+    -- Enemy latch (run e583ee62): out=0 handled=0 from the typed soldier dispatch (native "relayed": the guard is not
+    -- realized on this copy) and the native backoff that follows it are why=unrealized (23), never native_other.
+    check(refusal(function(gg) gg.warp = {{refused = 'relayed'}} end, 'unrealized'), 'relayed: not realized on this copy')
+    check(refusal(function(gg) gg.warp = {{refused = 'backoff'}} end, 'unrealized'), 'backoff: that guard waits natively')
+    check(placeFixture(false).P.WHY[23] == 'unrealized', 'WHY 23 = unrealized (appended: older codes unchanged)')
     check(refusal(function(gg) gg.warp = {'literal'} end, 'native_off'), 'an old loader leaves the receipt literal')
     local okTimeout, timed = refusal(function(gg) gg.warp = {{r = -1, h = 0}} end, 'realize_timeout', 160)
     check(okTimeout and receiptCount(timed, 'WORLD_WARP_V1') == 150 and sent(timed, 1, 'SetForceRealize', false) == 1,
@@ -948,6 +953,16 @@ if arg[7] and arg[8] then
     check(#sentFor(fh, ENT1) == 0, 'no sample for that guard within 10 s')
     ticks(fh, 200)
     check(#sentFor(fh, ENT1) >= 1, 'sampled again after 10 s')
+    -- Enemy latch: a guard the guest's copy has not realized (why=unrealized) waits 3 s only (it realizes as players near).
+    fh.tx = {}
+    fh.W.handlers[35]({778, ENT1, 1, 23, 0, 1}, fh.now)
+    check(fh.P.patrol.back[ENT1] and fh.P.patrol.back[ENT1] - fh.W.now() <= 3000 and
+        logged(fh, 'event=place_ack;seq=778;ent=3000000001;kind=correct;result=refused;why=unrealized'), 'unrealized ACK: 3 s')
+    fh.positions[1] = {30.0, 1.8, 0}
+    ticks(fh, 60)
+    check(#sentFor(fh, ENT1) == 0, 'unrealized: no sample within 2 s')
+    ticks(fh, 60)
+    check(#sentFor(fh, ENT1) >= 1, 'unrealized: sampled again after 3 s')
     -- Any pairing re-reads every guard (a rejoining guest is placed at once).
     fh.tx = {}
     for _, f in ipairs(fh.W.pairedHooks) do f(true) end
@@ -1289,6 +1304,33 @@ if arg[7] and arg[8] then
     ticks(og, 150)
     check(#placeTx(og, 71) == 0 and logged(og, 'event=place_ack;side=host;seq=9;ent=3000000001;result=refused;why=far'),
         'M3: a refused place (far) backs the guard off')
+    -- Enemy latch: the host's copy not realized there (why=unrealized, run e583ee62's M3 relays) waits 3 s, not 10.
+    local ou = guestFix(0)
+    ou.W.ownerOn = true
+    ou.positions[1] = {0, 1.8, 20.0}
+    ou.W.handlers[73]({ENT1, 1, 1}, ou.now)
+    ticks(ou, 4)
+    ou.tx = {}
+    ou.W.handlers[72]({9, ENT1, 1, 23, 0, 0}, ou.now)
+    ou.positions[1] = {0, 1.8, 25.0}
+    ticks(ou, 60)
+    check(#placeTx(ou, 71) == 0 and logged(ou, 'event=place_ack;side=host;seq=9;ent=3000000001;result=refused;why=unrealized'),
+        'M3: unrealized on the host: no place within 2 s')
+    ticks(ou, 60)
+    check(#placeTx(ou, 71) >= 1, 'M3: placed again after 3 s')
+    -- The host side: its copy answered relayed (out=0 handled=0) -> refused why=unrealized in the ACK, never native_other.
+    local hr = followFixture(true)
+    hr.W.ownerOn = true
+    hr.env.vars.playerCameraRotation = {[0] = 0, [1] = 0}
+    hr.positions[900] = {100.0, 0, 0}
+    hr.positions[2] = {95.0, 1.8, 0}
+    hr.warp = {{refused = 'relayed'}}
+    hr.W.handlers[71]({5, 3000000002, 3, 100000, 1400, 0, 0, 0, 0, 2}, hr.now)
+    ticks(hr, 6)
+    local ra = placeTx(hr, 72)
+    check(#ra == 1 and ra[1].v[3] == 1 and hr.P.WHY[ra[1].v[4]] == 'unrealized' and
+        logged(hr, 'event=hplace;seq=5;ent=3000000002;kind=correct;result=refused;why=unrealized;native=relayed'),
+        'M3: a relayed host copy is refused why=unrealized')
     for _, f in ipairs(og.W.observers) do f('Damage', ENT1, 'local') end
     check(#placeTx(og, 74) == 0, 'M3: no ENGAGE (Damage named the local player for guards nobody shot)')
     og.tx = {}
@@ -1418,6 +1460,20 @@ if arg[7] and arg[8] then
         'M6: the dead body 5 m off is queued')
     ticks(bg, 6)
     check(logged(bg, 'event=place;seq=41;ent=3000000001;kind=correct;result=applied'), 'M6: placed (never terminal_local)')
+    -- Enemy latch (the M6 ping-pong, run e583ee62): a dead guard reads NPC_STATE_DISABLE on both copies, so the other
+    -- copy's body placement is refused here. This copy's body stays where it lies and is never reported back: no FIFO
+    -- entry, no body_tx (there: 384 / 383 body_tx, one about every 1.1 s all session, for one dead guard).
+    local bd = guestFix(180)
+    bd.W.bodyOn = true
+    bd.life[1] = 1
+    bd.positions[1] = {0, 0.3, 20.0}
+    bd.env.TppGameObject = {NPC_STATE_DISABLE = 9}; bd.status = {[1] = 9}
+    ticks(bd, 60)
+    bd.W.handlers[34]({42, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, bd.now)
+    check(#bd.P.q == 0 and logged(bd, 'event=place_body;seq=42;ent=3000000001;div_m=5.0;state=5;fix=0;why=disabled_local'),
+        'M6: a body placement this copy refuses (disabled_local) is not queued')
+    ticks(bd, 330)
+    check(not logged(bd, 'event=body_tx;'), 'M6: this copy\'s body is not reported back for 10 s (no ping-pong)')
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
     local hu = guestFix(180)
     hu.W.bodyOn = true
