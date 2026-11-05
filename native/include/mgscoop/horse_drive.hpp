@@ -122,10 +122,10 @@ bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcep
 // overlay seat. The partner driver keeps a lease that was live on its previous tick kSeatGraceTicks more ticks with its
 // last offsets (in: this tick's SeatLease and its values; out: the values to use); a lease gone longer ends the seat.
 inline constexpr unsigned kSeatGraceTicks = 2;
-// The review of M4: no play run passed the driver's get-off with the hold in, so the grace is part of world_horse_shot
-// (off unless named): grace false (the defaults) ends the seat on the first lapsed tick, as in 0.15.2.
+// Step S: the grace comes with the seat (world_horse_pillion's default; play 22926dbf passed the driver's get-off with it);
+// grace false (a named world_horse_pillion=0) ends the seat on the first lapsed tick, as in 0.15.2.
 struct SeatHold {
-    bool grace{};  // world_horse_shot named on this copy (set by the partner driver each tick)
+    bool grace{};  // Settings.horse_seat_holds on this copy (set by the partner driver each tick)
     bool live{};
     unsigned miss{};
     float back{}, up{};

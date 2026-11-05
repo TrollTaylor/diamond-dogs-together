@@ -190,7 +190,7 @@ bool HoldSeat(SeatHold& h, bool lease, float& back, float& up, bool& pose) noexc
         h.pose = pose;
         return true;
     }
-    // The review of M4: the grace only with world_horse_shot named (h.grace); at the defaults a lapse ends the seat.
+    // The grace only with h.grace (Settings.horse_seat_holds: the seat's default since step S); without it a lapse ends it.
     if (h.grace && h.live && h.miss < kSeatGraceTicks) {
         ++h.miss;
         back = h.back;

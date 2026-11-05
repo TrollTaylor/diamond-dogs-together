@@ -5662,8 +5662,8 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     in.horse = set.horse_share && m.visibility.horse;
     // Horse plan M3: body 1 rides behind this copy's player (the seat1 lease): seated whatever the remote's act.
     in.pillion = m.pillion_pose;
-    // M4: the stopped pillion seat re-enters only with world_horse_shot named (the review of M4).
-    in.pillion_reseat = set.horse_shot;
+    // M4: the stopped pillion seat re-enters (run d935beae); with the seat's default since step S (world_horse_pillion).
+    in.pillion_reseat = set.horse_seat_holds;
     if (pending) in.debug = d.overlay_request;
     in.blocked = OverlayBlocked(d, h, st, terminating, parts_loaded, anim_ok, anim);
     in.body_present = !terminating && set.stage >= 3 && parts_loaded && !m.range_hidden && !m.visibility.hidden && !m.visibility_logged;
@@ -7356,8 +7356,11 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // Horse plan M1 shared D-Horse (docs/mounts.md "Shared D-Horse"): lab and play, off unless named until its gate.
     d.settings.horse_share = lab.world_horse_share;
     // Horse plan M4 (docs/mounts.md "Shoot from the back of the horse"): lab and play, off unless named (the gate not
-    // reached); it also carries the rear seat's holds (HoldSeat grace, the overlay re-entry, the Lua track wait).
+    // reached).
     d.settings.horse_shot = lab.world_horse_shot && lab.world_horse_pillion && lab.world_horse_share;
+    // Step S: the rear seat's holds (HoldSeat grace, the overlay re-entry, the Lua track wait) come with the seat itself
+    // (world_horse_pillion's default; play 22926dbf passed the driver's E after a hop-off with them, both orders).
+    d.settings.horse_seat_holds = lab.world_horse_pillion && lab.world_horse_share;
     // G5 (docs/native-puppet.md "Ride hides"): lab only, default off (lab_config forces it off in play).
     d.settings.unrealize_all = lab.partner_native_unrealize_all;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
@@ -7993,8 +7996,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         bool pillion = false, seat_pose = true;
         float back = 0.f, up = 0.f, lp[4]{}, lq[4]{}, seat_yaw = 0.f;
         // M4: a lease live on the previous tick survives kSeatGraceTicks lapsed ticks (run d935beae: a capture's stall),
-        // only with world_horse_shot named (the review: no play pass of the driver's get-off with it).
-        m.pillion_hold.grace = set.horse_shot;
+        // with the seat's default since step S (world_horse_pillion; play 22926dbf passed the driver's get-off with it).
+        m.pillion_hold.grace = set.horse_seat_holds;
         const bool lease = set.horse_share && set.source == PartnerSource::net && st.local == 0 &&
                            horse_drive::HoldSeat(m.pillion_hold, horse_drive::SeatLease(now, back, up, seat_pose), back, up, seat_pose);
         if (lease && h.read_local_body && h.read_local_body(h.context, st, lp, lq)) {

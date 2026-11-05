@@ -733,6 +733,9 @@ struct Settings {
     // Horse plan M4 (lab.ini world_horse_shot, with world_horse_pillion): the local passenger's shots start past the horse
     // (the pbox lease, partner_seat_shot horse class) and body 1 raises its gun in the rear seat (partner_seat_gun pillion).
     bool horse_shot;
+    // Step S (lab.ini world_horse_pillion with world_horse_share, on with the gun profile): the rear seat's holds
+    // (horse_drive::SeatHold.grace, the DM overlay's pillion re-entry; the Lua track wait follows the same key).
+    bool horse_seat_holds;
     bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
     // a ride logs partner_ride=net_rebased (partner_native_unrealize_all, "Ride hides").
