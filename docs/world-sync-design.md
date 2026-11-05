@@ -560,36 +560,48 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
 
 - **The user's decision D-FM1 (a)** (2026-11-05): the far mirror mirrors only in calm and caution and is judged on calm
   frames; in ALERT guards work as before (no puppets). `soldier_act=1` (and `calm`) is on with that phase limit;
-  `soldier_act=all` (research) keeps every phase (7.16). The limit rides in soldier_act's own value and the `ACT_V1 p`
+  `soldier_act=all` keeps every phase (7.16; a test value, but play and release builds accept it too). The limit rides in soldier_act's own value and the `ACT_V1 p`
   reply (`pl=1`), no CFG bit (r[19] has none free); Lua releases and skips a guard of a CP in evasion / ALERT
   (`why=phase_limit`, before the R check).
-- **Version gate** (protocol section 36): a 0.15.0 partner connects (the handshake checks only `kLinkVersion` 2) but has
-  no SOLDIER_ACT and no ACT_CAPS. Each PC with `soldier_act` sends ACT_CAPS (0x5C: caps bit 1 on, bit 2 its calm limit;
+- **Version gate** (protocol section 36): a 0.15.0 or 0.15.1 partner connects (the handshake checks only `kLinkVersion`
+  2) but has no ACT_CAPS (0.15.0 has no SOLDIER_ACT either; 0.15.1 has round 5's 0x58). Each PC with `soldier_act` sends ACT_CAPS (0x5C: caps bit 1 on, bit 2 its calm limit;
   revision 6) once per pairing and mission start; the far mirror (registration, every SOLDIER_ACT part, every puppet)
   runs only after the partner's ACT_CAPS with bit 1, so nothing of it runs against an old partner or one with the key
   off (`why=peer`). The defaults of a PC without the key send nothing new. Unit-tested with an old partner
-  (world_align_lua_check, world_wire_tests); in game both copies logged `event=mirror_peer; caps=1|3; rev=6`.
+  (world_align_lua_check, world_wire_tests; 0.15.1 skips 0x5C by its length, checked by reading); in game both copies
+  logged `event=mirror_peer; caps=1|3; rev=6`.
 - **Walkers, three causes** [O, runs `fbf3522a`, `f11fe8a1`; Ghidra decompiles read-only]:
   - the 5 s re-apply (7.16): an unchanged request is now re-applied from the mailbox every 1 s while the owner copy
     moves (its order-part position >= 0.3 m from the last apply; `ReapplyDue`, `OwnerMoved`), else every 5 s. The
-    speed ratio while the owner copy moves is now p50 0.99 / 0.95 (was 0.19 / 0.78). The apart release waits for a
-    still owner copy (moved under 0.5 m for 2 s).
+    speed ratio while the owner copy moves is now p50 0.99 / 0.95 taken together (was 0.19 / 0.78), but not per
+    guard: guard 246 stood about 4.5 s and then jumped 16-20 m, again and again (ratio 0.0 in both runs). The apart
+    release waits for a still owner copy (moved under 0.5 m for 2 s); apart releases were still 4 / 10 / 1 a run
+    (`fbf3522a` / `f11fe8a1` / `0d801772`; round 5 12-13).
   - a stale order target: the order unpack 0x1413701f0 writes the target (R+0x1b0..+0x1bb) and its mode (the low 3 bits
     of +0x1bc) only for packed modes 1..4, so a host order without a target left the puppet's own brain's target
     (guard 15 in `fbf3522a`: 413.5, 267.6, 2133.3). Now cleared (`OrderHasTarget`, `ClearOrderTarget`, `order_clear`).
   - his own leg: with the request record byte-identical to the host copy's (the census packs of both copies differ in
     one facing-yaw bit) and the destination R+0x80 the host copy's, a puppet keeps walking the leg his own brain had
     before the take, at the host copy's speed (guard 15: the host copy toward 363.6, 2159.8, the puppet toward
-    414.4, 2133.6, 15.8 m apart before the engine's 15 m warp). Takes whose own destination was the host copy's
-    replayed at p50 0.0 m, the others at 3.5 m (12 / 10 takes in the two runs). The request unpack 0x14136f810 runs its
+    414.4, 2133.6, 15.8 m apart before the engine's 15 m warp). The leg is not the whole cause: by the 3 m
+    test below, the same-leg takes of `fbf3522a` had p50 1.81 m (per-take medians 0.18-9.77 m), `f11fe8a1`'s one 8.05 m. The request unpack 0x14136f810 runs its
     catch-up (gait + 1 at 2..5 m, gait 3 beyond) only for dest mode 0; 99 % of the moving samples are kind 1, dest mode
     1. A walker (action A kind 1) is now taken only when his own destination is within 3 m (flat) of the host copy's
-    (`LegMatch`; the hook packs each realized non-puppet guard every 0.5 s; frame line `leg_wait`). [U] what in the
+    (`LegMatch`; the hook packs each realized non-puppet guard every 0.5 s; frame line `leg_wait`). That it helps is
+    not shown [U]: in `0d801772` every take passed it, p90 was still 9.4 m, guard 19 with the host copy's destination
+    ran the opposite way, and on the same guards (15, 17, 18, 246) the error went 6.43 to 4.38 m. [U] what in the
     body keeps the old leg (the path follower's own target is not in the 0x70 request).
+- **What a player sees with the key named** [O]: puppets jump 15-22 m between two 0.5 s census samples 7 / 13 / 13
+  times a run (the engine's 15 m warp of a copy left too far behind [I]); Lua's near release took puppets at 73.9 m
+  (after a 16 m warp toward the guest), 79.8 m and 79.9 m, which the 0.5 s census (minimum 80.4-99.5 m) missed;
+  ALERT came at the end of `fbf3522a` and `f11fe8a1` with no puppet, so `why=phase_limit` never fired in a game.
+  Unexplained [U]: in `0d801772` the guest's screen alone showed a CP radio report of a possible intruder about 1 s
+  after the run's only `order_clear` and guard 17's take, in calm, before any shot.
 - **Riders**: the far rule skips a guard whose `GetVehicleGameObjectId` is a game object (never taken, released
   `why=vehicle`, not registered by the host). [U] whether a soldier at a gun emplacement answers that command.
 - **Logs**: `soldier_act_frame` adds `payload_ids` (the aim-target swaps), `due`, `reapply`, `expired`, `order_clear`,
-  `leg_wait`; `event=mirror_caps`, `event=mirror_peer`, `soldier_act_mirror=...; phase=calm|all`.
+  `leg_wait` (`due` counts just before the unpack, so applied / due restates only 0 unpack faults; delivery is the
+  host's `staged` against the guest's `rx`, 55-66 % under `-WanSim bad`); `event=mirror_caps`, `event=mirror_peer`, `soldier_act_mirror=...; phase=calm|all`.
 - **The watch spots** (known ground, both measured standing points of `fbf3522a`): A (424.627, 271.559, 2025.110), the
   end of the walk south (four runs) and B (414.897, 274.034, 2017.557). From A a bush hides guard 17's later route;
   from B a bush hides 17's whole route; guard 15's patrol by the fence is visible from both.

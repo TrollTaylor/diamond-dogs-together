@@ -2385,14 +2385,15 @@ No new op, world note or CFG bit. Receipt and log changes only.
 
 - Why: the link handshake checks only `kLinkVersion` 2, so a 0.15.0 partner connects to a newer build, and CFG r[19] is
   each PC's own (0.15.0's Lua takes only r[19] 0..63, newer builds 0..4095). A 0.15.0 partner has no SOLDIER_ACT
-  (0x58) and no ACT_CAPS: it skips both by their length (`unknown_op`).
+  (0x58) and no ACT_CAPS: it skips both by their length (`unknown_op`). A 0.15.1 partner has round 5's SOLDIER_ACT
+  but no ACT_CAPS: it skips 0x5C by its length, and this side never runs the mirror against it.
 - Lua (world_mirror.lua) sends ACT_CAPS once per pairing and once per mission start, only on a PC with `soldier_act`
   (`event=mirror_caps; caps; rev`). The receiver keeps the partner's caps until unpaired (`event=mirror_peer; caps;
   rev`). The far mirror (the host's `ACT_V1 t` / `s`, the guest's `q` / `m`, so every SOLDIER_ACT part and every
   puppet) runs only while the partner's caps has bit 1: an old partner never sends one, so nothing of `soldier_act`
   runs against it; a partner announcing caps 0 releases every puppet (`why=peer`).
-- `soldier_act=1` / `calm` (the user's decision D-FM1 (a)): on, calm / caution only; `soldier_act=all` (research):
-  every phase; no CFG bit. Native answers `ACT_V1 p` with `{p=1,pl=1}` (`{p=1,pl=0}` for `all`); Lua then releases
+- `soldier_act=1` / `calm` (the user's decision D-FM1 (a)): on, calm / caution only; `soldier_act=all` (a test value;
+  play and release builds accept it too): every phase; no CFG bit. Native answers `ACT_V1 p` with `{p=1,pl=1}` (`{p=1,pl=0}` for `all`); Lua then releases
   and skips a guard whose CP is in evasion / ALERT (`why=phase_limit`, before the R check).
   `soldier_act_mirror=on; ...; phase=calm|all` logs it.
 - The far rule skips riders: a guard whose `GetVehicleGameObjectId` is a game object is never taken, a puppet who
@@ -2403,5 +2404,5 @@ No new op, world note or CFG bit. Receipt and log changes only.
   >= 0.3 m from where it was at the last apply), else every 5 s, from the mailbox whether or not a new part came; an
   order without a target clears the puppet's own stale target (`order_clear`).
 - `soldier_act_frame` adds `payload_ids` (the aim-target swaps of `RemapAimTarget`), `due` (applies the rule asked
-  for), `reapply` (the moving owner's 1 s re-applies), `expired` (fire-drop bits that lapsed), `order_clear`, `leg_wait`.
+  for, counted just before the unpack: applied / due restates only unpack faults), `reapply` (the moving owner's 1 s re-applies), `expired` (fire-drop bits that lapsed), `order_clear`, `leg_wait`.
 - Lua's apart release (`why=apart`) waits for a still owner copy: its position moved under 0.5 m for 2 s.
