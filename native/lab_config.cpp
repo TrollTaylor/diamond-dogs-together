@@ -525,6 +525,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.place_reach_given = true;
         if (!ok) result.place_reach = false;
     }
+    else if (Equals(key, "drive_vert")) {
+        // Enemy gaps 3 (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.drive_vert);
+        result.drive_vert_given = true;
+        if (!ok) result.drive_vert = false;
+    }
     else if (Equals(key, "act_census")) {
         // Enemy sync M7 FM1 probe (lab and play, research); an invalid value is named and off.
         ok = ParseBool(value, result.act_census);
