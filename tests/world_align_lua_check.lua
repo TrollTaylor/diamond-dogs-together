@@ -1561,8 +1561,10 @@ if arg[7] and arg[8] then
     mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
     -- R(ALERT) is 1.5 x the farthest ALERT hit (122.4 m on the host, run 3bc7280b) = 184 m, not capped: 12 copies stayed
     -- realized out to 212 m (host) and 400 m (guest), so no realize radius was measured (skeptic of 7b709720).
-    check(mg.W.mirror and mg.W.mirror.R[0] == 80 and mg.W.mirror.R[2] == 184 and mg.W.mirror.R[3] == 184,
-        'FM1: R 80 m calm, 184 m evasion / ALERT (1.5 x 122.4 m, 3bc7280b)')
+    -- FM1 retry (run 94a7bf2a): the guest's own copies hit it from up to 173.9 m in ALERT (guard 16), so R(ALERT) is
+    -- 1.5 x 173.9 = 261 m by the plan's rule.
+    check(mg.W.mirror and mg.W.mirror.R[0] == 80 and mg.W.mirror.R[2] == 261 and mg.W.mirror.R[3] == 261,
+        'FM1: R 80 m calm, 261 m evasion / ALERT (1.5 x 173.9 m, 94a7bf2a)')
     mg.positions[1] = {0, 1.8, 100.0}
     ticks(mg, 4)
     local function acted(c, text)
@@ -1631,6 +1633,28 @@ if arg[7] and arg[8] then
     check(acted(mh, 't 1 1') and not acted(mh, 't 2 2') and acted(mh, 's 0 0'), 'FM1 host: a guard beyond R - 10 m of the guest is sent')
     -- FM1 retry: the ALERT watch point is ~255 m from the fight (beyond R(ALERT) + 15 = 199 m), so the range is 300 m.
     check(mh.W.mirror.RANGE == 300, 'FM1: the mirror range is 300 m')
+    -- Run 94a7bf2a: guard 19's host copy climbed a tower and his puppet stood at its foot 7 m off for ~100 s (nothing
+    -- warps a copy under 15 m). A puppet > 5 m (3D) from his owner copy (the m reply's ox/oy/oz) for 2 s is released
+    -- (why=apart: his own brain and the follow corrections again) and not taken again for 30 s.
+    check((function()
+        local ma = guestFix(0)
+        ma.W.snapOn, ma.W.actOn, ma.W.mission = true, true, 30010
+        ma.positions[1] = {0, 1.8, 100.0}
+        ma.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
+        ticks(ma, 70)
+        if logged(ma, 'why=apart') or cmdCount(ma, 'SetPuppet') ~= 1 then return false end
+        ma.actReply = {f = 1, sh = 0, ox = 0, oy = 8800, oz = 100000}
+        ticks(ma, 20)
+        if logged(ma, 'why=apart') then return false end  -- not before 2 s
+        ticks(ma, 60)
+        if not (logged(ma, 'event=mirror_apart;ent=3000000001;apart_m=7.0') and logged(ma, 'on=0;why=apart') and acted(ma, 'r 1 1') and
+            cmdCount(ma, 'SetPuppet') == 2) then return false end
+        ma.actReply = {f = 1, sh = 0}
+        ticks(ma, 300)
+        if cmdCount(ma, 'SetPuppet') ~= 2 then return false end  -- held 30 s
+        ticks(ma, 700)
+        return cmdCount(ma, 'SetPuppet') == 3
+    end)(), 'FM1: a puppet 7 m from his owner copy for 2 s is released (apart) and held off 30 s')
     check((function()  -- its own function: the main chunk is at Lua's 200-local limit
         local mr = followFixture(true)
         mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010

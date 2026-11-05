@@ -997,7 +997,14 @@ Counters ReadCounters() noexcept {
     return k;
 }
 
-bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity) noexcept {
+bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept {
+    (void)idx;
+    (void)mm;
+    return false;
+}
+
+bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm) noexcept {
+    (void)owner_mm;
     if (!out || !capacity) return false;
     const int n = std::snprintf(out, capacity, "return {f=%u,tx=%u,rx=%u,ap=%u,od=%u,sh=%u,mi=%u,fd=%u,fn=%u}", fresh ? 1u : 0u, k.tx_parts,
                                 k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped);

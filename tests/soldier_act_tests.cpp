@@ -200,6 +200,13 @@ int main() {
         }
         char tiny[8]{};
         Check(!sa::FormatActReply(false, k, tiny, sizeof(tiny)), "a short buffer is refused");
+        // The m reply carries the owner copy's position (mm) when the mailbox has it (the apart release, run 94a7bf2a).
+        const std::int32_t owner[3] = {1500, -2000, 3250};
+        Check(sa::FormatActReply(true, k, out, sizeof(out), owner) &&
+                  std::strcmp(out, "return {f=1,tx=3,rx=2,ap=1,od=7,sh=4,mi=0,fd=0,fn=0,ox=1500,oy=-2000,oz=3250}") == 0,
+              "the m reply with the owner's position");
+        std::int32_t none[3]{};
+        Check(!sa::MailOwner(sa::kMaxSoldiers, none) && !sa::MailOwner(7, none), "no mailbox, no owner position");
     }
     // The fire-drop mask is a lease (skeptic of FM1, 7b709720): a puppet dropped without ACT_V1 r must not keep his
     // bullets and noise dropped. The hook expires every bit not stamped again within kActFreshMs.

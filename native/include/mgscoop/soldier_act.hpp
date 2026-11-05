@@ -109,7 +109,11 @@ struct Counters {
 Counters ReadCounters() noexcept;
 // The ACT_V1 reply, a Lua table constructor: {f,tx,rx,ap,od,sh,mi,fd,fn} (od: orders re-posted; never a Lua reserved
 // word as a key: run 963ab276's {..,or=..} did not compile in Lua, so the guest's Lua never saw f=1 and set no puppet).
-bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity) noexcept;
+// With owner_mm (the m reply), ",ox=,oy=,oz=" the owner copy's position in mm from the newest order part (run 94a7bf2a:
+// guard 19's host copy climbed a tower; his puppet stood at its foot 7 m off, and nothing warps a copy under 15 m).
+bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm = nullptr) noexcept;
+// The owner copy's position (mm) in guard idx's mailbox (the order part, flag bit 0); false when none.
+bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept;
 #endif
 
 } // namespace mgscoop::soldier_act

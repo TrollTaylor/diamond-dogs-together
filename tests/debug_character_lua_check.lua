@@ -177,4 +177,18 @@ ok,msg=c.D.player.run({"heal"},13);check(ok and msg=="player:heal","other player
 c=F();c.env.Player={RequestToSetCameraRotation=function(t)c.cam=t end};c.D.api.pose=function()return {0,0,0,0}end
 ok,msg=c.D.player.run({"aim_partner"},14);check(not ok and msg=="partner_pose_unavailable" and c.cam==nil,"no partner pose: refused")
 ok,msg=c.D.player.run({"aim_partner","9"},15);check(not ok and msg=="aim_args","height 0..2 m")
+-- Run 94a7bf2a: native attaches the command's pose (pp) only to goto_partner / spawn_sync, so every aim_partner was
+-- refused; without pp it takes world sync's peer position (P.partnerXZ) at this copy's own height.
+c=F();c.env.Player={RequestToSetCameraRotation=function(t)c.cam=t end};c.D.api.pose=function()return {0,0,0,0}end
+c.env.e.MgsCoopWorld={now=function()return 5000 end,place={partnerXZ=function()return 0,-80000 end}}
+ok,msg=c.D.player.run({"aim_partner"},18)
+check(ok and type(c.cam)=="table" and math.abs(math.abs(c.cam.rotY)-180)<0.01 and msg:find("d=80.0",1,true) and msg:find("via=peer",1,true),
+ "aim_partner without the command's pose: the peer position")
+-- aim_ent <hash>: the camera toward that guard (both copies look at the same mirrored guard for matched frames).
+c=F();c.env.Player={RequestToSetCameraRotation=function(t)c.cam=t end};c.D.api.pose=function()return {0,0,0,0}end
+c.env.e.MgsCoopWorld={ent={[3000000001]={id=1041}},place={pos=function(id)if id==1041 then return 0,-1000,-50000 end end}}
+ok,msg=c.D.player.run({"aim_ent","3000000001"},16)
+check(ok and type(c.cam)=="table" and math.abs(math.abs(c.cam.rotY)-180)<0.01 and msg:find("aim_ent;ent=3000000001;d=50.0",1,true),
+ "aim_ent turns the camera toward the guard, 50 m south")
+ok,msg=c.D.player.run({"aim_ent","42"},17);check(not ok and msg=="aim_ent_unknown","an unknown guard: refused")
 print("debug_character_lua_check: "..checks.." checks PASS")
