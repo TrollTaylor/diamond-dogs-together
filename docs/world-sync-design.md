@@ -1174,21 +1174,32 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   - The clock: 24 `StartTravel{travelPlan, step, keepInAlert}`, 23 read back on their target step at the next 1 s read
     (25606's crew 0 -> 1 -> 2 -> 3 ...; plans `travelArea1_01` / `travelArea1_02`); the guest on the host's step after a
     host change p50 1.5 / p90 3.6 / max 12.7 s (21 changes). The svars rows matched (0 `tstep_miss`).
-  - Get-outs and boardings within 0.03-1.1 s of the host's (25605 2 -> 1 -> 0; 25606 2 -> 0 -> 1 -> 2), 0 trucks moving
-    with the crews differing, 0 `crew_wait`; crews 20-40 s after the host's get-out p90 0.00-1.75 m (round 9: 9-42 m).
+  - Only the 2 trucks the host saw manned (25605, 25606: 4 guards) were on the host's step. The other 4 LRRP trucks
+    (25602/3/4/7) had 0 riders on the host's copy and 2 each on the guest's: the host sends no LRRP_STEP for a crew it
+    has not seen seated, and the guest unseated those 8 guards at the pairing (24 `UnsetRelativeVehicle`); their place
+    error and a boarding after the unseat were not measured (none of the 4 moved) [U]. (Corrected at the landing review.)
+  - Get-outs and boardings within 0.035-0.87 s of the host's (25605 2 -> 1 -> 0; 25606 2 -> 0 -> 1 -> 2; one boarding
+    event), 0 trucks moving with the crews differing, 0 `crew_wait`; crews 20-40 s after the host's get-out p90
+    0.00-1.75 m (round 9: 9-42 m, with a 40 s lever-off window crew10 removes; 25606's two guards stood still).
   - Truck error while moving p50 0.15 / p90 0.55 m (314). Riders within 8 m while seated: FAIL for 25605 in the first 54 s
     after the pairing (p90 499 m, 46 of 46 samples): its guest copy was 363 m from the guest's player and 410 m from the
     host's truck, so the 400 m rule deferred it (27 `defer` lines) until the jump at near_m 400.0; after that every rider
-    p90 0.42-1.00 / max 5.3 m, 0 over 8 m.
-  - 7 of the 24 sets were one step back (the guest's copy had advanced a second before the host's: 25605's passenger
-    5 -> 4, 25606's crew 4 -> 3; 25605's driver 6 -> 0 three times while the host's driver stayed on step 0, then held
-    `why=tries`); the get-outs still lined up.
-  - 0 `log_cap` on either copy (guest world log 7.1 lines/s, lrrp 5.5/s); `step=cost` avg <= 0.15 ms per tick with the
+    p90 0.42-1.00 / max 5.3 m, 0 over 8 m (25606's riders: one 385-386 m sample each at its pairing jump). Allowing
+    host line gaps up to 1.6 s (108 more moving lines), the truck error is p90 1.26 / max 6.13 m (n=423).
+  - 7 of the 24 sets set a guard back: 4 one step back while the guest's copy led the host's by less than the step's
+    latency (WanSim ~180 ms plus the 1 s reads; e.g. k=10 5 -> 4 57 ms after the host reached 5), then kept off the
+    host's step 5.2-6.6 s by the 5 s spacing; 3 were 25605's driver 6 -> 0 while the host's driver stayed on step 0 (two
+    reverted to 6 within 1.4-2.2 s, the third went to 7 by the guest's AI; then `why=tries`). So 3 of the 23 read-backs
+    never held, and on a stays-on-the-step basis the lag p90 is about 6.3 s, not 3.6 s. The get-outs still lined up.
+  - 0 `log_cap` on either copy (guest world log 7.1 lines/s, lrrp 5.4/s); `step=cost` avg <= 0.15 ms per tick with the
     1 s `StoreToSVars`; 0 latches / faults / game overs / drive_sank; one host `place_sink` of an outpost guard (not a crew).
   - Frames: no matched crew pair (the host's binoculars on rock in k-5..k-7); the guest's k-6 shows a soldier on foot
     beside a truck at the stop.
 - **Gate** (Afghanistan): every row passes but "crews within 8 m while seated", which fails for a truck within 400 m of the
-  guest at the pairing (that copy stays the guest's own, as 0.15.2, until the guest is 400 m from it). `lrrp_follow` stays
+  guest at the pairing (that copy stays the guest's own, as 0.15.2, until the guest is 400 m from it); the rows cover only
+  the 2 trucks the host saw manned, and crew10's frame-time row has no off window (cross-run only). Known key-only
+  defects [I]: the unseat skip holds while any step arrives (the host refreshes every 5 s), even when `StartTravel` is
+  held; no phase / notice gate on `StartTravel`; `StoreToSVars` 1 Hz rewrites svars between checkpoints. `lrrp_follow` stays
   off unless named; turning it on in 30010 with that limit is the user's decision (docs/STATUS.md, D-B10).
 - **Next**: hold a copy that is one step ahead for up to 20 s instead of setting it back; leave a guard whose host step
   never changes (the driver) alone; a pairing jump hidden from the guest's camera if the no-jump row allows it; Africa.

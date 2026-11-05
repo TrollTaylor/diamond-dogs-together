@@ -2579,12 +2579,12 @@ crews keep their own clock (as section 42).
   step T.vt[0x80] and keep-in-alert T.vt[0x90] there), then the crew's svars rows (row = GameObjectId & 0x1ff, used only
   when `svars.solName[row]` is that soldier's name hash; else `step=tstep_miss; role; ent; why`, every 10 s).
 - Host: each crew member it has seen seated: LRRP_STEP on a change of plan or step (`step=tstep; role=host; id; ent;
-  plan; st`) and every 5 s.
+  plan; st`) and every 5 s. A crew the host never saw seated gets no LRRP_STEP (its guest copy keeps round 9's unseat).
 - Guest: on its own change `step=tstep; role=guest; id; ent; plan; st; host_st`. When its plan or step differs from the
   host's (the host's not 255), its truck's track is followed within 30 m or waits crewless, the plan name is known
   (`mvars.ene_travelPlans` keys, the crews' `lrrpTravelPlan`) and 5 s passed for that guard:
   `StartTravel{travelPlan=name, step=host's, keepInAlert=its own}` (`step=tset; id; ent; plan; from; to; k`); else
-  `step=tstep_hold; id; ent; why (plan|track|wait); st; host_st` every 10 s. `StartTravel{travelPlan=""}` is never sent.
+  `step=tstep_hold; id; ent; why (plan|track|wait|tries); st; host_st` every 10 s. `StartTravel{travelPlan=""}` is never sent.
 - Guest: while steps for a truck arrived in the last 15 s, its crew is not unseated (no `UnsetRelativeVehicle`).
 - Lines: the guest's `step=follow` (and its riders line) 1 Hz while followed, 5 s at rest (were 4 Hz / 2 s); the host's
   `step=host` 4 Hz while its truck moves, 1 Hz manned at rest, 5 s empty.
