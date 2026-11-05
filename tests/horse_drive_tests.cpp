@@ -194,6 +194,14 @@ void TestLabKey() {
     Check(on.world_horse_share && on.world_horse_share_given && on.unknown_keys == 0 && on.invalid_values == 0, "a named 1 turns it on");
     Check(!off.world_horse_share && off.world_horse_share_given, "a named 0 is the off switch");
     Check(!bad.world_horse_share && bad.invalid_values == 1, "an invalid value stays off");
+    // M1 gate passed (hidden frames on both copies, lab and play -WanSim bad): on with the native gun profile.
+    const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
+    const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_share=0\n");
+    const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                          "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n");
+    Check(gun.world_horse_share && !gun.world_horse_share_given, "the gun profile turns world_horse_share on in lab");
+    Check(play.mode == mgscoop::LabMode::play && play.world_horse_share && play.play_refused == 0, "on in play with the gun profile");
+    Check(!gunOff.world_horse_share && gunOff.world_horse_share_given, "a named 0 is the off switch");
 }
 
 } // namespace
