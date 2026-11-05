@@ -204,6 +204,19 @@ inline constexpr unsigned kDriveVertMax = 2;
 inline constexpr std::uint64_t kDriveVertWindowMs = 10000;
 bool DriveVertAllow(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept;
 void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept;
+// Enemy round 10 track A (design 7.27): a vert snap only while the owner copy is at rest in y. Round 7's two snaps
+// (ddcdec94: gap -2.40 m, then +1.88 m 1.7 s later) chased an owner copy going down and up (stairs or a ladder) and
+// none of their read-backs held. OwnerYAtRest takes the rendered target's y at each drive call: true once every y since
+// `since_ms` spans less than kDriveVertRestM (max - min) and that window is kDriveVertRestMs old; a wider span, a gap
+// of more than kDriveVertRestGapMs between calls or a non-finite y starts the window over at this sample.
+inline constexpr float kDriveVertRestM = 0.2f;
+inline constexpr std::uint64_t kDriveVertRestMs = 1000, kDriveVertRestGapMs = 600;
+struct OwnerRestY {
+    std::uint64_t since_ms{}, last_ms{};
+    float lo{}, hi{};
+    bool valid{};
+};
+bool OwnerYAtRest(float y, std::uint64_t now_ms, OwnerRestY& state) noexcept;
 // The receipts' refusal reply: return {refused="<why>"}, with ,b=<back_ms> (the ms left of that guard's relay backoff,
 // so Lua's realize hold retries when it ends) when back_ms > 0. False when it does not fit.
 bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept;

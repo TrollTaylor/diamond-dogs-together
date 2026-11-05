@@ -1143,6 +1143,60 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   take walkers that are walking at take time, hold a partial path while it grows, and a spot where a calm walker is in
   clear view from both players for the frame pair.
 
+#### 7.27 Enemy round 10 track A: a guard on a wall at the same height on both screens (lab key `drive_vert`, native only)
+
+- **What round 7 left** (7.20): no vert snap of a copy within 60 m (the host stood 67-73 m from the wall guard
+  2929558510), 0 of 3 read-backs held, and both snaps chased an owner copy going down 2.40 m, then up 1.88 m 1.7 s
+  later. At the shipped defaults the copy of a guard on the wall top was left 2.2-3.3 m under its owner copy in 4 of 6
+  old tests (6348f361, 41f2b07f, 31a799e3, b77e2104; `drive_sink`, all in the alert, ~30 s after the guest's first goto).
+- **The owner at rest** (native `DriveReceipt`, `sw::OwnerYAtRest`): a due vert snap (the copy at rest in x/z more
+  than 1.5 m above or below the rendered target for 1 s) is taken only once the rendered target's y (the owner copy,
+  rendered 100 ms behind) has stayed within 0.2 m (max - min) for 1 s; a wider span, more than 600 ms between drive
+  calls of that copy or a non-finite y starts the window over. A due snap that waits logs `world_drive=vert_wait` once per
+  due spell; the vert line adds `rest_ms`. The rule tests y only: a guard walking on level ground counts as at rest.
+  The snap is a visible jump of the copy (4.2-5.8 m in the runs below, once 3 m in front of the guest). The no-thrash
+  cap and the read-backs (7.20) are unchanged. 629f0a42 red /
+  fbd3def4 green (`soldier_warp_tests`).
+- **Scenario** `enemy-vert-near.txt`: `enemy-vert-alert.txt` with the host at 415.80 269.0 2106.92 (a logged teleport
+  landing, 7c174346; 31 m from the guard by the aim readout) before the alert and through block 2; in block 2 the guest
+  teleports onto the wall top at its logged spot there (373.86 277.2 2120.18, 3e2611fc; the first run's `enemy goto
+  2929558510 3` left the guest at the wall's foot, 0463d36d), both cameras on him (aim_ent, the host through binoculars),
+  v-a / v-b / v-c; then the host back to the quiet spot for blocks 3-9.
+- **Runs** (play, `-WanSim bad`, the gun profile, research build, afgh-ledge; join, latch-quiet, integ-carry, vert-near):
+  `c59ae699` (`drive_vert=1`, 0.15.2+fbd3def), `948c978a` (`drive_vert=1`, 0.15.2+0463d36), `ef9584e4` (no key, at the final code head 0463d36d).
+  Two earlier jobs stopped in the worker's own audited CTest before any game (`partner_defer_tests` check 185;
+  `ddt_core_tests_1` CloseDuringSetup: timing tests, both passed in this tree's build).
+  - [O] 3 vert snaps of 2929558510, all within 60 m, all held: `c59ae699` the guest's copy (far 3 m, gap +4.24 m,
+    `rest_ms` 1085; read-backs 0.00 m at 0.5 s and 2.01 s) and the host's copy (far 31 m, gap -5.79 m: the guest's
+    copy, then the owner, had gone down to the wall's foot; `rest_ms` 1058; -0.02 m at 0.5 s and 2.07 s); `948c978a` the
+    guest's copy (far 49 m, gap +4.44 m, `rest_ms` 1178; 0.01 m at 0.52 s and 2.24 s). 0 `vert_stop`.
+  - [O] FAIL `drive_sink` 0: the guest logged one in each named run (2929558510 -3.30 m / -3.48 m, low 2.1 / 2.3 s), in
+    block 1 while the host owned him: each time a `vert_wait` came first on the guest (gap 2.50 / 3.48 m, `rest_ms` 0:
+    the owner still climbing; `c59ae699` logged a second one, on the host before its down move: gap -2.42 m, `rest_ms`
+    197, span 17 cm), the host's copy then rose 1.0-1.7 m more and came to rest at the top about when `drive_sink`
+    fired, and the snap followed 1.1 / 1.2 s later. The planar error stayed 1.06-1.07 m throughout [I: a ladder: the owner climbed
+    with x / z still]. So the copy was under for about 3.2-3.4 s and then on him. With the rest rule no snap can come
+    sooner: the climb alone kept the gap over 1.5 m for more than 2 s, which is `drive_sink`'s own threshold.
+  - [O] PASS 0 `place_sink`, `guard_fell`, latches, faults, game overs, roster mismatches, overflow (both runs).
+  - [O] frames: `948c978a` v-a..v-c: the guest on the wall top sees him standing on the wall top about 11 m ahead (aim
+    10.9 m, 6.1 deg down); the host's binoculars (31 m, 12.9 deg up, about 6.9 m over the host's camera) show only his
+    X-ray outline through the wall, at its top under his marker. The snap seen is the guest's copy, 4 s before the guest
+    took him over (the host's copy was the climbing owner, not snapped). Both at the wall top [I: from the two aim
+    readouts, his aim point about 277 m on both]. `c59ae699`: the guest at the wall's foot saw only the wall (aim 2.8 m, 57 deg up);
+    the host's binoculars showed the silhouette at the top.
+  - reported: guest place error p90 1.81 / 1.66 m; host M3 p90 15.09 m (6.55 m before the guest's down) / 7.68 m.
+  - [O] no key (`ef9584e4`): the guest's copy under the host's (owner) copy in block 1 again (`drive_sink` -4.54 m, low
+    3.5 s) and nothing moved it until the guest became his owner 1.0 s later; then both copies were on the ground (the
+    host's binoculars, the guest's aim). PASS 0 latches / faults / game overs, guest p90 1.17 m; FAIL `place_sink` 1
+    (3268415846 with his owner 4.89 m lower too: down a ladder on both [I]); host M3 p90 6.94 m.
+- **Defaults**: `drive_vert` stays off unless named: the `drive_sink` row failed in both named runs (above), and a flip
+  needs its named run to pass. User decision D-A10 (docs/STATUS.md): turn it on with that row read as "left under after
+  his height has stayed level for 1 s" (the copy waits below about 3 s while he climbs, then jumps to his height; at the
+  defaults nothing moves it until the other PC takes him over), or keep it off.
+- **Next**: if the user says on, the flip is one line (`if (!c.drive_vert_given) c.drive_vert = gun;`, the lab_config
+  test red first) and the no-key run of this batch. Otherwise a `drive_sink` that counts only while the owner copy is at
+  rest in y would measure the bug itself, not the climb (a detector change: needs the user's or the reviewer's yes).
+
 #### 7.28 Enemy round 10 track B: the LRRP crews on the host's travel step (lab key `lrrp_follow`, native only; op LRRP_STEP 0x5E)
 
 - **RE** (read-only Ghidra, exe 085c2f82...bb45) [O unless marked]: the TppSoldier2 command dispatcher 0x141356170 (this =

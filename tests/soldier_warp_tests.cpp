@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include "mgscoop/soldier_warp.hpp"
 #include "soldier_relay_contract.hpp"
 #include "soldier_warp_contract.hpp"
@@ -521,6 +522,35 @@ int main() {
                   "drive_vert: at most 2 snaps of a copy in 10 s from the first; the window then starts over");
             sw::DriveVertCount(20100, win, n);
             Check(win == 20100 && n == 1, "drive_vert: the next snap opens a new window");
+            // Enemy round 10 track A (design 7.27): a vert snap only while the owner copy is at rest in y (round 7's two
+            // snaps of 2929558510 chased an owner going down 2.40 m, then up 1.88 m 1.7 s later: stairs or a ladder).
+            {
+                sw::OwnerRestY oy{};
+                const bool r0 = sw::OwnerYAtRest(276.70f, 1000, oy), r1 = sw::OwnerYAtRest(276.75f, 1400, oy),
+                           r2 = sw::OwnerYAtRest(276.62f, 1900, oy), r3 = sw::OwnerYAtRest(276.68f, 2000, oy);
+                Check(!r0 && !r1 && !r2 && r3, "drive_vert: the owner copy level within 0.2 m for 1 s is at rest");
+                // On stairs: 0.12 m per 100 ms never rests; once level again it rests 1 s after the last rise.
+                sw::OwnerRestY st{};
+                bool any = false;
+                for (unsigned i = 0; i <= 20; ++i) any = sw::OwnerYAtRest(272.0f + 0.12f * static_cast<float>(i), 5000 + 100ull * i, st) || any;
+                const float top = 272.0f + 0.12f * 20.0f;
+                const bool s1 = sw::OwnerYAtRest(top, 7500, st), s2 = sw::OwnerYAtRest(top, 7999, st),
+                           s3 = sw::OwnerYAtRest(top + 0.05f, 8000, st);
+                Check(!any && !s1 && !s2 && s3, "drive_vert: an owner going up stairs is not at rest; level again it rests after 1 s");
+                // A slow drift past 0.2 m in all starts over; so does a gap of more than 600 ms between drive calls or a NaN.
+                sw::OwnerRestY dr{};
+                const bool d0 = sw::OwnerYAtRest(270.0f, 100, dr), d1 = sw::OwnerYAtRest(270.15f, 600, dr),
+                           d2 = sw::OwnerYAtRest(270.25f, 1100, dr), d3 = sw::OwnerYAtRest(270.25f, 1600, dr),
+                           d4 = sw::OwnerYAtRest(270.25f, 2100, dr);
+                Check(!d0 && !d1 && !d2 && !d3 && d4 && dr.since_ms == 1100, "drive_vert: a drift past 0.2 m starts the rest window over");
+                sw::OwnerRestY gp{};
+                const bool g0 = sw::OwnerYAtRest(270.0f, 100, gp), g1 = sw::OwnerYAtRest(270.0f, 600, gp),
+                           g2 = sw::OwnerYAtRest(270.0f, 1100, gp), g3 = sw::OwnerYAtRest(270.0f, 1800, gp),
+                           g4 = sw::OwnerYAtRest(std::numeric_limits<float>::quiet_NaN(), 2000, gp),
+                           g5 = sw::OwnerYAtRest(270.0f, 2100, gp);
+                Check(!g0 && !g1 && g2 && !g3 && !g4 && !g5 && gp.since_ms == 2100,
+                      "drive_vert: a gap of more than 600 ms between drive calls or a NaN y starts the rest window over");
+            }
             char reply[64]{};
             const bool b1 = sw::FormatRefusal(reply, sizeof(reply), "backoff", 2500) &&
                             std::strcmp(reply, "return {refused=\"backoff\",b=2500}") == 0;
