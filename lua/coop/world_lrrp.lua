@@ -344,9 +344,12 @@ function LF.guestSteps(t)
         end
         if hs.plan ~= 255 and hs.st ~= 255 and (plan ~= hs.plan or st ~= hs.st) then
           local tr, name = LF.tr[hs.truck], planName(hs.plan, t)
-          local why = not name and "plan" or not tr and "track" or not tr.sync and "wait" or t - (hs.cmdAt or -1e9) < LF.CMD_MS and "rate" or nil
+          local key = hs.plan * 256 + hs.st
+          if hs.tryKey ~= key then hs.tryKey, hs.tries = key, 0 end
+          local why = not name and "plan" or not tr and "track" or not tr.sync and "wait" or t - (hs.cmdAt or -1e9) < LF.CMD_MS and "rate" or
+            hs.tries >= 3 and "tries" or nil
           if not why then
-            hs.cmdAt, LF.tsets = t, LF.tsets + 1
+            hs.cmdAt, hs.tries, LF.tsets = t, hs.tries + 1, LF.tsets + 1
             send(gid, {id = "StartTravel", travelPlan = name, step = hs.st, keepInAlert = keep == true})
             L("event=lrrp;step=tset;id=%d;ent=%s;plan=%s;from=%d;to=%d;k=%d", hs.truck, ent(gid), name, st, hs.st, LF.tsets)
           elseif why ~= "rate" and t - (hs.holdAt or -1e9) >= 10000 then
