@@ -1,0 +1,49 @@
+# Enemy gaps 2 (body_dead, docs/world-sync-design.md 7.17), the dead body carried: after enemy-prove-1-join.txt and
+# enemy-latch-quiet.txt (guard 753908875 killed by the host, placed first on the guest's copy, so both corpses lie at the
+# same spot) and before enemy-integ-carry.txt / enemy-latch-alert.txt. The guest warps next to the dead guard, picks him
+# up (hold r), turns round, walks about 6 m and puts him down (hold r). Expected with body_dead (CFG r[19] bit 1024): the
+# guest's event=body_tx sent=1 once the body rested 1.5 s, the host's event=place_body fix=1 why=none and its hplace
+# applied: on the host's screen the corpse lies where the guest put it. Without it the host refuses disabled_local (the
+# 6.8 m of run 41f2b07f). Frames d-a (spot A, both copies), d-held (guest), d-b (spot B, both cameras on the corpse:
+# aim_ent). The host is warped behind the guest for the frames, then back to the quiet spot 50 m south.
+logmark both
+host run enemy info 753908875
+guest run enemy info 753908875
+guest run enemy goto 753908875 1.2
+wait 1500
+placebehind host guest 6 2
+wait 1500
+host run aim_ent 753908875 0.2
+guest run aim_ent 753908875 0.2
+wait 800
+both capture d-a
+guest hold r 1400
+guest release
+wait 3000
+guest run coop_carry_bodies
+guest capture d-held
+guest run enemy_cam_turn 180
+wait 400
+guest hold w 1500
+guest hold w 1500
+guest hold w 1500
+guest release
+guest hold r 900
+guest release
+wait 4000
+guest run coop_carry_bodies
+waitlog guest 'world_lua=event=body_tx; ent=753908875; .*sent=1' 12
+waitlog host 'world_lua=event=place_body; .*ent=753908875; ' 8
+wait 1500
+placebehind host guest 6 2
+wait 1500
+host run aim_ent 753908875 0.2
+guest run aim_ent 753908875 0.2
+wait 800
+both capture d-b
+host run enemy info 753908875
+guest run enemy info 753908875
+host run teleport 421.16 269.2 2084.42 0
+wait 3000
+host run world_status
+guest run world_status
