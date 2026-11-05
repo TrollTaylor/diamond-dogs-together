@@ -350,7 +350,7 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   is 1.5 x the farthest first notice or engagement distance measured at the defaults (floors 80 m calm / caution, 120 m
   ALERT), capped at the realize radius minus 10 m. He is taken beyond R + 15 m and released within R, so nobody is made
   unseen who could be seen without the key. Any guest shot releases every puppet for 15 s.
-- **The path** (native/soldier_act.cpp, lua/coop/world_mirror.lua, SOLDIER_ACT 0x58 in protocol section 32):
+- **The path** (native/soldier_act.cpp, lua/coop/world_mirror.lua, SOLDIER_ACT 0x58 in protocol section 33):
   - the host registers its own NORMAL guards within 250 m of the guest and beyond R - 10 m (`ACT_V1 t`); its hook packs
     them with the engine's pack each frame, stages a changed record (a destination 5 cm or a facing 1 degree off is
     jitter) at most every 100 ms and every 1 s, and `ACT_V1 s` sends the staged parts (at most 24 per 100 ms);

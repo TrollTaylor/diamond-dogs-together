@@ -106,7 +106,7 @@ constexpr OpSpec kOps[] = {
      {U32(), U16(1, kSnapSlots), I32(-100000000, 100000000), I32(-100000000, 100000000), I32(-100000000, 100000000),
       I32(-8000, 8000), U8(0, 7), U16()}},
     {op::engage, "ENGAGE", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 2, 0, 0, 5, {U32(), U8(0, 7)}},
-    // Enemy sync M7 FM1 (protocol section 32): tick, slot, seq, part 0..3, ten u32 words; a datagram, both directions.
+    // Enemy sync M7 FM1 (protocol section 33): tick, slot, seq, part 0..3, ten u32 words; a datagram, both directions.
     {op::soldier_act, "SOLDIER_ACT", 1, Dir::both, Wire::datagram, 2, false, false, 14, 0, 0, 49,
      {U32(), U16(1, kSnapSlots), U16(), U8(0, 3), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32()}},
     // DOWNED_STATUS: seq, generation, down, cause, xyz mm, revive hold, target generation, ready.
@@ -152,6 +152,14 @@ constexpr OpSpec kOps[] = {
     // Lua validates current mission/epoch, fresh offer, role and proximity.
     {op::cargo, "CARGO", 0, Dir::both, Wire::reliable, 3, false, false, 6, 0, 0, 19,
      {U16(1), U8(0, 3), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-31416, 31416)}},
+    // HORSE_SEAT (horse plan M2, world-sync-protocol.md section 32; lab key world_horse_cargo): seq, seat (0..2: 2 the
+    // cargo on the shared D-Horse), the sender's role, action (1 claim, 2 grant, 3 deny, 4 loaded, 5 unloaded, 6 keep),
+    // cause, the victim's downed generation, xyz mm (the horse pose, or the lay-down point), yaw mrad. World queue,
+    // both directions, never a request (the host answers a claim with a grant or a deny). 26 bytes. A partner without
+    // 0x50 skips it by its length (unknown_op), and replaces the lab-only CARGO stream of the offset prototype.
+    {op::horse_seat, "HORSE_SEAT", 1, Dir::both, Wire::reliable, 3, false, false, 10, 0, 0, 26,
+     {U16(1), U8(0, 2), U8(1, 2), U8(1, 6), U8(0, 15), U32(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-31416, 31416)}},
     // VEHICLE_GONE (0.13.6, section 16): seq, TppVehicle2 id (class 50: 25600..26111), cause
     // (1 fulton, 2 destroyed, 3 lab), actor (0 host, 1 guest, 2 lab), the guest's rid (0 none),

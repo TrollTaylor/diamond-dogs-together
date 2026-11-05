@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_horse_source[] = R"MGS_HORSE(
+@MGS_DEBUG_HORSE_SOURCE@
+)MGS_HORSE";

@@ -136,7 +136,12 @@ inline constexpr std::uint8_t soldier_snap = 0x4B;
 // hash. The partner's copy applies it as its own damage (downed_player FriendlyControl) and lets its copy of that guard
 // engage it (world_snap.lua S.brain). Sent only with soldier_brain.
 inline constexpr std::uint8_t soldier_hit = 0x4C;
-// Enemy sync M7 FM1, the far mirror (docs/world-sync-design.md 7.15, protocol section 32): SOLDIER_ACT (88), both
+// Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 32): HORSE_SEAT (80), both
+// directions, world queue, reliable: seq, seat (2 cargo; 1 the M3 pillion), the sender's role, action (1 claim, 2 grant,
+// 3 deny, 4 loaded, 5 unloaded, 6 keep), cause, the victim's downed generation, xyz mm (the horse pose, or the lay-down
+// point), yaw mrad. 26 bytes. A partner without 0x50 skips it by its length (unknown_op): nothing is loaded.
+inline constexpr std::uint8_t horse_seat = 0x50;
+// Enemy sync M7 FM1, the far mirror (docs/world-sync-design.md 7.15, protocol section 33): SOLDIER_ACT (88), both
 // directions, a datagram: one guard's request as the engine's FOB pack writes it (0x13704a0, 0x70 bytes; parts 0..2, one
 // seq) or his order (0x1370900, 0x18 bytes; part 3, its own seq): sender tick, roster slot, seq, part, ten u32 words (the
 // record's bytes, little-endian). Native keeps the newest complete request and order per slot (Core::ActLatest); never in

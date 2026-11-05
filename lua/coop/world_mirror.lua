@@ -1,4 +1,4 @@
--- MGS co-op world sync, enemy sync M7 FM1, the far mirror (original; docs/world-sync-design.md 7.15, protocol section 32).
+-- MGS co-op world sync, enemy sync M7 FM1, the far mirror (original; docs/world-sync-design.md 7.15, protocol section 33).
 -- Lab key soldier_act (CFG r[19] bit 512, W.actOn), only with follow; 30010 / 30020 / 30050. Spliced after world_snap.lua.
 -- While the guest's player is beyond R of a host-owned guard, the guest's copy of him is a mirror puppet (SetPuppet and
 -- restrict notice: his own brain is off) that replays the host copy's own request and order (SOLDIER_ACT 0x58, native
