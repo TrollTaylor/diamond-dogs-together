@@ -23,16 +23,16 @@ local CAUSE = {[0] = "ok", "awake", "generation", "npc_cargo", "taken_down", "ho
  "victim_gone", "load_timeout", "busy", "call_away", "mid_revive"}
 local CODE = {}
 for k, v in pairs(CAUSE) do CODE[v] = k end
-local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 1000, 1500, 6000, 1000, 3500, 1500, 1000
-local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 800, 1100
--- Heights (runs 7359e4d2 / c667a209, step=pin and frames): an unridden census root stands 0.75-1.04 m over the
--- carrier's ground and the body lies on the back 0.8 m over it; a ridden census sits ~0.45 m lower (P1) and the rider
--- 0.39-0.46 m over it, so while this copy's player rides body 1 goes 0.54 m behind and 0.76 m over the rider's own
--- position (no census lag). On foot within 3 m a point outside 1.2-2.3 m over the carrier's ground is put 1.7 m over it.
+local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 500, 1500, 6000, 1000, 3500, 1500, 1000
+local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 550, 1100
+-- Heights (runs 7359e4d2 / c667a209 / 6fd054c4, step=pin and frames): an unridden census root stands 0.75-1.04 m over
+-- the carrier's ground; 0.8 m over it and 0.76 m over the rider still drew the body high at a stand, so the body goes
+-- 0.55 m over an unridden census and, while this copy's player rides, 0.54 m behind and 0.5 m over the rider's own
+-- position (no census lag). On foot within 3 m a point outside 1.0-2.0 m over the carrier's ground is put 1.45 m over it.
 -- The victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose
 -- right after each placement, else 0.9 m over the census, turned a quarter turn (body 0 lies along its yaw, body 1
 -- across: c667a209 frames).
-local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, CAP_MS, STATS_MS = 540, 760, 1200, 2300, 1700, 3000, 4000, 2000
+local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 500, 1000, 2000, 1450, 3000, 2000
 local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
 C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM,
@@ -64,7 +64,7 @@ function C.on()
  return W.active ~= false and W.paired == true and (W.eff or 0) >= 3 and (W.mission == 30010 or W.mission == 30020) and
   int(W.epoch, 1, 65535) and int(W.role, 1, 2) and type(W.downed) == "table" and C.keyOn()
 end
-function C.busy() return C.state == "loading" or C.state == "carrier" or C.state == "cargo" or C.state == "release" end
+function C.busy() return C.state == "loading" or C.state == "carrier" or C.state == "cargo" end
 local function mounted()
  if type(PlayerInfo) ~= "table" or type(PlayerInfo.OrCheckStatus) ~= "function" or type(PlayerStatus) ~= "table" then return false end
  local ok, yes = pcall(PlayerInfo.OrCheckStatus, {PlayerStatus.ON_HORSE})
@@ -133,13 +133,11 @@ local function held(key, now)
 end
 local function reset()
  C.state, C.heldSince, C.heldDone, C.claimAt, C.loadAt, C.gen, C.hgen, C.h, C.keepAt, C.keepPose = "off", nil, nil, nil, nil, nil, nil, nil, nil, nil
- C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.releaseP, C.releaseAt = nil, nil, nil, nil, nil, nil, nil
- C.takeKey, C.dyFix, C.statsAt, C.trackPinAt = nil, nil, nil, nil
+ C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.dyFix, C.statsAt, C.trackPinAt = nil, nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part. why: a CAUSE name (or a local refusal); place: lay the body down (at p, else beside the horse);
--- remote: the partner ended it (nothing is sent back). keep (a take-down on the carrier's copy): body 1 stays held at p
--- until the take-down key is up, so the same R hold never starts a stock pickup of the body just laid down.
-local function stop(now, why, place, remote, p, keep)
+-- remote: the partner ended it (nothing is sent back).
+local function stop(now, why, place, remote, p)
  local s = C.state
  if s == "carrier" or s == "cargo" then
   local h = C.h
@@ -151,27 +149,10 @@ local function stop(now, why, place, remote, p, keep)
   if not remote then send(UNLOADED, CODE[why] or 0, C.gen, p and p[1], p and p[2], p and p[3], p and p[4] * 1000) end
   log(fmt("step=unloaded;seat=2;why=%s;side=%s;placed=%d;x=%d;z=%d%s", why, s, (place and p) and 1 or 0, p and round(p[1] / 10) or 0,
    p and round(p[3] / 10) or 0, remote and ";from=partner" or ""))
- elseif s ~= "off" and s ~= "release" then
+ elseif s ~= "off" then
   log(fmt("step=refuse;why=%s;state=%s", why, s))
  end
- if keep and s == "carrier" then
-  reset()
-  C.state, C.releaseP, C.releaseAt = "release", p, now
-  return
- end
  if s ~= "off" then cargo(false, false, false) end
- reset()
-end
--- After a take-down: hold body 1 on the lay-down point while R or E stays down (at most 3 s), then hand it back.
-local function releaseTick(now)
- local p = C.releaseP
- if (held("R", now) or held("E", now)) and now - C.releaseAt < 3000 then
-  cargo(true, false, false)
-  if p then warp(1, p[1], p[2], p[3], p[4]) end
-  return
- end
- cargo(false, false, false)
- log("step=released;seat=2")
  reset()
 end
 C.stop = stop
@@ -247,18 +228,19 @@ local function bodyPoint(h, rides)
  end
  return x, y, z, a, "census"
 end
-local function finishTake(now, h, x, y, z, keep)
+-- The lay-down point beside the body on the carrier's side, at the carrier's ground height.
+local function takePoint(h, x, y, z)
  local cx, _, cz, a = cargoPoint(h)
- local side = (cos(a) * (x - cx) - sin(a) * (z - cz)) >= 0 and 1 or -1
- log(fmt("step=take_down;key=%s;side=%d", C.takeKey or "?", side))
- return stop(now, "taken_down", true, false, beside(h, side, y), keep)
+ return beside(h, (cos(a) * (x - cx) - sin(a) * (z - cz)) >= 0 and 1 or -1, y)
 end
 local function carrierTick(now)
  if cargo(true, false, false) == 1 then
-  -- The carry key held beside the horse picked them up off it (the coop pickup, as the stock unload of a guard, P2;
-  -- runs 7359e4d2 / c667a209): end here, nothing placed on either copy, the carry takes over.
+  -- The coop pickup took them off the horse before the lay-down: body 1 is left to the carry here, and the victim's
+  -- copy still lays body 0 on the ground point first (run 6fd054c4: a pickup straight off the horse timed out the
+  -- victim's downed controls, controls_timeout_prone; c667a209 with that ground warp kept them down).
+  local x, y, z = mine()
   log("step=take_down;key=r;how=pickup")
-  return stop(now, "taken_down", false)
+  return stop(now, "taken_down", false, false, (x and C.h) and takePoint(C.h, x, y, z) or nil)
  end
  local other = rec(3 - W.role)
  if not fresh(other, now, LOST_MS) then return stop(now, "stream_lost", true) end
@@ -286,21 +268,18 @@ local function carrierTick(now)
    py and round(py / 10) or -1, round(by / 10)))
  end
  if now >= C.keepAt then C.keepAt = now + KEEP_MS; send(KEEP, 0, C.gen, h.x, h.y, h.z, h.yaw) end
- if rides then C.takeSince, C.takeKey = nil, nil; return end
- -- Take-down: R or E held 1 s on foot within reach arms it; the body comes off when the key is up (an R still down
- -- over a body on the ground would start a stock pickup: run 7359e4d2), or after 4 s (then held until the key is up).
+ if rides then C.takeSince = nil; return end
+ -- Take-down: R (the carry key) or E held 0.5 s on foot within reach lays the body on the ground beside the horse at
+ -- the carrier's side on both copies; an R held on then picks them up from the ground as usual (the coop pickup).
  local x, y, z = mine()
  local cx, _, cz = cargoPoint(h)
  local near = x and sqrt((cx - x) ^ 2 + (cz - z) ^ 2) <= TAKE_MM
- local key = x and (held("R", now) and "r" or held("E", now) and "e") or nil
- if key and (near or C.takeKey) then
-  C.takeSince = C.takeSince or now
-  if not C.takeKey and now - C.takeSince >= TAKE_MS then C.takeKey = key; log(fmt("step=take_armed;key=%s", key)) end
-  if C.takeKey and now - C.takeSince >= CAP_MS then return finishTake(now, h, x, y, z, true) end
-  return
+ local key = near and (held("R", now) and "r" or held("E", now) and "e") or nil
+ C.takeSince = key and (C.takeSince or now) or nil
+ if C.takeSince and now - C.takeSince >= TAKE_MS then
+  log(fmt("step=take_down;key=%s", key))
+  return stop(now, "taken_down", true, false, takePoint(h, x, y, z))
  end
- C.takeSince = nil
- if C.takeKey then return finishTake(now, h, x, y, z, false) end
 end
 local function cargoTick(now)
  cargo(false, false, true)
@@ -414,7 +393,6 @@ function C.tick(now)
  if s == "loading" then return loadTick(now) end
  if s == "carrier" then return carrierTick(now) end
  if s == "cargo" then return cargoTick(now) end
- if s == "release" then return releaseTick(now) end
 end
 function C.setTesting(on)
  if type(on) ~= "boolean" then return false end
