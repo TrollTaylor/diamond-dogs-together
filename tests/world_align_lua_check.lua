@@ -1552,6 +1552,13 @@ if arg[7] and arg[8] then
         'M7 told sight: a guard 5 m from the guest is told once, the offense player becomes body 1')
     ticks(pt, 300)
     check(cmdCount(pt, 'SetDiscoveryPlayer') == 1, 'M7 told sight: at most once per 30 s per guard')
+    -- Run d7cb1b1d: the offense player flapped every 4.2-8.6 s with the guest 6-7 m from the guards and the host 15-20 m
+    -- away, because the nearest guard was a 1 s rolling minimum that a host-side sample reset. Each guard keeps its own
+    -- last sample; the nearest of the samples of the last 2 s decides.
+    local nearest = sh.W.snap.nearest
+    local nr = {[1] = {144e6, 0, 1000}, [3] = {25e6, 1, 0}}
+    check(nearest(nr, 1500) == 1 and nearest(nr, 2001) == 0 and nearest(nr, 3001) == nil and nearest({}, 0) == nil,
+        'M7 told sight: the nearest of every guard sampled in the last 2 s')
     local pa = perceiveFix(true, true)
     pa.positions[3] = {95.0, 1.8, 0}
     pa.W.cp[100].localPhase, pa.phase.cp_a = 3, 13  -- the guard's CP in ALERT

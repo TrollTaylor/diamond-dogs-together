@@ -414,7 +414,7 @@ do
             end
         end
         -- M7 step 1: per-soldier perception targets (host) ---------------------------------------------------------
-        local function fresh() return {t = {}, at = {}, sent = 0, dw = {}, told = {}, offAt = -1e9} end
+        local function fresh() return {t = {}, at = {}, sent = 0, dw = {}, told = {}, nr = {}, offAt = -1e9} end
         S.pc = fresh()
         W.startHooks[#W.startHooks + 1] = function() S.pc = fresh() end
         local function perceive(text)
@@ -435,6 +435,15 @@ do
         -- P13c told sight (run dbba96de: the guards' own senses never pick up body 1, a told discovery finds the
         -- offense player): one offense player for every guard, the player nearest to a sampled guard held 4 s; a tell
         -- switches at once.
+        -- Each sampled guard's last {squared mm to its nearer player, that player, time}: the nearest of the last 2 s
+        -- (run d7cb1b1d: a 1 s rolling minimum flapped the offense player every 4.2-8.6 s).
+        function S.nearest(nr, now)
+            local bd, bp
+            for _, r in pairs(nr) do
+                if now - r[3] <= 2000 and (not bd or r[1] < bd) then bd, bp = r[1], r[2] end
+            end
+            return bp
+        end
         function S.offense(cur, want, heldMs, tell)
             if want == cur or (cur ~= nil and heldMs < 4000 and not tell) then return cur end
             return want
@@ -456,12 +465,12 @@ do
             -- A calm guard within 10 m of the guest for 0.8 s is told it found the player (offense 1 first; once per 30 s).
             local d, p = dh, 0
             if dq and dq < dh then d, p = dq, 1 end
-            if not c.nd or d < c.nd or now - c.ndAt > 1000 then c.nd, c.np, c.ndAt = d, p, now end
+            c.nr[h] = {d, p, now}
             local cp = W.cp and W.cp[en.cp]
             local close = dq and dq <= 1e8 and c.t[h] == 1 and not (cp and cp.localPhase == 3)
             c.dw[h] = close and (c.dw[h] or now) or nil
             local tell = close and now - c.dw[h] >= 800 and now - (c.told[h] or -1e9) >= 30000
-            local o = S.offense(c.off, tell and 1 or c.np, now - c.offAt, tell)
+            local o = S.offense(c.off, tell and 1 or S.nearest(c.nr, now), now - c.offAt, tell)
             if o ~= c.off and perceive("offense " .. o) == 1 then
                 c.off, c.offAt = o, now
                 L("event=perceive_offense;offense=%d;why=%s", o, tell and "tell" or "nearest")

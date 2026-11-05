@@ -1,3 +1,40 @@
+## November 4, 2026: M7 step 1 - guards can be made to fight the partner's body (told sight, `soldier_perceive`, off unless named); the gate is not reached (`wp/enemy-m7`, local only; not merged)
+
+Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Four hidden sessions (the step's limit): play, `-WanSim bad`, the native gun profile, research build, afgh-ledge, `soldier_perceive=1 soldier_owner=0 soldier_puppet=1`, godmode on both. Slim archives with JPEG frames are in `enemy-follow/<run>/`.
+
+- **What players get**: nothing at the defaults. `soldier_perceive` stays off unless named.
+  - With it named, the host's guards now fight the guest's body. A calm guard that stays within 10 m of the guest is told it found "the player" (`SetDiscoveryPlayer`), with the host's single offense player switched to the guest first. That guard, then its outpost, turns on the guest's body, and the host's screen shows the outpost going to ALERT.
+  - The host is invisible to every guard while the guest is the offense player. Hits on the guest's body stay on the host's copy (`soldier_brain` is off), so the guest feels nothing from them.
+  - What the guest's own player sees: the outpost goes to ALERT on the guest's screen about 0.1 s after the host's. The guest's own copies of the guards (released from the puppet bubble) then shoot the guest locally, as in 0.15.0.
+- **What the guards' own senses never take** [O] (runs `29e389d7`, `0608ad9f`): none of these let a guard notice body 1, and in each the host stood ignored 11-29 m away in the open:
+  - the offense index forced to 1;
+  - the soldier and notice code reading body 1 through the player-info service's LOCAL accessors (`perceive_local 1`; 0x14053C9D0 record, 0x14053C990 index; 99 % of the scoped calls redirected);
+  - every caller of those two reading body 1 (`perceive_local all`, about 680k calls);
+  - body 1's only extra status bit, 138 (+0xD1 bit 2), cleared before each leaf snapshot. The game sets it again every frame, so 138 is not really tested [U].
+
+  The CP notice masks stayed 0 throughout, and the frames show calm guards next to body 1. `perceive_online 1` (the soldier manager's online bit, L4) stalled the host: no result and no frame after it. [I] Body 1 is never a candidate for the soldiers' own sight, and the sight check is still not located.
+- **What works** [O] (run `dbba96de`): with the index forced to 1, `enemy come 1740692850` (the told guard, index 15) put the CP in ALERT (`src=host`). Guards 15 and 246 then fired 45 times at body 1 while the host stood 15 m away untouched (frames host d1-come-02/04: reflex "!", red alert markers, "I got you now!"). With the index stock, the told guard 2929558510 went for the host instead (hits by 13 and 219).
+- **The told sight** (`c58cc3f4`, plus the window fix at this entry's commit):
+  - Host Lua (`world_snap.lua`) keeps one offense player for every guard: the nearer player of the nearest guard sampled in the last 2 s, held at least 4 s.
+  - Native answers it as the getter's forced index (`MGS_COOP_SOLDIER_PERCEIVE_V1 -- offense <0|1|off>`, `OffenseCommand`). Clear and mission end drop it, so a Lua-owned or debug `perceive_force` index no longer survives the mission.
+  - The tell is described above. It never goes to a guard whose CP is in ALERT.
+- **Proof run `d7cb1b1d`** (`enemy-sight-1..3`, all parts passed) [O]:
+  - About 2 s after the guest's warp put it 7.5 m from guard 1740692850, that guard was told. The CP went to ALERT 3.8 s later. Then 124 hits on body 1 by seven guards (13, 14, 15, 18, 219, 231, 246).
+  - **Defect**: in the same 25 s the host was hit 40 times. The offense player flapped every 4.2-8.6 s (17 switches in the 76 s after the tell): the first version's 1 s rolling minimum was reset by host-side samples. The 2 s per-guard window (`S.nearest`) replaces it. Its Lua test is red then green, but there was no attempt left to run it [U].
+  - With the guest 55 m away, only the host was hit (37, then 91). After the guest came back, the guards kept hitting the host (23, then 68) and never body 1 again. In ALERT nobody is told again, and an offense switch alone does not bring body 1 back [I].
+  - Frames: host t1-watch-01 ("All units to combat positions!", a tracer between body 1 and the guard 22 m away), t1-20 (blood at the host's feet). Guest t1-20 shows the guest facing one of its own guards. No frame shows clearly which body a given guard aims at.
+- **The gate is not reached**:
+  - (1) [O] A guard that only body 1 is near is told, turns on body 1 and fires (attackers 15 and 246 in `dbba96de`, seven guards in `d7cb1b1d`). But it is told, not seen: the sight is distance only, with no view cone or line of sight.
+  - (2) Different guards cannot pick different players: every guard follows the one offense player. In combat the getter's callers are frame-level (0xD5AF51, 0xD65320, 0xD7BECC, the leaf snapshot 0x1350035) or carry the CP slot. Only 0xD59430 carries a guard, and rarely. The next step is to swap the leaf snapshot per guard inside the 20-odd soldier subsystems the leaf calls in turn.
+  - (3) The flapping, above.
+- **Verified on the way** [O]: the post-merge CFG bit 256 reaches Lua (290 `event=perceive` lines on the host in `0608ad9f`). Hash to index: 1740692850=15, 2929558510=17, 2961503=13, 667680985=18, 1904171355=231, 1926520947=246, 753908875=219.
+- **Code** (all behind `soldier_perceive`, research commands for probes):
+  - `InstallLocal`: LOCAL accessor hooks through the register-saving stub, with a census per caller and redirect modes 0/1/pick/all.
+  - `perceive_local`, `perceive_online`, and `perceive_mask` over +0xC0..+0xDF.
+  - The bodies line now shows the whole status bitset, and `LogMasks` logs the notice masks.
+  - New generator `tools/generate_soldier_sense_contract.py`: 13 windows, the 28 callers' frames and vtable slots.
+- **Checks**: tests red then green: `soldier_m7_tests` 131, 136, then 138; `world_align_lua_check` (told sight, the 2 s window). Full `tools/build.ps1 -Jobs 4` passed 350/350 at `f81b9fd8` and again on this entry's tree with the window fix; `-Fast -Jobs 4` passed 316/316 after the last edit (a header comment). Every `--check` passes except the same four (`carry_info`, `sleep_plugin`, `native_ui`, `teammate_targeting`); `vehicle_controller` passes with `--executable`.
+
 ## November 4, 2026: wp/enemy-m7 lands on dev/oct7-continue after review - `place_lift` back to off unless named (`dev/oct7-continue`, local only; not pushed)
 
 The integration step below was reviewed claim by claim against the e583ee62 and gaps archives before landing. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
