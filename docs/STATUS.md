@@ -1,3 +1,21 @@
+## November 5, 2026: 0.15.1 package (0.15.1: guards stay in sync through long firefights; riding D-Horse together)
+
+**Package (2026-11-05):** `dist/DiamondDogsTogether-0.15.1-20261105T110337Z-01f35bc2/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `5a55e36` with Release receipt `20261105-110107-e9e199f1426d4b80b1bd8f11b6d493fd` (passed, 342 audited tests, 0 failures; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.1+5a55e36` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.15.1.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,324,111 | `4657739D0E2D37D2BE6025B908A712CBAEEA046C3D40565B1AC331874B359CAC` |
+| `DDT-source-0.15.1.zip` (1,670 source files plus `source-files.json`) | 9,821,431 | `C38DF35A03F93C166329D81225C2C73BC1B28562DB7C4E8DB410FC91F993AA06` |
+| `DiamondDogsTogether.exe` | 2,387,456 | `D8E2316ADD956D83A36822CCDEF40EA0DECE5746FAB1813075B863EEAAE732A9` |
+| `dinput8.dll` | 7,756,800 | `F1557AA5ABBE74FFD3C371EA01E3B6F6E5A5D0D50962621CFF8484E5867978DA` |
+
+- **Package checks:** the checks of `tools/package.ps1 -Friend` itself (a passing Release receipt with the Release flags; the staged exe and dll are the receipt's; each zip holds exactly its staged files with their hashes; only tracked source files). `package.json`: version 0.15.1, `source_commit` `5a55e36`, `source_dirty` false. No separate zip audit.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.129.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** the tracked files at `cd2ee39` and every file in both zips: no Windows profile path (both slash styles), persona name or the user's e-mail. History was not rewritten.
+- **Version.** 0.15.1 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.15.1 and still 0.15.0; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.15.2", "0.15.1")`.
+- **Checks at the bump commit `5a55e36`:** the Release receipt above is the only test run (342 audited tests); no other CTest run, hidden-game run, smoke run or review panel.
+- **To release:** upload **both** zips to the GitHub release `v0.15.1`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.15.1 -PackageDir dist/DiamondDogsTogether-0.15.1-20261105T110337Z-01f35bc2` before publishing. Nothing was pushed, tagged or released by the packaging.
+
 ## November 5, 2026: enemy gaps 2 - the stream's reach and the realize hold (`place_reach`) and dead body placements (`body_dead`): built, both off unless named (`wp/enemy-m7`, not merged, not pushed)
 
 The enemy5 gaps step: the M1-M6 gaps players still see (reinforcements far off, dead bodies apart, the M3 host gates,
