@@ -228,6 +228,17 @@ bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::ui
     return true;
 }
 
+bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id, bool& quiet) noexcept {
+    if (!source || size < 2 || size > max_receipt) return false;
+    const bool flag = source[size - 2] == ' ' && source[size - 1] == '1';
+    std::uint16_t s = 0;
+    std::uint32_t g = 0;
+    if (flag && ParseWarp(source, size - 2, s, g)) { seq = s; go_id = g; quiet = true; return true; }
+    if (!ParseWarp(source, size, s, g)) return false;
+    seq = s; go_id = g; quiet = false;
+    return true;
+}
+
 bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::uint32_t& a, std::uint32_t& b) noexcept {
     if (!source || !Prefixed(source, size, note_prefix) || size > max_receipt) return false;
     const char* p = source + sizeof(note_prefix) - 1;

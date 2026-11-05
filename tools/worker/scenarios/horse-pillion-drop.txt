@@ -1,0 +1,31 @@
+# Horse plan M3c, the link drop (lab, the last part of the session: the guest's world link goes off). The host rides, the
+# guest sits behind, then the guest's world link goes off: the guest's copy lays the passenger beside the horse
+# (why=stream_lost, or context when its world stops; placed=1) and the host's copy ends the seat (no KEEP 3.5 s:
+# why=stream_lost; side=driver).
+logmark both
+host run goto_horse
+wait 1500
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+guest run goto_horse
+wait 1500
+logmark both
+guest press e 150
+waitlog guest 'world_lua=event=horse_pillion; step=seated; seat=1; how=grant;' 5
+wait 1500
+host hold w 1500 nowait
+guest burst h3d-seated-guest 2 300
+host release
+wait 1000
+both capture h3d-seated
+logmark both
+guest worldtrigger world=0
+wait 6000
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=(stream_lost|context); side=passenger; placed=1;' 10
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=(stream_lost|context|remote_end); side=driver;' 10
+guest run horse_status
+guest expect localMounted=0
+both capture h3d-dropped

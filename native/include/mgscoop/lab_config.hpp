@@ -789,6 +789,24 @@ struct LabConfig {
     // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
     bool drive_vert = false;
     bool drive_vert_given = false;
+    // Enemy round 8 track B (docs/world-sync-design.md 7.21, no CFG bit; Lua asks the receipt MGS_COOP_LRRP_CFG_V1): the host
+    // streams its LRRP trucks (LRRP_FAST 0x5D) and the guest's copy follows them, its own AI stopped (ForceStop) while the
+    // host's truck moves or carries riders. Lab and play; off unless named (lab_config.cpp).
+    bool lrrp_follow = false;
+    bool lrrp_follow_given = false;
+    // Enemy round 8 track A (docs/world-sync-design.md 7.22, native only, no CFG bit). quiet_place: a correction the guest's
+    // Lua makes of a guard off its player's screen moves him with the engine's quiet network-position warp 0x136ece0 in the
+    // request manager update (no set-transform message: after 499 of 539 applied place warps of the census runs the guard
+    // was in action kind 3 within 0.5 s, 260 of them already before the warp, and run 0d801772's guard 246 then radioed a
+    // possible intruder and the outpost went to caution on the guest). range_flat: the host's M3 placement and drive range
+    // from the nearer player is measured on the ground plane (x/z), as the owner rule (a code fact, never seen refusing a
+    // placement: the ddcdec94 / 8b581a26 near=host refusals all came while the host hid the fallen guest's body beyond
+    // 200 m, which leaves the guest's pose unknown). Lab and play; both off unless named (lab_config.cpp: quiet_place's
+    // no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26).
+    bool quiet_place = false;
+    bool quiet_place_given = false;
+    bool range_flat = false;
+    bool range_flat_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
@@ -1012,8 +1030,8 @@ struct LabConfig {
     bool world_horse_cargo_given = false;
     // world_horse_pillion=0|1 (horse plan M3, docs/mounts.md "Ride behind your partner"; with world_horse_share): E beside
     // the shared D-Horse the partner rides sits you behind them on both screens (HORSE_SEAT seat 1,
-    // lua/coop/world_horse_pillion.lua; MGS_COOP_HORSE_DRIVE_V1 pad / seat1 / hold0). Both PCs must run it. Off unless
-    // named in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
+    // lua/coop/world_horse_pillion.lua; MGS_COOP_HORSE_DRIVE_V1 pad / seat1 / hold0). Both PCs must run it. Follows the
+    // gun profile in lab and play since the M3c round (runs 51f6a2cc lab / 4f52fa2a play); a named 0 is the off switch.
     bool world_horse_pillion = false;
     bool world_horse_pillion_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie

@@ -2346,6 +2346,32 @@ int main() {
                   Lab("enabled=1\nrole=guest\nact_plan=0\n").act_plan_given &&
                   Lab("enabled=1\nrole=host\nact_plan=2\n").invalid_values == 1,
                   "round 8 C: act_plan parses, off unless named");
+            // Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow (native only, no CFG bit; Lua asks the receipt
+            // MGS_COOP_LRRP_CFG_V1) parses in lab and play and is off unless named, the gun profile too: back off after the
+            // review of runs c784a5a7 / 0da27fc6 (the unseated near crew 26-71 m off for 80-100 s; the unseat ends the guest's
+            // crew's LRRP plan, so a re-boarding crew's truck drives empty on the guest's screen; Africa not run).
+            Check(!def.lrrp_follow && !gunDefault.lrrp_follow && !gunDefault.lrrp_follow_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nlrrp_follow=0\n").lrrp_follow &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\nlrrp_follow=1\n").lrrp_follow &&
+                  Lab("enabled=1\nrole=guest\nmode=play\nlrrp_follow=1\n").lrrp_follow &&
+                  Lab("enabled=1\nrole=guest\nlrrp_follow=0\n").lrrp_follow_given &&
+                  Lab("enabled=1\nrole=host\nlrrp_follow=2\n").invalid_values == 1 &&
+                  !Lab("enabled=1\nrole=host\nlrrp_follow=2\n").lrrp_follow,
+                  "enemy round 8 B: lrrp_follow parses, off unless named");
+            // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place and range_flat (native only, no CFG bit)
+            // parse in lab and play; off unless named until their runs (a named 0 records _given).
+            // Both off unless named: quiet_place's no-key run 1befcef4 failed the place_sink row (design 7.22).
+            Check(!def.quiet_place && !gunDefault.quiet_place_given && !def.range_flat && !gunDefault.range_flat_given &&
+                  !gunDefault.quiet_place &&
+                  !gunDefault.range_flat &&
+                  Lab("enabled=1\nrole=guest\nquiet_place=1\n").quiet_place &&
+                  !Lab("enabled=1\nrole=guest\npartner_native_profile=gun\nquiet_place=0\n").quiet_place &&
+                  Lab("enabled=1\nrole=guest\nquiet_place=0\n").quiet_place_given &&
+                  Lab("enabled=1\nrole=host\nrange_flat=1\n").range_flat &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nrange_flat=0\n").range_flat &&
+                  Lab("enabled=1\nrole=host\nrange_flat=0\n").range_flat_given &&
+                  Lab("enabled=1\nrole=host\nquiet_place=2\nrange_flat=x\n").invalid_values == 2,
+                  "enemy round 8: quiet_place and range_flat parse");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a

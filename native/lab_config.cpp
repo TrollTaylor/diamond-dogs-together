@@ -536,6 +536,25 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.drive_vert_given = true;
         if (!ok) result.drive_vert = false;
     }
+    else if (Equals(key, "lrrp_follow")) {
+        // Enemy round 8 track B (lab and play; docs/world-sync-design.md 7.21); a named value records _given, an invalid one
+        // is named and off. Off unless named (the defaults below say why).
+        ok = ParseBool(value, result.lrrp_follow);
+        result.lrrp_follow_given = true;
+        if (!ok) result.lrrp_follow = false;
+    }
+    else if (Equals(key, "quiet_place")) {
+        // Enemy round 8 track A (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.quiet_place);
+        result.quiet_place_given = true;
+        if (!ok) result.quiet_place = false;
+    }
+    else if (Equals(key, "range_flat")) {
+        // Enemy round 8 track A (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.range_flat);
+        result.range_flat_given = true;
+        if (!ok) result.range_flat = false;
+    }
     else if (Equals(key, "act_census")) {
         // Enemy sync M7 FM1 probe (lab and play, research); an invalid value is named and off.
         ok = ParseBool(value, result.act_census);
@@ -1975,12 +1994,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // rehearsal -WanSim bad); a named 0 is the off switch.
     if (!c.world_horse_share_given) c.world_horse_share = gun;
     // Horse plan M2, a downed partner on the shared D-Horse (docs/mounts.md "Downed partner on the horse"): off unless
-    // named in lab and play (round 2's gate did not pass: 8cfe8e97 / 7f3155c8, the downed player's own view of their body
-    // on the horse); a named 1 runs in play too.
+    // named in lab and play (BODY0 round: the downed player lies on the horse on both screens through the ride, but on
+    // their own screen crouches on it after the dismount; the gate did not pass); a named 1 runs in play too.
     if (!c.world_horse_cargo_given) c.world_horse_cargo = false;
-    // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): off unless named in lab and play
-    // until a hidden-run FRAME on both copies and a play rehearsal pass; a named 1 runs in play too.
-    if (!c.world_horse_pillion_given) c.world_horse_pillion = false;
+    // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): follows the gun profile in lab and
+    // play since the M3c round (with its 2.5 / 2.8 m ride hold, lua/coop/world_horse_share.lua); a named 0 is the off switch.
+    if (!c.world_horse_pillion_given) c.world_horse_pillion = gun;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
@@ -2064,6 +2083,14 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
+    // Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow stays off unless named, the gun profile too. Its
+    // truck rows passed (c784a5a7 / 0da27fc6), but the unseated near crew stayed 26-71 m off the host's copies for 80-100 s,
+    // the unseat ends the guest's crew's LRRP plan (a re-boarding crew's truck drives empty on the guest's screen) and
+    // Africa was not run.
+    // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place stays off unless named. Its named run bcd95b14
+    // passed (guard 246 moved quietly, read back within 0.2 m, no kind 3 / 13, no guest-only phase change in calm), but
+    // its no-key run 1befcef4 failed the place_sink row: guard 1904171355 walked 13-14 m back off each quiet move (22
+    // place_sink lines), and 8 of 115 quiet moves (4 guards) left the body 2-92 m off while the slot read the target.
     // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
     // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
     // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.

@@ -278,6 +278,23 @@ bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
     return dx * dx + dy * dy + dz * dz <= kPlanEndM * kPlanEndM;
 }
 
+bool QuietBias(const float (&slot)[3], const float (&target)[3], float (&biased)[3]) noexcept {
+    const float dx = target[0] - slot[0], dy = target[1] - slot[1], dz = target[2] - slot[2];
+    if (dx * dx + dy * dy + dz * dz > kQuietWarpSq) return false;
+    biased[0] = target[0] + kQuietBiasM;
+    biased[1] = target[1];
+    biased[2] = target[2];
+    return true;
+}
+
+bool FormatQuietLine(std::uint32_t go, std::uint16_t seq, unsigned moved, unsigned bias, float err_m, float dy_m, char* out,
+                     std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const int n = std::snprintf(out, capacity, "world_place=quiet; go=%u; seq=%u; moved=%u; bias=%u; err_m=%.2f; dy_m=%.2f\r\n",
+                                unsigned(go), unsigned(seq), moved, bias, err_m, dy_m);
+    return n > 0 && static_cast<std::size_t>(n) < capacity;
+}
+
 #ifdef _WIN32
 namespace {
 namespace c = mgscoop::soldier_act_contract;
@@ -294,6 +311,7 @@ using FollowerOf = void*(__fastcall*)(void* planner, unsigned idx);
 using FollowerHas = char(__fastcall*)(void* obj, std::uint32_t key);
 using FollowerPathOf = void*(__fastcall*)(void* obj, std::uint32_t key);
 using PlannerCancel = void(__fastcall*)(void* planner, unsigned idx, std::uint16_t handle);
+using NetWarp = std::uint8_t(__fastcall*)(void* fob, unsigned idx, const float* entry);  // 0x136ece0 (AL: 1 beyond 15 m)
 
 std::uintptr_t g_base = 0;
 std::size_t g_span = 0;
@@ -401,6 +419,12 @@ struct Probe {
 };
 Probe g_probe{};
 std::atomic<std::uint32_t> g_probeRuns{0};
+
+// Enemy round 8 (quiet_place): staged quiet moves (the runtime thread writes under g_quietLock, the hook runs them).
+struct QuietMove { bool due; std::uint32_t go; std::uint16_t seq; float pos[3]; float yaw; };
+QuietMove g_quiet[kMaxSoldiers]{};
+SRWLOCK g_quietLock = SRWLOCK_INIT;
+std::atomic<bool> g_quietPending{false};
 
 // The runtime thread stamps every registration and mailbox with partner_net::NowMs (ACT_V1, world_link::ActLatest); the
 // hook compares with the same clock (run 0a271c10: GetTickCount64 here left every registration stale: 25 requests staged
@@ -1213,6 +1237,57 @@ void PlanStep(std::uintptr_t m) noexcept {
     }
 }
 
+// Enemy round 8 (quiet_place, docs/world-sync-design.md 7.22): the staged quiet moves, each through the engine's own
+// network-position warp 0x136ece0(M-0x20, idx, entry) (Ghidra, read only: it reads S = (M-0x20)+0x70's slot table only,
+// writes the slot position and yaw, and for a guard in the realized list *(S+0x18)+0x28 moves his body through the
+// character controller (S vt[0x100] -> vt[0x388]; rotation vt+0x70, position vt+0x68 with y + controller +0x160); it
+// tests no puppet bit, no S+0x2a4 mode and sends no message). A slot within 15 m of the target is biased first (QuietBias).
+void QuietOne(const View& v, unsigned i, const QuietMove& q) noexcept {
+    float slot[3]{}, biased[3]{}, after[3]{};
+    unsigned moved = 0, bias = 0;
+    float err = -1.0f, dy = 0.0f;
+    float* p = nullptr;
+    if (i < v.count && Bit(v.realized, i) && Pos(v, i, slot)) {
+        p = reinterpret_cast<float*>(v.pos + static_cast<std::uintptr_t>(i) * c::slots_pos_stride);
+        alignas(16) unsigned char entry[0x18]{};
+        PrefillEntry(entry, q.pos, q.yaw);
+        __try {
+            if (QuietBias(slot, q.pos, biased)) {
+                bias = 1;
+                p[0] = biased[0]; p[1] = biased[1]; p[2] = biased[2];
+            }
+            moved = reinterpret_cast<NetWarp>(g_base + c::quiet_warp_rva)(reinterpret_cast<void*>(v.fob), i,
+                                                                          reinterpret_cast<const float*>(entry)) ? 1u : 0u;
+            if (bias && !moved) { p[0] = slot[0]; p[1] = slot[1]; p[2] = slot[2]; }
+            if (Pos(v, i, after)) {
+                const float dx = after[0] - q.pos[0], dz = after[2] - q.pos[2];
+                err = std::sqrt(dx * dx + dz * dz);
+                dy = after[1] - q.pos[1];
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (bias) { p[0] = slot[0]; p[1] = slot[1]; p[2] = slot[2]; }
+            g_faults.fetch_add(1, std::memory_order_relaxed);
+            moved = 0;
+        }
+    }
+    char line[160]{};
+    if (FormatQuietLine(q.go, q.seq, moved, bias, err, dy, line, sizeof(line))) Emit(line);
+}
+void QuietStep(std::uintptr_t m) noexcept {
+    g_quietPending.store(false, std::memory_order_relaxed);
+    View v{};
+    __try {
+        if (!Resolve(m, v)) return;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { g_faults.fetch_add(1, std::memory_order_relaxed); return; }
+    for (unsigned i = 0; i < kMaxSoldiers; ++i) {
+        QuietMove q{};
+        AcquireSRWLockExclusive(&g_quietLock);
+        if (g_quiet[i].due) { q = g_quiet[i]; g_quiet[i].due = false; }
+        ReleaseSRWLockExclusive(&g_quietLock);
+        if (q.due) QuietOne(v, i, q);
+    }
+}
+
 void StepSafe(std::uintptr_t m) noexcept {
     __try {
         View v{};
@@ -1236,6 +1311,7 @@ void __fastcall UpdateDetour(void* m) {
         g_threads.store(2, std::memory_order_relaxed);
     else if (!g_threads.load(std::memory_order_relaxed)) g_threads.store(1, std::memory_order_relaxed);
     g_m.store(reinterpret_cast<std::uintptr_t>(m), std::memory_order_relaxed);
+    if (g_quietPending.load(std::memory_order_relaxed)) QuietStep(reinterpret_cast<std::uintptr_t>(m));
     if (g_census.load(std::memory_order_relaxed) || g_actOn.load(std::memory_order_relaxed) || g_probe.active ||
         g_probe.pending.load(std::memory_order_relaxed))
         StepSafe(reinterpret_cast<std::uintptr_t>(m));
@@ -1294,18 +1370,35 @@ bool Install(const void* base, std::size_t span, LogFn log) noexcept {
     }
     if (MH_EnableHook(target) != MH_OK) { if (log) log("soldier_act=refused; reason=hook_enable\r\n"); return false; }
     g_installed.store(true);
-    if (log) {
-        char line[96]{};
-        std::snprintf(line, sizeof(line), "soldier_act=installed; rva=0x13735c0; sites=%u; slots=%u\r\n",
-                      static_cast<unsigned>(sizeof(c::sites) / sizeof(c::sites[0])), static_cast<unsigned>(sizeof(c::slots) / sizeof(c::slots[0])));
-        log(line);
-    }
+    char line[96]{};
+    std::snprintf(line, sizeof(line), "soldier_act=installed; rva=0x13735c0; sites=%u; slots=%u\r\n",
+                  unsigned(sizeof(c::sites) / sizeof(c::sites[0])), unsigned(sizeof(c::slots) / sizeof(c::slots[0])));
+    if (log) log(line);
     return true;
 }
 
 bool Installed() noexcept { return g_installed.load(); }
 void SetPlan(bool on) noexcept { g_planOn.store(on); }
 bool PlanOn() noexcept { return g_planOn.load(); }
+
+int QuietRealized(unsigned idx) noexcept {
+    const std::uintptr_t m = g_m.load(std::memory_order_relaxed);
+    if (!g_installed.load() || !m || idx >= kMaxSoldiers) return -1;
+    __try {
+        View v{};
+        if (!Resolve(m, v) || idx >= v.count) return -1;
+        return Bit(v.realized, idx) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+}
+
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept {
+    if (!g_installed.load() || idx >= kMaxSoldiers) return false;
+    AcquireSRWLockExclusive(&g_quietLock);
+    g_quiet[idx] = QuietMove{true, go, seq, {pos[0], pos[1], pos[2]}, yaw};
+    ReleaseSRWLockExclusive(&g_quietLock);
+    g_quietPending.store(true, std::memory_order_release);
+    return true;
+}
 void SetCensus(bool on) noexcept { g_census.store(on); }
 bool CensusOn() noexcept { return g_census.load(); }
 

@@ -400,6 +400,24 @@ int main() {
                   c::planner_valid == 0x18,
               "the planner layout");
     }
+    // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the quiet warp 0x136ece0 moves a copy only beyond
+    // 15 m of its slot position; a nearer correction biases the slot 20 m along x first (the function overwrites it).
+    {
+        const float slot[3] = {363.6f, 270.0f, 2159.8f}, near[3] = {370.0f, 270.0f, 2160.0f}, far1[3] = {413.4f, 268.0f, 2133.6f};
+        float out[3]{};
+        Check(sa::QuietBias(slot, near, out) && out[0] == near[0] + 20.0f && out[1] == near[1] && out[2] == near[2],
+              "quiet bias: a correction within 15 m biases the slot");
+        Check(!sa::QuietBias(slot, far1, out), "quiet bias: beyond 15 m the warp moves him as it is");
+        const float edge[3] = {363.6f + 15.0f, 270.0f, 2159.8f};
+        Check(sa::QuietBias(slot, edge, out), "quiet bias: at 15.0 m (225.0 is not > 225.0) biases");
+        char line[256]{};
+        Check(sa::FormatQuietLine(1270, 6, 1, 1, 0.12f, -0.03f, line, sizeof(line)) &&
+                  std::strcmp(line, "world_place=quiet; go=1270; seq=6; moved=1; bias=1; err_m=0.12; dy_m=-0.03\r\n") == 0,
+              "the quiet line: the read-back after the move");
+        char tiny[8]{};
+        Check(!sa::FormatQuietLine(1270, 6, 1, 1, 0.0f, 0.0f, tiny, sizeof(tiny)), "the quiet line refuses a short buffer");
+        Check(c::quiet_warp_rva == 0x136ece0, "the quiet warp is the pinned network-position warp");
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");

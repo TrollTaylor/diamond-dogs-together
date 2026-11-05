@@ -1,0 +1,83 @@
+# Enemy round 8 track A (docs/world-sync-design.md 7.22), the quiet place correction in calm. At the afgh-ledge seed guards
+# 15 (1740692850) and 246 (1926520947) hold swapped routes on the two copies; about 5 s after align the guest's copy of
+# 246 (56 m off, off the guest's screen) gets the default-on place correction. In 0.15.1 that is the set-transform message:
+# within 0.2 s he goes to action kind 3, then 15 -> 12 -> 13 (the guest's radio subtitle "a possible intruder ...
+# attacked me") and about 20 s later the outpost goes to CAUTION on the guest, which the host applies (runs fbf3522a,
+# f11fe8a1, 0d801772 of enemy-mirror6-calm.txt; same join and standing points here, no mirror, no shot, no CAUTION).
+#   1. the host alone 50 m south of afgh_field_cp (known ground); the guest pairs (align: the 246 correction);
+#   2. both teleport to run fbf3522a's measured standing points south of the outpost (known ground), 12 m apart;
+#   3. both cameras on 246 (binoculars, two frames 0.5 s apart), then 100 s of calm with two more looks.
+# Gate (quiet_place): the guest's 246 correction leaf=quiet, world_place=quiet moved=1, event=place err_m / dy_m and the
+# 0.5 s / 2 s read-backs within 1 m; with act_census named, no action kind 3 / 13 of 246 after it; no guest-only
+# ChangePhase in calm; 0 latches, faults, game overs.
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo <built worktree> -Owner <track>
+#     -ScenarioPath tools/worker/scenarios/enemy8-quiet-calm.txt,tools/worker/scenarios/enemy8-down-alert.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     [-LabSetting quiet_place=1,range_flat=1,act_census=1] -TimeoutSec 600 -Wait
+labsetting nametag=1
+titlemenu host 240
+title host 240
+waitgameplay host 150
+host debug godmode 1
+host debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+wait 6000
+host run teleport 421.16 269.2 2084.42 0
+wait 8000
+host run world_status
+logmark both
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+guest debug godmode 1
+guest debug infinite_ammo 1
+guest run teleport 414.897 274.034 2017.557 0
+wait 3000
+host run teleport 424.627 271.559 2025.110 0
+wait 4000
+host run position
+guest run position
+logmark both
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture q246-a
+wait 450
+both capture q246-b
+wait 3500
+host run world_status
+guest run world_status
+wait 30000
+logmark both
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture q246-c
+wait 3500
+host run world_status
+guest run world_status
+wait 30000
+logmark both
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture q246-d
+wait 3500
+host run world_status
+guest run world_status
+wait 25000
+host run world_status
+guest run world_status
+logmark both

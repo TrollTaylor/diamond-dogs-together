@@ -226,6 +226,11 @@ const char* DriveAdmit(const DriveRule& rule) noexcept;
 // false when neither is valid.
 float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
                     bool& self_nearer) noexcept;
+// Enemy round 8 track A (range_flat, docs/world-sync-design.md 7.22): the same on the ground plane (x/z; y ignored), as the
+// M3 owner rule (world_place.lua P.ownerOf); and the request's reference y set to its target's so Warp's range is flat too.
+float NearerSquaredFlat(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
+                        bool& self_nearer) noexcept;
+void FlattenRange(Request& request) noexcept;
 // Whether a guest process needs the startup Verify() byte gate for either rule.
 bool GuestMayWarp(bool lab, bool play, bool key) noexcept;
 

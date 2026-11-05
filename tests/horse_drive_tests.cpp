@@ -5,7 +5,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include "mgscoop/horse_body_watch.hpp"
 #include "mgscoop/horse_drive.hpp"
+#include "../native/horse_drive_contract.hpp"
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
 
@@ -70,7 +72,17 @@ void TestParse() {
               r.x == -656010 && r.y == 1200 && r.z == 877730 && r.yaw == -3141 && r.reset == 1,
           "hold0 with the A0 reset");
     Check(Parse("hold0 30010 7 0 0 0 0 3", r) && r.reset == 3 && Parse("hold0 30010 7 0 0 0 0 0", r) && r.reset == 0, "hold0 resets 0..3");
-    Check(!Parse("hold0 30010 7 0 0 0 0 4", r) && !Parse("hold0 30010 7 0 0 0 0", r) && !Parse("hold0 30050 7 0 0 0 0 1", r) &&
+    // BODY0 round: bit 2 (4) the write watch on body 0's transform, bit 3 (8) the pin (horse_body_watch).
+    Check(Parse("hold0 30010 7 0 0 0 0 14", r) && r.reset == 14 && Parse("hold0 30010 7 0 0 0 0 4", r) && r.reset == 4,
+          "hold0 resets 0..15 (C0 + watch + pin = 14)");
+    // hold1: the carrier's copy holds body 1 (the downed partner) the same way (cfd2b604: body 1 low on the carrier's screen).
+    Check(Parse("hold1 30010 7 1 2 3 4 14", r) && r.verb == hd::Verb::hold1 && r.x == 1 && r.reset == 14 && !Parse("hold1 30010 7 1 2 3 4 16", r),
+          "hold1: hold0's numbers for body 1");
+    // free0: the take-down / lay-down ends the pin before its Warp (else the pin would put the body back on the horse).
+    Check(Parse("free0 30010 7", r) && r.verb == hd::Verb::free0 && r.mission == 30010 && r.epoch == 7 && !Parse("free0 30010", r) &&
+              !Parse("free0 30010 7 1", r),
+          "free0 <mission> <epoch>");
+    Check(!Parse("hold0 30010 7 0 0 0 0 16", r) && !Parse("hold0 30010 7 0 0 0 0", r) && !Parse("hold0 30050 7 0 0 0 0 1", r) &&
               !Parse("hold0 30010 7 0 0 0 31417 1", r),
           "hold0: seven numbers, free roam, yaw and reset bounds");
 }
@@ -251,9 +263,10 @@ void TestCargoKey() {
     Check(!off.world_horse_cargo && off.world_horse_cargo_given, "a named 0 is the off switch");
     Check(!bad.world_horse_cargo && bad.invalid_values == 1, "an invalid value stays off");
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    // Round 2's final session (8cfe8e97 lab, 7f3155c8 play) did not pass the gate: off unless named again, gun profile too.
+    // BODY0 round: its final sessions (144d99bb / 7117d3ac / 47101768 and the play rehearsal) did not pass the gate (the downed
+    // player crouches on the horse on their own screen after the dismount): off unless named again, the gun profile too.
     Check(!gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share,
-          "after the round 2 gate failed: off with the gun profile (the M1 key stays on)");
+          "after the BODY0 gate failed: off with the gun profile (the M1 key stays on)");
     const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=0\n");
     Check(!gunOff.world_horse_cargo && gunOff.world_horse_cargo_given, "with the gun profile a named 0 is the off switch");
     const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
@@ -336,17 +349,83 @@ void TestPillionKey() {
     Check(on.world_horse_pillion && on.world_horse_pillion_given && on.unknown_keys == 0 && on.invalid_values == 0, "a named 1 turns it on");
     Check(!off.world_horse_pillion && off.world_horse_pillion_given, "a named 0 is the off switch");
     Check(!bad.world_horse_pillion && bad.invalid_values == 1, "an invalid value stays off");
+    // M3c: on with the gun profile in lab and play (with its 2.5 / 2.8 m ride hold); a named 0 is the off switch.
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    Check(!gun.world_horse_pillion && !gun.world_horse_pillion_given && gun.world_horse_share, "before its gate: off with the gun profile");
+    Check(gun.world_horse_pillion && !gun.world_horse_pillion_given && gun.world_horse_share, "M3c: on with the gun profile");
+    const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_pillion=0\n");
+    Check(!gunOff.world_horse_pillion && gunOff.world_horse_pillion_given, "with the gun profile a named 0 is the off switch");
+    const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
+    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_pillion && playGun.play_refused == 0, "on in play with the gun profile");
     const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
                           "world_horse_pillion=1\n");
     Check(play.mode == mgscoop::LabMode::play && play.world_horse_pillion && play.play_refused == 0, "a named 1 runs in play too");
 }
 
+// M3c: body 1's readback against the rear seat it was given on the driver's copy (partner_pillion=stats), and the pinned
+// life table read of the passenger's copy's horse (receiver+0x30 -> +8, 0x28 per index: life u16, max u16; SetMaxLife).
+void TestSeatErr() {
+    hd::SeatErr e{};
+    const float seat[3] = {10.f, 5.f, 20.f};
+    const float b1[3] = {10.3f, 4.6f, 20.4f};
+    hd::NoteSeatErr(e, seat, b1);
+    Check(e.n == 1 && Near(e.xz_max, 0.5f) && Near(e.dy_max, -0.4f), "xz distance 0.5 m, 0.4 m under the seat");
+    const float b2[3] = {10.1f, 5.7f, 20.f};
+    hd::NoteSeatErr(e, seat, b2);
+    Check(e.n == 2 && Near(e.xz_max, 0.5f) && Near(e.dy_max, 0.7f), "the worst of the window: the larger |dy| wins with its sign");
+    const float bad[3] = {NAN, 5.f, 20.f};
+    hd::NoteSeatErr(e, seat, bad);
+    Check(e.n == 2, "a non-finite readback is not counted");
+    Check(hd::LifeEntry(0x1000, 0) == 0x1000 && hd::LifeEntry(0x1000, 1) == 0x1028, "life entry stride 0x28");
+    bool pinned = false;
+    for (const auto& s : mgscoop::horse_drive_contract::sites) if (s.rva == hd::kLifeSiteRva && s.size == 0x30) pinned = true;
+    Check(pinned && hd::kLifeSiteRva == 0xe4d340, "the life table's reader (SetMaxLife's loop 0x140E4D340) is a pinned site");
+}
+
+// BODY0 round: the pure part of the hardware write watch on body 0's transform (native/include/mgscoop/horse_body_watch.hpp).
+void TestBodyWatch() {
+    namespace w = mgscoop::horse_body_watch;
+    // DR7: L0 (bit 0) and L1 (bit 2), RW0 = RW1 = 01 (write), LEN0 = LEN1 = 11 (4 bytes); other bits kept.
+    const std::uint64_t on = w::Dr7(0x400, true);
+    Check(on == (0x400ull | 1ull | 4ull | (1ull << 16) | (3ull << 18) | (1ull << 20) | (3ull << 22)), "Dr7: two 4-byte write watches");
+    Check(w::Dr7(on, false) == 0x400ull, "Dr7 off: only our bits cleared");
+    Check(w::Dr7(0x10 | (3ull << 24), true) == (0x10ull | (3ull << 24) | 5ull | (1ull << 16) | (3ull << 18) | (1ull << 20) | (3ull << 22)),
+          "Dr7: DR2's bits untouched");
+    Check(w::Ours(1) && w::Ours(2) && w::Ours(3) && !w::Ours(4) && !w::Ours(0x4000), "Ours: B0 / B1 only");
+    // The pin holds only within kPinMs of the last hold0 (a later Warp of body 0 is not undone).
+    Check(w::PinLive(1000, 1000 + w::kPinMs) && !w::PinLive(1000, 1001 + w::kPinMs) && !w::PinLive(0, 10), "PinLive");
+    // Run 911ce293: world_horse_cargo pins nothing for TRACK_PIN_MS (200 ms) after M1's last placement; a 100 ms pin let body 0
+    // drop to the ground under the horse right after the dismount (drop_cm 246) and the victim's copy's horse fell (Unconscious).
+    Check(w::kPinMs >= 300, "the pin outlasts world_horse_cargo's 200 ms track-pin gap");
+    w::Table t{};
+    const std::uint32_t ret[w::kRets] = {0x9c1b90, 0x123, 0, 0};
+    w::Note(t, 0x1ad566c, 7, 0, ret);
+    w::Note(t, 0x1ad566c, 7, 0, ret);
+    w::Note(t, 0x1ad1f82, 9, 3, ret);
+    w::Note(t, 0x1ad1f82, 9, 1, ret);
+    Check(t.used == 2 && t.traps == 4 && t.rip[0].rva == 0x1ad566c && t.rip[0].n == 2 && t.rip[1].n == 2 && t.rip[1].ord_min == 1 &&
+              t.rip[1].ord_max == 3 && t.rip[1].tid == 9 && t.rip[1].ret[0] == 0x9c1b90,
+          "Note: one row per writer, its count, thread, order range and return rvas");
+    for (std::uint32_t i = 0; i < 20; ++i) w::Note(t, 0x100 + i, 1, 0, ret);
+    Check(t.used == w::kRips && t.dropped == 20 - (w::kRips - 2), "Note: a full table counts dropped");
+    const std::uint64_t stack[6] = {0x5, 0x140001234, 0x7ff000000000, 0x1409c1b95, 0x142100000, 0x140abc000};
+    std::uint32_t r[w::kRets]{};
+    Check(w::StackRets(stack, 6, 0x140000000, 0x1000, 0x2000000, r) == 3 && r[0] == 0x1234 && r[1] == 0x9c1b95 && r[2] == 0xabc000 &&
+              r[3] == 0,
+          "StackRets: image text values in order (outside the text range skipped)");
+    // The pin target: T+0x20 = the centre, T+0x10 = the centre minus (0, h, 0), T+0x174 the foot y (T.vt+0x58 0x141AD5660).
+    float c[4]{}, f[4]{}, fy = 0.f;
+    w::Target(1.f, 5.f, 3.f, 0.9f, c, f, fy);
+    Check(Near(c[0], 1.f) && Near(c[1], 5.f) && Near(c[2], 3.f) && Near(c[3], 0.f) && Near(f[0], 1.f) && Near(f[1], 4.1f) && Near(f[2], 3.f) &&
+              Near(fy, 4.1f),
+          "Target: centre, foot and foot y as T.vt+0x58 writes them");
+}
+
 } // namespace
 
 int main() {
+    TestBodyWatch();
     TestMatrix();
     TestUnderRider();
     TestParse();
@@ -359,6 +438,7 @@ int main() {
     TestCargoKey();
     TestPillion();
     TestPillionKey();
+    TestSeatErr();
     std::printf("%u horse drive checks passed: call-enter matrix, saddle anchor, receipt grammar, refusals, shared state, "
                 "shared-horse rider visibility, lab key\n",
                 checks);

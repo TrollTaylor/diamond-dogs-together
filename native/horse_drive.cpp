@@ -41,6 +41,15 @@ bool CallSet(std::uintptr_t fn, std::uintptr_t cs, std::uint32_t slot, const flo
 }
 }
 
+// M3c: the life table read (SetMaxLife's loop 0x140E4D340, a pinned site of the contract; the caller checked PinsReason).
+bool ReadLife(std::uintptr_t receiver, unsigned idx, std::uint16_t& life, std::uint16_t& max) noexcept {
+    std::uintptr_t table = 0, base = 0;
+    std::uint32_t count = 0;
+    if (!Get(receiver + 0xc, count) || idx >= count || count > 16 || !Get(receiver + 0x30, table) || !table || !Get(table + 8, base) || !base)
+        return false;
+    return Get(LifeEntry(base, idx), life) && Get(LifeEntry(base, idx) + 2, max);
+}
+
 const char* PinsReason(std::uintptr_t image, std::size_t span) noexcept {
     if (!image || span < 0x3000000) return "pins";
     unsigned char buf[0x420];

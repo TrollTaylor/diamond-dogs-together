@@ -7,7 +7,7 @@ inferred, [U] unknown. Two hidden play sessions over `-WanSim bad`, the gun prof
 `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
 
 - **What players get**: nothing new at the defaults. The new native key `act_plan` and `soldier_act` stay off unless
-  named; with neither named nothing runs (the hook is installed only with `soldier_act` or `act_census`).
+  named; with neither named nothing runs (the hook is installed only with `soldier_act`, `act_census` or `quiet_place`).
 - **Built** (red first: ee8f36d3 / 946864af, 0ee53a71 / 49770205): `act_plan` (native only, no CFG bit, no wire): after
   the manager update's original, the walk-request start 0x1413725f0 again for each puppet's dest-mode-1 request applied
   in that update, with a shadow gate object (the function reads its first argument only at +0x70), so the planner plans
@@ -60,6 +60,256 @@ inferred, [U] unknown. Two hidden play sessions over `-WanSim bad`, the gun prof
 - **Frames looked at**: `fcfb3acc` w18-0-a (both); `afeddbdc` w15-0-a (both), c-1-b (host).
 - **Next**: one rerun of session 2 (the same command; watch the host's first frame for the modal); then, if the gate
   passes, `soldier_act` (calm / caution) and `act_plan` on by default per D-FM1 (a) and the no-key run.
+
+## November 5, 2026: enemy round 8 track B - patrol trucks follow the host's: the truck rows pass, but `lrrp_follow` stays off unless named after the review (`wp/enemy-lrrp`, not pushed)
+
+Design 7.21, protocol section 38 (LRRP_FAST 0x5D). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+Three hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge: `c90ab046` (`lrrp_follow=1`,
+first form), `c784a5a7` (`lrrp_follow=1`, the fixed form) and `0da27fc6` (no key named, at f91dc7ff where the gun profile
+turned it on). Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. The guest's patrol trucks (the LRRP reinforcements) still run on
+  their own, ~72 s behind the host's, as in 0.15.1. With `lrrp_follow=1` in lab.ini they drive where the host's do.
+- **Why it is off again** (the review of the three runs, numbers recomputed by interpolating the host's lines) [O unless marked]:
+  - `c784a5a7`: after the unseat the guest's copies of 25605's crew did not follow the host's: 3970963356 stood at
+    (407.4, 2123.7) for ~100 s, 43-70.7 m from the host's copy; 2305481811 was 26-31 m off for ~80 s (42 of the 87
+    guest-side `unrealized` refusals). The guest's kill of 2305481811 was applied on the host's copy 27.8 / 29.9 m away
+    (`1870d1bf`, key off: 0.4 / 1.5 m).
+  - Both key-on runs: truck 25606's crew got back in on the host's screen and stayed out on the guest's, and the guest's
+    truck drove off empty (`rh=2 rl=0`, ~12.5 m/s, still moving at the end). The unseat's `StartTravel ""` ends the
+    guest's crew's LRRP plan [I], so those reinforcements may never reach the guest on the guest's PC, the only one whose
+    guards can see the guest: possibly a player unseen by guards that would see them in 0.15.1 (the user's call).
+  - `0da27fc6` 25605: the guest's crew got out before the host's, then got back in and out twice (rl 0-1-0-1-0, ~125 m
+    from the players): visible flapping, not "a slow get-out".
+  - Africa (30020) is in the LRRP table and was never run; the frame-time row was not judged (the PC ran at 46 Hz from
+    the first window; `c90ab046` dropped from 59 to 43-51 Hz while the truck drove; no key-off run of the same parts).
+- **Built** (red first each time): native-only lab key `lrrp_follow` (receipt `MGS_COOP_LRRP_CFG_V1`, no CFG bit); LRRP_FAST
+  0x5D, a host-to-guest datagram with one receive slot for all trucks (a newer datagram for one truck replaces an
+  undelivered one for another: a design limit, likely behind the 5-7 m catch-ups under `-WanSim bad` [I]); in
+  `world_vehicle_state.lua` (`S.lf`) the host streams each live LRRP truck no player rides (10 Hz moving, 1 Hz still);
+  the guest's copy is held with `ForceStop` while the host's track lives, put on the host's pose every frame while it
+  moves or is manned (no 3.5 m local-player hold, untested near the guest) and pinned at rest; a crew still seated there
+  while the host's truck rests empty gets `UnsetRelativeVehicle` (2 s) and `StartTravel ""` (5 s). Commits 8b4003fe /
+  0ec0072d, fced1034 / 987d59ec (the pin and the unseat), 10884a46 / f91dc7ff (the flip), 1aa30d55 red / 34b9f024 green
+  (back off unless named).
+- **Gate rows** [O]:
+  - PASS truck place error while it moves (guest vs host interpolated to the guest's t_ms): `0da27fc6` p50 0.14 / p90
+    0.49 / max 5.65 m (1210), `c784a5a7` p50 0.16 / p90 0.72 m (1508), `c90ab046` 0.14 / 0.41 m; |dy| p90 0.04 / 0.06 m.
+    The guest's pose is read right after its own SetPosition, so this measures the predictor plus the frame step.
+  - PASS (roughly) riders within 8 m while seated: p90 0.92-1.13 m (`0da27fc6`) and 0.75-1.09 m (`c784a5a7`). Outliers:
+    `0da27fc6` 11 of 510 samples 10-41 m for ~3 s (the guest's rider reads frozen at (956.8, 1968.2) while the truck was
+    within 0.2 m); `c784a5a7` 25605's riders 10.7-49 m (14 samples each over 8 m), 25606's 8.1-9.8 m.
+  - PASS at the defaults / FAIL named: no truck teleport more than once per 30 s: `0da27fc6` one jump per truck at the
+    pairing (49.5-402.6 m), then three catch-ups of 5.4-6.7 m at least 43.9 s apart (0.7-2.2 km from the players);
+    `c784a5a7` one pair 14.8 s apart (402 m, then 6.0 m). The pairing jump is not always out of view: the guest was still
+    at the seed spot (828, 1630) then, 364 m from 25605's target (356 m in `c90ab046`).
+  - FAIL riders handed back: every truck ends with `rl=0` and 0 `vehicle_local` refusals in `c784a5a7` / `0da27fc6`
+    (`c90ab046`: 76), but in `0da27fc6` no correction was tried for these riders, and in `c784a5a7` they became
+    `unrealized` refusals and stayed 26-71 m off (above). No correction line exists for the 8 unseated far riders.
+  - PASS frame pair: `c784a5a7` t-10, both binoculars SE: the lit truck by the crosshair on both screens (`aim_ent` 191.5 m
+    host / 186.8 m guest). Guest t-8 is black; `c90ab046` t-*, `0da27fc6` s-0 / s-1 show no truck (never in view in the
+    no-key run); `0da27fc6` c-b: the sleeping guard by the guest's character on both screens.
+  - PASS 0 latches / faults / game overs / drive_sank in `c784a5a7` and `0da27fc6`; `0da27fc6` guest place error p50 0.51 /
+    p90 0.91 m (62), corrections 25/26, all 4 parts passed. `c784a5a7`: the host read back rider 2305481811 1.4 m above
+    with held=0 (unreported before).
+  - NOT JUDGED frame time (above).
+- **Failing rows**: `0da27fc6` M3 host p90 7.26 m (`1870d1bf` 6.89), the guest's state-5 apply at 39.5 m (1179373153 in the
+  ALERT; the host's apply of the guest's kill at 38.5 m is ungated); `c784a5a7` integ-carry's placebehind (`viewer landing
+  has no new position sample`; the truck parked 10.8 m from the host's teleport spot), latch-alert cut at 606.8 s, M3 host
+  p90 10.44 m, corrections 78/165; `c90ab046` integ-carry (2961503 awake), drive_sank 1, corrections 18/94, 9 settle jumps
+  of 305-311 m (first form).
+- **Decision for the user**: turn `lrrp_follow` on by default? The trucks then match within a metre while they drive, but
+  a crew that boards again on the host's screen leaves the guest's truck driving empty (those reinforcements may never
+  reach the guest), and the unseated near crew drifted 26-71 m for 80-100 s. A fix would keep the guest's crew's LRRP plan
+  and seat it again when the host's boards; then one key-off and one key-on run of the same parts on an unloaded PC.
+- **Not done**: the re-boarding; corrections for unseated riders; Africa; the frame-time row; a mixed-version run (a
+  0.15.1 partner skips 0x5D as `unknown_op`, unit tests only).
+
+## November 5, 2026: enemy round 8 track A - the false radio report and the host's drift while the guest is down: both fixes built, neither turned on; `quiet_place` and `range_flat` stay off unless named (`wp/enemy-m7`, not pushed)
+
+Design 7.22, protocol section 39. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
+sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge: `bcd95b14` (`quiet_place=1, range_flat=1,
+act_census=1`; enemy8-quiet-calm + enemy8-down-alert), `8b581a26` (`range_flat=1, act_census=1`, quiet_place at its
+then default ON; same parts) and `1befcef4` (no key named, code head cde0cbb4 with quiet_place ON by default:
+enemy-prove-1-join, enemy-latch-quiet, enemy-integ-carry, enemy-latch-alert). Two queue jobs ran no game (the worker
+refused the new keys' names until 07c0767a; the worker's own CTest flaked once on a drain-window timing check). Archives
+under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. Both fixes are test switches (`quiet_place=1`, `range_flat=1` in
+  lab.ini). Only log lines change at the defaults (`world_place=host_warp` adds `flat; g_age_ms; dgy_m`; read-backs add
+  `dxz_m`).
+- **Bug 1, the false radio report** [O]: at the seed the guest's copy of guard 246 (56 m off, off the guest's screen)
+  got the default-on place correction, the set-transform message, went to action kind 3, radioed a possible intruder
+  and the outpost went to CAUTION (runs fbf3522a, 0d801772; f11fe8a1 kind 3 only). Census runs of rounds 5-7 (9 runs,
+  539 applied place warps, 57 guard-runs; recount of the review, the earlier 282 / 54 did not reproduce): kind 3 within
+  0.5 s after 499 (55 guard-runs), but 260 of the 539 found the guard in kind 3 already (263 changed into it, 52
+  guard-runs), so kind 3 after a warp does not show the warp caused it [I]; kind 13 within 30 s once (0d801772's 246).
+  Built `quiet_place` (native only): an off-screen correction moves the guard through the engine's network-position
+  warp 0x14136ece0 in the request manager hook (Ghidra, read only: it touches only the slot table and the body's
+  controller; no message, no puppet bit, no FOB state); every quiet move is read back at 0.5 s and 2 s (x/z and y).
+  - `bcd95b14` (named): gate PASS: 246's correction 8.7 s after align was quiet, read back 0.08 / 0.15 m x/z and 0.00 m
+    y at 0.5 / 2 s, kind 1 for the next 118 s (no 3, no 13), 0 guest `req_phase` in calm, 0 latches / faults / game
+    overs. Frames q246-a / c / d (both): no radio subtitle or caution on the guest's screen; 246 not picked out [U].
+  - Turned on (64ab8909 / cde0cbb4), then back OFF (f8441a11 red / green): the no-key run `1befcef4` failed the place_sink
+    row. 115 quiet moves of 7 guards: 106 landed within 1 m, but 8 (4 guards) left the body 2-92 m off while the slot
+    read the target; in 5 of them (1926520947 4 times at 33.9-34.8 m, 667680985 once at 91.9 m) the body did not move
+    at all (the landing error equals the error before the move; the log's `moved=1 err_m=0.00` is the slot table's, not
+    the body's). After 22 of his 43 quiet moves guard 1904171355 walked 9.4-14.1 m on (`place_sink moved_m`) and stood
+    2.15 m under his owner (22 `place_sink`; 1870d1bf at the old defaults: 0). The 2 s read-backs show the walk-off for
+    others too (maxima 14.3-17.2 m). [I] the quiet warp leaves his brain's path; the message's kind 3 had stopped him.
+    Process note: it was turned on although 2 of the 3 quiet moves of `bcd95b14` (its ALERT part) read back 5.29 / 8.87 m
+    off at 2 s and its down gate was not reached.
+  - `8b581a26`: no quiet move (246 only 36.5 m off and not sampled in calm this time).
+- **Bug 2, the host's copies while the guest is down** [O]: the downs were falls, not gunfire (lethal damage 10000,
+  attacker 0): in round 7 (ddcdec94, 90d9b4d1) a goto put the guest on the outpost's cliff edge, in `8b581a26` the
+  scenario dropped them from the air on that fall line, and in all three they fell on through the world to y -79.65 m
+  (ddcdec94's y 92 m was a sample mid-fall: 5 s later y -79.65 at the same x/z). The cause seen [O]: beyond 200 m (3D)
+  the host hides the guest's body (`partner_range=hide`), which clears the driver's `have_cmd`, so the receipts (and
+  the PEER answer the owner rule reads) treat the guest's pose as unknown (position 0) and keep only the host's leg:
+  ddcdec94's 111 `near=host` refusals all came after the hide at 202573 mm (before it 3 `range` refusals, all
+  `near=guest`); in 8b581a26 every `near=host` refusal came with the guest's position 0. The host's 3D range rule
+  against the x/z owner rule is a code fact never seen refusing a placement [I]. Built `range_flat`
+  (native only: the host's M3 placement and drive range on x/z); it is untested for a guest whose pose is known.
+  `8b581a26`: gate FAIL: the host refused 142 of 142
+  placements while the guest was down (48 s; `near=host flat=1`, the guest's y read as 0), host M3 error while down
+  p50 17.1 / p90 27.4 m (bins; ddcdec94 without it 27.1 m). Frames dd-1: "WOUNDED" over a void on the guest's screen,
+  "TEAMMATE WOUNDED" on the host's.
+- **The no-key run `1befcef4`** (quiet_place on by default): PASS 0 latches / faults / game overs; guest place error
+  p50 0.69 / p90 1.88 m (gate 2 m); 0 `drive_sink`; corrections 119 / 126 (7 `vehicle_local`); reported host M3 p50 1.7
+  / p90 6.64 m. FAIL 22 `place_sink` (one guard, after quiet moves) and 1 `guard_fell` (the host's copy of 3268415846,
+  10.6 m under the guest's sample; the host makes no quiet move; cause [U]). Frames c-b (both): the sleeping guard's
+  ZZZ by the barriers beside the guest's character.
+- **Failing rows**: `bcd95b14` down gate not reached (no down: the guest stood on the goto point); host M3 p90 7.46 m;
+  quiet read-backs within 1 m 4 of 6 (2 s: 5.29 m, guard 246's ALERT-part move, and 8.87 m, guard 1904171355).
+  `8b581a26` down gate (142 / 142 refused, p90 27.4 m); corrections 0 / 5 (refused `far`: the guest under the world);
+  guest p50 22.5 / p90 28.5 m and host M3 p90 26.3 m (both from the down; before the down host M3 p50 1.8 / p90
+  7.75 m); guest drive refused 148 of 149. `1befcef4` place_sink 22, guard_fell 1, host M3 p90 6.64 m; quiet read-backs
+  within 1 m 55 of 207 (guards 1740692850, 1926520947, 667680985 among them), 80 of 115 0.5 s read-backs over 1 m x/z;
+  terminal_win 1 on the host; 1 2 s read-back open.
+- **Not run live**: the final code head f8441a11 at the defaults (no session). The guest's Lua now always adds ` 1` to
+  WORLD_WARP_V1 for an off-screen correction; with quiet_place off the native ignores it and takes the old `sw::Warp`
+  (unit tests and code only [I]; the token's parse ran live in all three sessions, with quiet_place on).
+- **Checks**: CTest 355 / 355 at 9276ae08 (full); the worker's audited CTest passed before each of the three sessions;
+  full `tools/build.ps1 -Jobs 4` at the code head f8441a11: CTest 355 / 355; every `generate_*_contract.py --check` as round 7 except soldier_act (20 sites: three new windows of
+  0x136ece0); `tests/enemy_div_report_check.py` 8 checks (new rows: while the guest is down, the quiet moves).
+- **Next**: bug 1: after a quiet move give the guard a stand at the target (the request start's offline mode 0 stand)
+  or end his path, and move only guards in the realized list; bug 2: use the guest's network pose sample while their
+  body is hidden for range, with range_flat's x/z plane; the fall through the world reproduces it (design 7.22).
+
+## November 5, 2026: 0.15.2 package
+
+**Package (2026-11-05):** `dist/DiamondDogsTogether-0.15.2-20261105T155910Z-fcd6d4da/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `252ee74` with Release receipt `20261105-155628-fd3984294a3344e18a7eda7107e62b71` (passed, 342 audited tests, 0 failures; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.2+252ee74` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.15.2.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,334,954 | `3197BC619FADB028D0787C0204B279E238EC553CD6EE43514870E939316091B2` |
+| `DDT-source-0.15.2.zip` (1,680 source files plus `source-files.json`) | 9,896,062 | `87DCC7579677F04DB9091CB2223E0E1BCCCE31B8FE82454B48564814BFF8797B` |
+| `DiamondDogsTogether.exe` | 2,387,456 | `000458CE3767B6AC415E8142CDB993C786E8AA39547D66EAB48E5B20C6AFA6C3` |
+| `dinput8.dll` | 7,789,568 | `74C25733AF1FA86A5EC60EE12BCD5FD27B1E48BF5007BA6313B69222BDC9535C` |
+
+- **Package checks:** the checks of `tools/package.ps1 -Friend` itself (a passing Release receipt with the Release flags; the staged exe and dll are the receipt's; each zip holds exactly its staged files with their hashes; only tracked source files). `package.json`: version 0.15.2, `source_commit` `252ee74`, `source_dirty` false. No separate zip audit.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.135.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** the tracked files at `041eacf` and every file in both zips: no Windows profile path (both slash styles), persona name or the user's e-mail. History was not rewritten.
+- **Version.** 0.15.2 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.15.2 and still 0.15.1; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.15.3", "0.15.2")`.
+- **Checks at the bump commit `252ee74`:** the Release receipt above is the only test run (342 audited tests); no other CTest run, hidden-game run, smoke run or review panel.
+- **To release:** upload **both** zips to the GitHub release `v0.15.2`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.15.2 -PackageDir dist/DiamondDogsTogether-0.15.2-20261105T155910Z-fcd6d4da` before publishing. Nothing was pushed, tagged or released by the packaging.
+
+## November 5, 2026: horse M3d, ride behind your partner corrected as the skeptic checked it (`wp/horse`; `world_horse_pillion` still on with the gun profile)
+
+**Players get:** getting off the back of your partner's horse (hold E, your partner getting off, or a link drop) now
+puts you on the ground the horse just crossed, about 2 m behind it, or where you stood when you got on. Before, it put
+you 1.3 m to the horse's right (not its left, as the M3c entry said), and next to a rock wall that was inside the rock.
+Once the ride hold is on, E within 2.8 m of the horse always takes the seat (between 2.5 and 2.8 m it did nothing).
+Seen in hidden two-copy tests (lab and play, a bad connection simulated, both role orders, the key not named); not tried
+by two people yet. Details: `docs/mounts.md` section 12. Markers [O]/[I]/[U].
+
+- **Built** (red first each time): the lay-off order ridden path 2-4 m back (`at=trail`), then the claim-time spot within
+  5 m (`at=foot`), then the old side point (`at=side`, only a jump of the placed horse) (5bc07a4b / 54e96e67, c20e65d7 /
+  7564a60a); the claim inside the ride hold's 2.5 / 2.8 m band (unit-tested; [U] live: no scenario presses E in the band).
+  No wire, note, CFG or native change.
+- **Proven [O, both logs, frames looked at on both copies]:** lab `d795ab11` (at 54e96e67) and `da67ef81`, play
+  `975a0641` (at 7564a60a; `-WanSim bad`, the key not named, receipt source hashes equal the tested tree): every hop-off
+  (orders (a) and (b) in each run) logs `at=trail` and shows the passenger on the ground behind the horse on their own
+  screen and beside its rear on the driver's (also by the rock walls of the routes); the lab link drops log `at=trail`
+  and show the passenger standing on open ground on their own screen; the driver's
+  dismount right after the second seating logs `at=foot` and shows them standing beside the horse (`da67ef81`,
+  `975a0641`). Seat pin 0 / 0 after the first window of each seating (39-58 cm in it); no Unconscious, horse_hit or crash
+  line; `975a0641` passed every step, `da67ef81` / `d795ab11` every step but the drop part's known `world_inactive` expect.
+- **Failed on the way [O]:** play `16f3f282` / `023f9167` (at 54e96e67): the driver's dismount right after a seating used
+  the side point and put the passenger inside the rock on their own screen (frames `guest-h3-both-off-guest`), and the
+  guest's next first E at the unridden horse then did not mount (the part stopped there): the reason for `at=foot`.
+- **Corrected docs:** first_move 266-1034 ms (not 266-583); `step=stall` lines 2 / 1 / 3 in `93b59ae4` / `85a49831` /
+  `e284fb1c` and 1 in `975a0641` (b), each with rock ahead in the frames [I: terrain]; not every idle / stop side view shows
+  both bodies; e_free 3.16-4.04 m.
+- **Not yet:** the tie rule (plan item 5) is only logged (`getoff=none`); never seen live: the driver's dismount with the
+  guest driving, the `hold_keep` keepalive, the link drop in play mode, an E in the 2.5-2.8 m band. On their own screen a
+  passenger can still be crouched for a moment after landing (`da67ef81` host (b)).
+
+## November 5, 2026: horse M3c, ride behind your partner (`wp/horse`; `world_horse_pillion` on with the gun profile)
+
+**Players get:** beside the D-Horse your partner rides, press E and you sit behind them, on both screens, while they
+walk, trot and gallop; hold E to hop off (the frames show the horse's right, not the left this entry said; see the
+corrections entry above); if they get off, you are both off; if the link drops you are laid
+beside the horse. Within about 2.5 m of a horse your partner rides E takes the seat behind (before: E did nothing within
+4 m); farther out E works as usual. Seen in hidden two-copy tests (lab and play, a bad connection simulated, both role
+orders, the key not named); not tried by two people yet. Details: `docs/mounts.md` section 12. Markers [O]/[I]/[U].
+
+- **Built:** BODY0's body hold (hold0 + C0 + write watch + pin) as the passenger's default, a keepalive hold when a
+  placement is refused; the driver's census rider index and pad words on every drive line, `step=first_move` and
+  `step=stall`; e_free read from the raw pad verb with its mask bit; the passenger's copy's horse life in the read verb
+  (the D-Horse Lua dispatcher's SetMaxLife loop 0x140E4D340, a pinned site: contract 6 sites 5 slots) and
+  `step=horse_hit` on any 6656 Damage / Unconscious; `partner_pillion=stats` (body 1 against its rear seat on the driver's
+  screen); `step=tie` on both copies; `world_horse_pillion` follows the gun profile (lab and play; a named 0 is off).
+- **Found [O]:** the host-driven 16 s stall was the scenario (its first ride key came 17 s after a stray claim, then a
+  cliff, run `7c0b9e71` re-read against the worker's input ticks); with the keys right after the claim the horse moves
+  0.5 m within 266-1034 ms of the first key in both orders (corrected: 1034 ms host `5687aa1c`, 600 ms host `85a49831`;
+  `step=stall` 2 / 1 / 3 in `93b59ae4` / `85a49831` / `e284fb1c`, the horse against rock [I], none in the gate runs). No M3c run logged an Unconscious horse (life 12000 throughout);
+  [I] round 1's falls came from body 0 dropping onto the horse (mode 2: 1-2.3 m under its target).
+- **Proven** (both logs, both role orders, frames looked at; lab `51f6a2cc`, play `4f52fa2a`, both `-WanSim bad`, the key not
+  named; earlier attempts `763f071d`/`f3d04eca`, `93b59ae4`/`5687aa1c`, `85a49831`/`e284fb1c`): the claim, the grant or
+  the host's own press, two riders on the driver's screen and the passenger behind the driver on their own screen at
+  walk / trot / gallop (corrected: not every idle / stop side view shows both bodies; order (b)'s driver side views show
+  none, and on their own screen the passenger is mostly hidden behind the driver), passenger seat_pin 0 / 0 after the first window (body 1 within 50 cm / 36 cm of the seat on
+  the driver's screen after the first second), hop-off, both off on the driver's dismount, the first E at the unridden
+  horse mounting, no stall line, no Unconscious line, the link drop laying the passenger beside the horse
+  (`why=context` on the passenger's copy, `why=stream_lost` on the driver's), an unmasked E 3.16-4.04 m from the ridden horse
+  (`step=e_free; hold=0; masked=0`), and the tie logged on both copies.
+- **Not yet:** the tie's second half (both press E at an empty horse at once: the host drives, but the guest stays on their
+  own copy's horse; no get-off by code: no Lua command, 0x141230B30 is a generic ride-state request whose get-off id is [U]);
+  the driver's screen shows the passenger beside the horse for about a second after each seating; the passenger squats
+  (no seated pose until M4, D-H6) and sees the stock E / horse prompt; no aiming from the rear seat (M4); Africa untried.
+- **Next:** M4 (shoot from the back of the horse); the tie's get-off needs the ride state's get-off request named
+  (0x141230B30's callers in the ride states) or asked natively.
+
+## November 5, 2026: horse BODY0, a downed player's own body on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new at the defaults: the M2 gate did not pass in this round's four proof attempts, so
+`world_horse_cargo` stays off unless named (lab and play). With `world_horse_cargo=1` on both PCs it is now close: the
+downed partner lies across the horse's back on both screens while you walk, trot and gallop (play rides of 84-164 m),
+stays on when you get off, and the take-down and revive work; on the downed player's own screen they crouch on the horse
+once the carrier has got off (still down, still on the horse). Details: `docs/mounts.md` section 11. Markers [O]/[I]/[U].
+
+- **Built:** `native/horse_body_watch` (hardware write watches on the held body's transform on every thread, a first
+  vectored handler that records the writers and pins the body back to its target after the physics update; no code
+  patch; the contract pins T.vt+0x58), `hold0` / new `hold1` with reset 14 (C0 + watch + pin), `free0`, world_horse_cargo
+  holding body 0 on the victim's copy and body 1 on the carrier's, the Lua Warp only when the native has no hold, no ride
+  hold for the cargo; `pillion_pose` modes 3 and 6. Static [O]: Warp's C0 reset sets bit 0x20 of the 0x580 record's
+  +0x2C0, read only by C0.vt+0xD0 0x14128E010 ("no fall" for that frame), the pose fix; the A0 reset re-applies the
+  stance and drops the body.
+- **Found [O, run `911ce293`]:** what moves body 0 after the script tick: T's update 0x141AD2900 (called at 0x140B6C3CE)
+  writes the foot and centre at 0x141AD1F5E / 0x141AD1F7E right after the hold's own T.vt+0x58 write.
+- **Proven** (both logs, both role orders, frames looked at; lab and play `-WanSim bad`; runs `911ce293`, `dd0cd5d7`,
+  `144d99bb`, `7117d3ac`, `4585cc5a`): load, the first E mounting with the body on, lying on the horse on both screens at
+  walk / trot / gallop, the body kept on after the dismount, the R take-down at the same x,z on both copies, the revive,
+  the link drop laying them down on both (`144d99bb`), victim_pin lag 0 / drop 0, no horse knocked over during a ride
+  (`4585cc5a`, `7117d3ac`: no Unconscious line). M3 check `7c0b9e71`: with mode 6 the passenger squats on the horse behind
+  the driver on their own screen (seat_pin dy 0, was 1-2.3 m), no Unconscious line; the host-driven stall remains.
+- **What blocks the gate:** the downed player's own screen after the dismount (crouched on the horse, in both orders,
+  with or without the ride hold); the last lab session's (b) and link drop did not run (a placebehind fell through the
+  ground), and the lab (a) rides were 35-38 m.
+- **Next:** log body 0's action / posture words through the dismount on the victim's copy and keep the ridden height
+  while unridden; or the D-Horse cargo slot (route i, which the user now allows) for the engine's carried pose; then
+  M3 with mode 6 as its default.
 
 ## November 5, 2026: enemy round 7 track A - guards at the same height, the far fights: both gates not reached; `drive_vert` and `place_reach` stay off unless named (`wp/enemy-m7`, not pushed)
 
