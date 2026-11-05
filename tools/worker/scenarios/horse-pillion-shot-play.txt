@@ -84,20 +84,22 @@ waitlog guest 'partner_seat_shot=published; vehicle=6656; seat=1; class=horse;' 
 wait 1500
 both capture h4-seated
 # Cross-neck: the passenger's camera straight ahead along its own yaw (held at the horse's), level. M4b: the aim held
-# 2.6 s, the frames 1.5 s in (the driver's copy leaves body 1 to the native aim while the remote aims).
+# 2.7 s (two 1.5 s holds), the frames 1.5 s in (the driver's copy leaves body 1 to the native aim while the remote aims).
 logmark both
 guest run enemy_cam_turn 0 0
 guest expect ^cam_turn;
 wait 800
-guest hold rmb 2600 nowait
-wait 1500
+guest hold rmb 1500 nowait
+wait 1200
+guest hold rmb 1500 nowait
+wait 300
 guest capture h4-pillion-aim
 host capture h4-pillion-aim-host
 guest press lmb 120
 wait 250
 guest capture h4-pillion-shot
 host capture h4-pillion-shot-host
-wait 900
+wait 600
 guest release
 waitlog host 'partner_pillion=aim; on=1;' 5
 waitlog host 'world_lua=event=horse_pillion; step=aim_hold; on=1; n=[0-9]+; ok=1;' 5
@@ -132,15 +134,17 @@ logmark both
 guest run enemy_aim_nearest 0.3 1.2 1.0
 guest expect ^aim_nearest;ent=\d+;d=[2-9]\.
 wait 800
-guest hold rmb 2600 nowait
-wait 1500
+guest hold rmb 1500 nowait
+wait 1200
+guest hold rmb 1500 nowait
+wait 300
 guest capture h4-guard-aim
 host capture h4-guard-aim-host
 guest press lmb 120
 wait 250
 guest capture h4-guard-shot
 host capture h4-guard-shot-host
-wait 900
+wait 600
 guest release
 wait 1200
 guest run enemy_aim_nearest 0.3 1.35 1.2
