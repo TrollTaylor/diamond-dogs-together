@@ -386,8 +386,9 @@ the shared D-Horse of section 10. It reaches the carry only through the existing
   LOADED with its horse pose.
 - **Bodies.** Carrier's copy: body 1 warped every tick 0.44 m behind and 0.45 m over the unridden census root (kept 0.8-2.0
   m over the carrier's ground within 3 m, else 1.35 m over it; M2f, was 0.55 m and 1.0-2.0 / 1.45 m: run `5a92c73f` drew it
-  0.38 m high after a dismount), or 0.54 m behind and 0.4 m over the rider while this copy rides, at the
-  horse's yaw (it lies across the back), ahead by the rider's last per-tick move (at most 0.6 m). Victim's copy: after
+  0.38 m high after a dismount), or 0.54 m behind and 0.15 m over the rider while this copy rides (M2g, was 0.4), a
+  quarter turn from the horse's yaw so it lies across the back (M2g: at the horse's yaw it lay along it over the saddle),
+  ahead by the rider's last per-tick move (at most 0.6 m). Victim's copy: after
   the replica put-down, `SetCargoLocal(1)`; its own 6656 is placed on the carrier's pose when unridden (KEEP at 1 Hz,
   re-placed past 0.5 m; for 2 s after M1's track ends only on a KEEP pose sent after those 2 s, M2f); body 0 goes 0.9 m over its census, and while M1 places the horse from the rider's stream, right
   after each placement 1.3 m over the pose just written (`W.horseCargo.placed`, ahead by the horse's last move), a
@@ -449,7 +450,9 @@ the shared D-Horse of section 10. It reaches the carry only through the existing
   take_down / unloaded; seat=2; why=..; side=carrier|cargo; placed=0|1 / refuse; why=.. / hold0_refused; reason=..`,
   `step=pin` (how, mounted, census / player / body heights) and `step=victim_pin` (want / got height, `lag_cm` / `drop_cm`
   the worst of the window against the last target, `src=placed|census`, `via=hold0|warp`) every 2 s; native
-  `horse_drive=held; n=..; body=0`. world_horse_share's `step=final_sent` carries the ridden `path_cm`.
+  `horse_drive=held; n=..; body=0` (M2g: `horse_drive=held_alone` when body 0 is held with body 1's cached class).
+  world_horse_share's `step=final_sent` carries the ridden `path_cm`. Debug `horse_flank` (debug_rules.lua, lab and
+  play, M2g) puts this player 1.6 m beside the local horse's census root on their side, facing it.
 - **Hidden runs, round 1** (`7359e4d2`, `c667a209`, `6fd054c4`, `83ac3950` lab; `d26aaf70`, `547b431e` play): load, the
   first E mounting with the body on, the ride and the dismount keeping them on; the victim's controls timed out and the
   guest-carrier order, the take-down, the revive and the link drop were never reached.
@@ -542,7 +545,79 @@ the shared D-Horse of section 10. It reaches the carry only through the existing
     a frame stall of the game; and the 250 ms landing sample in `Invoke-WorkerScenario.ps1` Wait-ViewerLanding); first
     check on the victim's log that the 2 s settle removes the jump and the fall (`coop_carry=watch` stays `a=5` through
     the dismount, no `step=relie`); if the fall stays, keep body 0 held with its own pose through M1's final, or the cargo
-    slot.
+    slot. Done in the M2g round below.
+- **Hidden runs, M2g round** (lab `horse-cargo.txt` (a) + `horse-cargo-b.txt` (b) + `horse-cargo-drop.txt` (c), play
+  `horse-cargo-play.txt` (a) + `horse-cargo-play-b.txt` (b); attempt 2 sent parts 2+ back to the boot spot, attempt 3
+  starts them at the horse; `-WanSim bad`, `-SaveSeed afgh-ledge`, world_horse_cargo named; slim
+  archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`), claims on both logs, frames looked at:
+  - **Carrier's screen** (df9c16ce / 965fe3d5): hold1 held body 1 at the horse's yaw and hold0 body 0 a quarter turn from
+    it, through the same quaternion (0, sin(yaw/2), 0, cos(yaw/2)) [O code]; so on the carrier's screen body 1 lay ALONG
+    the horse over the saddle at the load and the walk (`770368d0` / `d4aec0a2` host-h2-loaded, `4585cc5a`
+    host-h2-ride-walk-01) [O frames]. Body 1 is now held a quarter turn from the horse's yaw too, and 0.15 m (was 0.4)
+    over the rider while riding (its back had been at the rider's mid-back). The older note that body 1 lies across at
+    the horse's yaw (`c667a209`) dates from the Lua Warp [I].
+  - **The fall at the final** (cfdfe961 / 4faf6d81): the per-id fall check `0x14128E010` (C0.vt+0xD0) skips one frame for
+    each C0 reset (bit 0x20 of the 0x580 record's +0x2C0) and otherwise runs its ground probe after the +0x3B8 grace [O
+    static, Ghidra comment]. While tracked, hold0 runs from M1's per-frame placement; after the final the cargo tick held
+    body 0 again only TRACK_PIN_MS (200 ms) later [O code], and `5a92c73f` (c) / `4585cc5a` (a) show fall / land from the
+    final on [O logs]; that the gap starts it is [I]. Body 0 is now held every tick once the track has ended.
+  - **The mount** (3b2236a7 / e59c6840): in `f7e09c55` the victim's copy unrealized body 1 at the partner's mount
+    (`partner_mount=unrealize; op=clear_allactive`), the census refused (body 1's block is checked first), hold0 refused
+    `body` twice, and body 0 fell / landed and squatted; five CRAWL requests over 2.6 s laid it down again [O guest log].
+    With world_horse_cargo, a hold0 of body 0 alone now uses body 1's class from the last full census while body 0's own
+    T class equals it (`horse_drive=held_alone`); the pillion's hold0 at the defaults is unchanged.
+  - Attempt 1 (da74e9e1 + the two fixes above): lab `f7e09c55` stopped in (a)'s ride on a refused guest capture
+    (`sequence_expiry_or_busy`, frame 27); parts (b) and (c) then found the host still mounted. Until then [O both logs +
+    frames]: the load, the first E mounting, and the carrier's screen with body 1 ACROSS the rump behind the rider at the
+    load, mounted, walk, trot and gallop (host-h2-loaded, -mounted, -ride-walk/-trot/-gallop/-gallop2/-gallop4); the
+    victim's own screen lying across the horse at the load and the walk..gallop2, hunched at the mount (the squat above).
+    Play `bb7dde83`: before the load the carrier's rifle put the host's own horse Unconscious (aim ray on 6656,
+    `horse_hit life=5400/12000`), so the first E at the loaded horse did not mount it [O host log]; host-h2-loaded shows
+    body 1 across the rump in play [O frame]. Neither stop was cargo code: the shot now goes away from the horse (the
+    victim 8 m behind the carrier at the horse, the carrier 4 m in front of them) and the parts take single frames.
+  - Attempt 2 (3d2b9d39: + the mount hold, single frames, the shot away from the horse; merged dev adbad887): two queue
+    jobs stopped before any game on the worker's audited CTest (`partner_defer_tests` / `..._nested_foreign_tests` check
+    185, a timing check that passes alone: 3/3 and 383 checks on the worker's build) and were re-queued. Lab `39fff762`:
+    **(a) passed every step** [O both logs + frames]: the load, the first E mounting, a ride of 199 m (`final_sent
+    path_cm=19944`), the victim's stance CRAWL in all 25 `victim_pin` windows (worst window lag 152 / drop 21 cm) with no
+    `step=stance`, `step=relie` or hold refusal from the load to the take-down, only prone_idle (`a=5`) in the 6 s after
+    M1's final (before: fall / land and a squat, `5a92c73f`, `4585cc5a`, and W's queue run `e759bc02` on the dev tree:
+    SQUAT 33 ms after the final, four CRAWL requests, lying again at 1.6 s), one KEEP re-place 2.3 s after the final (the
+    settle, 3.2 m), the R take-down at the same x,z on both copies (86610,148424) and the revive; no Unconscious and no
+    NEVER line. Frames: on the carrier's screen the body lies ACROSS the rump behind the rider at the load, walk, trot,
+    gallop, gallop4, the stop and both frames after the dismount (`host-h2-*`); on the victim's own screen it lies on its
+    back at every gait and after the dismount (`guest-h2-*`), with the horse itself in view only at the load (a camera
+    close over the body; that the horse is under it at the other gaits is [I] from the logs: `got_cm` = `want_cm`). (b)
+    stopped before its load: the guest's call after the teleport left the horse where (a) ended, by a rock wall, and
+    the guest's R there never shouldered the downed host (`coop_carry=search ids=1` for 9 s; the stock carry, not this
+    code); (c) then found the guest mounted. Play `624148f9`: after the load the carrier stood
+    at the horse's head (`host-h2-loaded`: the body across the rump) and the first E did not mount [O].
+  - Attempt 3 (4f312de6: + `horse_flank`, parts 2+ at the horse, shorter rides, the victim's camera a little down; merged
+    dev 872e3519 and e8f0c0f9 with W's capture retry): lab `a53a243a` (a): `horse_flank` put the carrier at the flank and
+    the first E mounted [O host log]; ride 60 m (`path_cm=5966`); the victim's stance CRAWL in all 19 windows and no stance
+    change from the load to the take-down, one window dropped 250 cm across M1's final (lag 46) [O guest log]; the R
+    take-down at the same x,z on both copies (84844,162005) [O]. Frames: the victim's own screen lies on its back at every
+    gait with the rider's head beside the body and the horse-and-rider shadow under it, and after the dismount; the
+    carrier's screen across the rump at the load, walk, gallop, gallop4, the stop and after the dismount, BUT on the
+    ground behind the trotting horse in `host-h2-ride-trot` [O]: the partner recon warped body 1 to the victim's streamed
+    position several times during the ride (`partner_recon=place; reason=teleport|retry; via=warp`, err 0.3-5.4 m, three
+    tries each, beside `horse_drive=held; body=1`) [O host log], so hold1 and the recon both move body 1. Then the 3 s
+    revive did not start (no `event=downed; step=grant`; the victim at hp 330 / 6600 after the bleed-out) [O], so (b) and
+    (c) started with the guest still down and failed. Before the load the guest's put-down was moved six times by the
+    body-safety placement (`step=putdown_place`, slide 4.3-4.4 m, drop 2.3 m) [O]. Play `72e6269a` (a): the carrier held
+    the body at the horse (`carrybodies` required and passed) but the 900 ms E there gave no `step=loading` and no
+    refusal line [O host log]; cause [U] (offTick returns silently when the carry role or the raw E read is not as
+    expected); (b) then stopped on a stance check.
+  - **Gate not passed** (three attempts used). Proven this round [O both logs + frames]: order (a) end to end in the lab
+    (`39fff762`): the load, the first E, a 199 m ride with the victim lying on both screens, the dismount with the stance
+    request on from the start and no fall / land, the take-down at one spot and the revive; the carrier's screen across
+    the rump at the load, walk, trot and gallop (`f7e09c55`, `39fff762`; at the load also in play), but once on the
+    ground at a trot in `a53a243a`. Never seen live: the guest-carrier order (b) with this code, the link drop with it,
+    a play run past the load (`bb7dde83`, `624148f9`: the first E; `72e6269a`: the load), the `held_alone` path (no
+    `body` refusal came in attempts 2 / 3), a horse falling (none seen). world_horse_cargo stays off unless named.
+  - **Next:** keep the partner recon off body 1 while hold1 holds it (it warps body 1 to the streamed pose: the trot frame
+    of `a53a243a`); find why the revive did not start after the 60 m ride (`a53a243a`: no grant, hp 330); run (b) where
+    the stock pickup works (open ground; `39fff762`'s rock wall stopped it), then (c) and the play pair, both orders.
 
 ## 12. Ride behind your partner (horse plan M3, lab key `world_horse_pillion`, on with the gun profile since M3c)
 

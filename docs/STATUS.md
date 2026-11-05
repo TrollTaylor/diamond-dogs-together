@@ -1,3 +1,48 @@
+## November 5, 2026: horse M2g, put your downed partner on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new by default: putting a downed partner on the horse stays off unless the lab key is named
+(the gate was not reached in three attempts). With the key named, hidden two-copy lab tests now show the downed
+partner lying ACROSS the horse's back behind the rider on the carrier's screen (it lay along the horse, over the
+saddle, before), and on their own screen they stay lying on the horse through the ride AND after the carrier gets
+off: no more falling and crouching on it (one full lab run, the host carrying: load, a 199 m ride, the dismount, the
+take-down at the same spot on both screens and the revive). Details: `docs/mounts.md` section 11 ("Hidden runs, M2g
+round"). Markers [O]/[I]/[U].
+
+- **Built** (red first each time): on the carrier's screen the body is held a quarter turn from the horse's yaw, so it
+  lies across the rump behind the rider instead of along the horse over the saddle, and 0.15 m (was 0.4) over the rider
+  (df9c16ce / 965fe3d5); on the victim's copy body 0 is held every tick once the carrier's ride has ended (the 200 ms gap
+  after M1's final placement let the fall check run: cfdfe961 / 4faf6d81; Ghidra comment at the fall check
+  `0x14128E010`); the hold of body 0 keeps going when body 1 is unrealized for a frame at the partner's mount, with body
+  1's class from the last full census, cargo key only (3b2236a7 / e59c6840); the debug command `horse_flank` (b8a377eb /
+  9a0f75cb); the scenarios as parts, single frames, the shot away from the horse, the carrier at the flank before the
+  first E, the victim's camera a little down (da74e9e1, 6f708087, 687af3af, 52ef9dfd). Merged dev adbad887, 872e3519 and
+  e8f0c0f9 (W's capture retry and landing fix).
+- **Proven** [O both copies' logs + frames looked at]: lab `39fff762` order (a) end to end (above): the victim's stance
+  CRAWL in 25 / 25 windows, no stance change, no stance request and no hold refusal from the load to the take-down,
+  only prone_idle in the 6 s after the carrier's dismount (the old code fell / landed and squatted there: `5a92c73f`,
+  `4585cc5a`, and W's queue run `e759bc02` on the dev tree), the R take-down at the same x,z on both copies, the revive,
+  no Unconscious horse and no NEVER line. The carrier's screen shows the body across the rump at the load, walk, trot,
+  gallop, the stop and after the dismount (`39fff762`, `f7e09c55`, and in play at the load `bb7dde83` / `624148f9`).
+  `horse_flank` put the carrier at the flank and the first E mounted (`a53a243a`).
+- **Not passed / never seen live:** the guest-carrier order (b) with this code (`39fff762`: the guest's call left the
+  horse where (a) ended, by a rock wall, and the stock pickup never shouldered the host there), the link drop, any play
+  run past the load (`bb7dde83`: the carrier's own rifle put its horse Unconscious; `624148f9`: the carrier at the
+  horse's head; `72e6269a`: E at the horse gave no load and no refusal line, cause [U]), the `held_alone` path (no
+  `body` refusal came after the fix). In `a53a243a` (a): the partner recon warped body 1 off the horse on the carrier's
+  screen at the trot (`partner_recon=place ... via=warp` while `horse_drive=held; body=1`; frame `host-h2-ride-trot`:
+  the body on the ground behind the horse) [O], one victim window dropped 250 cm across the final (no stance change),
+  and the revive after the take-down did not start (no `event=downed; step=grant`, the victim at hp 330 / 6600), so (b)
+  and (c) began with the guest still down. Worker: two jobs stopped on the audited CTest's timing check
+  `partner_defer_* check 185` before any game (it passes alone), re-queued; not counted.
+- **Next:** keep the partner recon off body 1 while hold1 holds it; find why the revive did not start after the 60 m
+  ride (`a53a243a`) and why the E at the horse gave no load in play (`72e6269a`); run (b) on open ground (the stock
+  pickup), then (c) and the play pair, both orders; then the flip with one run not named.
+- Builds: full 355/355 at 4f312de6 (and 3d2b9d39, da74e9e1; at 52ef9dfd 354/355, local_coop_windows_tests access denied
+  on a temp file, green re-run); every generator `--check` as base (carry_info, sleep_plugin differ; native_ui,
+  teammate_targeting no evidence; horse_drive 6 sites / 5 slots and vehicle_controller 17 / 9 with `--executable`).
+  Archives `%USERPROFILE%\mgs-coop-run-archive\horse\` f7e09c55, bb7dde83, 39fff762, 624148f9, a53a243a, 72e6269a
+  (JPEG frames, contact sheets, slices).
+
 ## November 5, 2026: enemy round 9 track C - the far mirror's walkers plan their own path: the plans land and the one mirrored calm walker's place error fell from 9 to 1.3 m (p50), but 3 of 4 calm walkers are never taken, released walkers freeze, and the calm gate is not reached; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.26, protocol section 43. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
