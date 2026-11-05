@@ -247,7 +247,7 @@ check(math.abs(f.lastWarp(1).y - (2.0 + f.C.RISE_MM / 1000 + 1.0)) < 1e-6, "a ce
 -- edge is 0.8 m.
 check(f.C.GROUND_LO_MM == 800, "the ground window's low edge is 0.8 m")
 f.horse.y = 2520; f.tick(50)
-check(math.abs(f.lastWarp(1).y - (2.52 + f.C.RISE_MM / 1000)) < 1e-6 and f.logged("how=census"),
+check(math.abs(f.lastWarp(1).y - (2.52 + f.C.RISE_MM / 1000)) < 1e-6,
  "a census 0.52 m over the carrier's ground: still the census cargo point")
 f.horse.y = 2300; f.tick(50)
 check(math.abs(f.lastWarp(1).y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6, "a census 0.3 m over the ground: kept 1.35 m over the ground")

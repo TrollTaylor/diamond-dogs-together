@@ -30,11 +30,11 @@ local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 26
 -- the carrier's ground; 0.8 m over it and 0.76 m over the rider still drew the body high at a stand, and 0.55 / 0.5 (runs
 -- 144d99bb / 4585cc5a) a little high over the rump, so the body goes 0.45 m over an unridden census and, while this
 -- copy's player rides, 0.54 m behind and 0.4 m over the rider's own position (no census lag). On foot within 3 m a point
--- outside 1.0-2.0 m over the carrier's ground is put 1.35 m over it.
+-- outside 0.8-2.0 m over the carrier's ground is put 1.35 m over it (run 5a92c73f: a census root 0.52 m over it after a ride).
 -- The victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose
 -- right after each placement, else 0.9 m over the census, turned a quarter turn (body 0 lies along its yaw, body 1
 -- across: c667a209 frames).
-local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 400, 1000, 2000, 1350, 3000, 2000
+local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 400, 800, 2000, 1350, 3000, 2000
 local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
 -- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low at a gallop on the carrier's screen, body 0 slipping off at a
 -- gallop on the victim's): a warped body is drawn after the frame's own move of the rider / the placed horse, so it
@@ -62,6 +62,7 @@ local WARP_WHY = {off = true, request = true, pins = true, receipt = true}
 C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
 local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET, relie = 1}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
+C.GROUND_LO_MM = GROUND_LO_MM
 C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM,
  VICTIM_RISE_MM, VICTIM_PLACED_MM
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi

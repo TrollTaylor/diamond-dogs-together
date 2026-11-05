@@ -226,6 +226,10 @@ W.handlers[BODY] = function(v)
   if S.localRides() then log("step=final_ignored;why=local_rides"); return end
   local r = place(v[4], v[5], v[6], v[7], false)
   local ok = r and r.ready == true
+  -- M2f (run 4585cc5a: the loaded body fell / landed from this placement on, then squatted on the horse): a body loaded on
+  -- this horse follows the final pose in the same frame too (world_horse_cargo.lua).
+  local HC = W.horseCargo
+  if ok and type(HC) == "table" and type(HC.placed) == "function" then pcall(HC.placed, r.x, r.y, r.z, v[7]) end
   log(fmt("step=final;placed=%d;reason=%s;x=%d;z=%d", ok and 1 or 0, ok and "ok" or tostring(r and r.reason), round(v[4] / 10), round(v[6] / 10)))
   endTrack(t, "final")
   S.closedAt = t
