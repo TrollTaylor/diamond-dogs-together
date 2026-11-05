@@ -1,0 +1,26 @@
+# Enemy sync M7 step 1, told sight proof part 3 of 3 (header: enemy-sight-1-tell.txt): the guest comes back to 6 m of
+# guard 1740692850, nearer to the guards than the host: the offense player turns to body 1 again (no faster than the
+# 4 s hold) and the guards fire at body 1.
+logmark both
+host run perceive_reset
+guest run enemy goto 1740692850 6
+guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 6000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+host burst t3-back 4 1500
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture t3-12
+wait 8000
+host run perceive_status
+guest run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t3-24
+host run damage_status
+host run world_status
+guest run world_status

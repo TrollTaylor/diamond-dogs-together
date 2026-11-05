@@ -18,7 +18,7 @@ do
         for i, w in ipairs(P.WHY) do CODE[w] = i end
         local NATIVE = {disabled = "native_off", contract = "native_off", latched = "native_off", role = "native_off",
             grant = "grant", pose = "pose", range = "range", stance = "stance", mission = "context", far = "far",
-            soldier = "latched"}
+            soldier = "latched", relayed = "unrealized", backoff = "unrealized"}
         local function L(...) W.log(fmt(...)) end
         local function send(id, t) return W.api.send(id, t) end
         local function call(t, k, ...)
@@ -387,7 +387,7 @@ do
         -- Enemy sync M3 (W.ownerOn, docs/world-sync-design.md 7.9), the guest: the guards the host gives it (OWNER 73) and
         -- where its copies stand (ENEMY_PLACE 71), as the host's scan does for its own (4 reads per update, every 500 ms
         -- within 40 m of this player, 1 s beyond; sent when moved 1 m or every 2 s; flag 1 while its CP is in ALERT here).
-        -- A place the host refused (ENEMY_PLACE_ACK: far, native_off, latched) backs that guard off 10 s.
+        -- A place the host refused (ENEMY_PLACE_ACK: far, native_off, latched) backs that guard off 10 s, unrealized 3 s.
         H[OP.OWNER] = function(v)
             if W.host or not W.ownerOn then return end
             local mine = v[2] == 1
@@ -397,14 +397,14 @@ do
                 L("event=owner_rx;ent=%.0f;owner=%s;why=%d", v[1], mine and "guest" or "host", v[3])
             end
         end
-        local BACKOFF = {far = true, native_off = true, latched = true}
+        local BACKOFF = {far = 10000, native_off = 10000, latched = 10000, unrealized = 3000}
         H[OP.ENEMY_PLACE_ACK] = function(v, now)
             if W.host then return end
             P.ownAck = P.ownAck or {applied = 0, refused = 0}
             if v[3] == 0 then P.ownAck.applied = P.ownAck.applied + 1; return end
             P.ownAck.refused = P.ownAck.refused + 1
             local why = P.WHY[v[4]] or "?"
-            if BACKOFF[why] and P.ownS[v[2]] then P.ownS[v[2]].back = (now or W.now()) + 10000 end
+            if BACKOFF[why] and P.ownS[v[2]] then P.ownS[v[2]].back = (now or W.now()) + BACKOFF[why] end
             L("event=place_ack;side=host;seq=%d;ent=%.0f;result=refused;why=%s", v[1], v[2], why)
         end
         function P.ownScan(now)

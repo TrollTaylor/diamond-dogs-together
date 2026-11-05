@@ -734,9 +734,11 @@ struct LabConfig {
     // soldier_follow. Lab and play; off unless named (a probe: its puppets never notice the guest).
     bool soldier_puppet = false;
     bool soldier_puppet_given = false;
-    // Enemy sync M7 (docs/world-sync-design.md 7.13): soldier_perceive makes the offense index getter answer per soldier
-    // (soldier_perceive.hpp InstallPick; CFG r[19] bit 256: the host's Lua sends each guard's nearer player), so this
-    // copy's soldiers perceive body 1, the partner, too; soldier_brain makes each guard's owner
+    // Enemy sync M7 (docs/world-sync-design.md 7.13): soldier_perceive installs the offense index getter stub and the
+    // LOCAL accessor hooks (soldier_perceive.hpp InstallPick / InstallLocal; CFG r[19] bit 256): the host's Lua keeps one
+    // offense player for every guard (the nearer player of the nearest guard sampled in the last 2 s, held 4 s) and tells
+    // a calm guard within 10 m of the guest it found the player (SetDiscoveryPlayer: the guards' own senses never pick up
+    // body 1, runs 29e389d7 / 0608ad9f; told, they fire at it, d7cb1b1d); soldier_brain makes each guard's owner
     // the only brain for the damage it deals (downed_damage + soldier_authority: the other copy's hits on a player do
     // nothing, the owner's hits on the replica reach the partner as SOLDIER_HIT 0x4C, world_friendly.lua) and holds the
     // other copy of a calm guard back (SetPuppet, world_snap.lua) until the owner's copy shoots that player (CFG r[19]
@@ -748,7 +750,8 @@ struct LabConfig {
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
-    // play; off unless named, the gun profile included (its first default run, e583ee62, latched the warp off).
+    // play; follows the gun profile (a named 0 opts out). The latch of its first default run, e583ee62, came without it
+    // too (enemy latch, arm A 6348f361): the engine's relay to an unrealized guard, now refused "relayed" per guard.
     bool place_lift = false;
     bool place_lift_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's

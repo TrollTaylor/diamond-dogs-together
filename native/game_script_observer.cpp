@@ -2758,10 +2758,15 @@ void PublishDebugSnapshot() noexcept {
 }
 
 // soldier_warp::Gate::Record's answer: a process latch (fault, or the fifth anomaly) or one guard's latch (its
-// second anomaly), each logged once.
+// second anomaly), each logged once; or (enemy latch, docs/world-sync-design.md 7.14) a relay: only that guard waits.
 void LogSoldierWarpLatch(const char* latched, std::uint32_t id, std::uint32_t go, const mgscoop::soldier_warp::Result& result) noexcept {
     if (!latched) return;
-    if (std::strcmp(latched, "soldier") == 0)
+    if (std::strcmp(latched, "relayed") == 0)
+        LogFormat("soldier_warp=relayed; id=%u; go=%u; r=%d; h=%u; streak=%u; back_ms=%llu; relayed=%u; anomalies=%u\r\n", id, go,
+                  result.out, unsigned(result.handled), soldier_warp_gate.RelayStreak(go),
+                  static_cast<unsigned long long>(soldier_warp_gate.BackoffLeft(go, soldier_warp_gate.now)), soldier_warp_gate.relayed,
+                  soldier_warp_gate.anomalies);
+    else if (std::strcmp(latched, "soldier") == 0)
         LogFormat("soldier_warp=soldier_latched; id=%u; go=%u; r=%d; h=%u; anomalies=%u; until=process_exit\r\n", id, go, result.out,
                   unsigned(result.handled), soldier_warp_gate.anomalies);
     else
@@ -2795,9 +2800,9 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     for (unsigned i = 0; i < 3; ++i) request.player[i] = snapshot.player_pos[i];
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
     // One command, one guard, bounded attempts; a fault (or the fifth anomaly) latches the feature off, a guard's
-    // second anomaly latches that guard off.
+    // second anomaly latches that guard off; a relay backs that guard off.
     sw::Result result{};
-    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
+    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, mgscoop::partner_net::NowMs())) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
@@ -2818,7 +2823,7 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
         LogFormat("debug_menu=soldier_warp; id=%u; go=%u; r=%d; h=%u; leaf=%s; refused=%s\r\n", id, request.go_id, result.out,
-                  unsigned(result.handled), result.chain.pinned ? "pinned" : "engine", result.refusal ? result.refusal : "none");
+                  unsigned(result.handled), sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return refuse(result.refusal);
@@ -2901,7 +2906,7 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     if (!grant.serial || grant.serial > 0x7FFFFFFFu) return refuse("grant");
     const std::uint32_t id = 0x80000000u | grant.serial;
     sw::Result result{};
-    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
+    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
@@ -2920,7 +2925,7 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
         }
         LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s\r\n", unsigned(seq),
                   unsigned(grant.kind), grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out,
-                  unsigned(result.handled), result.chain.pinned ? "pinned" : "engine", result.refusal ? result.refusal : "none");
+                  unsigned(result.handled), sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return refuse(result.refusal);
@@ -2982,7 +2987,7 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     if (!grant.serial || grant.serial > 0x7FFFFFFFu) return refuse("grant");
     const std::uint32_t id = 0x80000000u | grant.serial;
     sw::Result result{};
-    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
+    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
@@ -2994,9 +2999,14 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     if (id != last_id || request.go_id != last_go || result.out != last_out || result.handled != last_handled ||
         result.refusal != last_refusal) {
         last_id = id; last_go = request.go_id; last_out = result.out; last_handled = result.handled; last_refusal = result.refusal;
+        if (soldier_warp_census < 24 && result.chain.type_object) {
+            ++soldier_warp_census;
+            char line[512]{};
+            if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
+        }
         LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),
-                  result.chain.pinned ? "pinned" : "engine", guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none");
+                  sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return refuse(result.refusal);
@@ -3089,7 +3099,7 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     request.max_range = sw::kMaxRangeLimitM;
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
     sw::Result result{};
-    if (const char* gate = soldier_warp_gate.AdmitDrive(request.go_id)) result.refusal = gate;
+    if (const char* gate = soldier_warp_gate.AdmitDrive(request.go_id, mgscoop::partner_net::NowMs())) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), 0, request.go_id, result);
@@ -3316,10 +3326,47 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 used+=static_cast<std::size_t>(k);
             }
             LogFormat("soldier_perceive_targets; %s\r\n",used?targets:"none");
-            char bodies[240]{};
+            char bodies[440]{};
             if(sp::BodiesLine(GetModuleHandleW(nullptr),bodies,sizeof(bodies)))
                 LogFormat("soldier_perceive_bodies; %s; mask_writes=%u\r\n",bodies,sp::BodyMaskWrites());
+            sp::LogMasks(Log);
+            sp::LogLocal(Log,40);
             debug::Result(pending.id,1,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_local ", 15) == 0) {
+            // M7 step 1 probe P13 (soldier_perceive.hpp InstallLocal): perceive_local <0|1|pick|off> answers the LOCAL
+            // accessors (record, index) for callers in the soldier / notice code with that player (pick: each soldier's
+            // target); perceive_local all: every caller reads body 1 (research); perceive_local census <0|1> counts the
+            // callers (perceive_status logs the top 40, perceive_local dump all of them).
+            namespace sp=mgscoop::soldier_perceive;
+            const char* arg=pending.text+15;
+            const bool on=sp::LocalInstalled();
+            bool ok=false;
+            if(std::strncmp(arg,"census ",7)==0 && (arg[7]=='0' || arg[7]=='1') && arg[8]==0) {sp::SetLocalCensus(arg[7]=='1');ok=on;}
+            else if(std::strcmp(arg,"dump")==0) {sp::LogLocal(Log,sp::kLocalCensus);ok=on;}
+            else {
+                const int want=std::strcmp(arg,"0")==0?0:std::strcmp(arg,"1")==0?1:std::strcmp(arg,"pick")==0?sp::kLocalPerSoldier:
+                               std::strcmp(arg,"all")==0?sp::kLocalAll:-1;
+                ok=on && (want>=0 || std::strcmp(arg,"off")==0);
+                if(ok) sp::SetLocalMode(want);
+            }
+            char head[160]{},line[200]{};
+            if(!sp::LocalLine(head,sizeof(head))) StringCchCopyA(head,ARRAYSIZE(head),"local;overflow");
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_local;ok=%u;key=%u;%s",ok?1u:0u,on?1u:0u,head);
+            LogFormat("soldier_perceive_local_set; %s\r\n",line);
+            debug::Result(pending.id,ok?1u:0u,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_online ", 16) == 0) {
+            // P13 L4 research: perceive_online 1 sets the soldier manager's online bit at each leaf snapshot; 0 restores
+            // the offline bits once.
+            namespace sp=mgscoop::soldier_perceive;
+            const char* arg=pending.text+16;
+            const bool on=sp::PickInstalled();
+            const bool ok=on && (std::strcmp(arg,"0")==0 || std::strcmp(arg,"1")==0);
+            if(ok) sp::SetOnline(arg[0]=='1'?1:0);
+            char line[120]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_online;ok=%u;key=%u;online=%d;writes=%u",ok?1u:0u,on?1u:0u,sp::OnlineMode(),
+                             sp::OnlineWrites());
+            LogFormat("soldier_perceive_online; %s\r\n",line);
+            debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strncmp(pending.text, "perceive_pick ", 14) == 0) {
             // M7 step 1 probe P12c: perceive_pick <index> <0|1|off> (the debug pick holds the targets: Lua sets are
             // ignored until perceive_auto 1), perceive_pick clear.
@@ -3363,7 +3410,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             LogFormat("soldier_perceive_leaf; %s\r\n",line);
             debug::Result(pending.id,any||stock?1u:0u,line);
         } else if (pending.id && std::strncmp(pending.text, "perceive_mask ", 14) == 0) {
-            // P12d research: perceive_mask <slot 0|1> <offset hex c0..cb> <mask hex> (mask 0 = off), applied before the
+            // P12d research: perceive_mask <slot 0|1> <offset hex c0..df> <mask hex> (mask 0 = off), applied before the
             // leaf snapshot's getter call to body 1's player record; perceive_mask off clears both.
             namespace sp=mgscoop::soldier_perceive;
             const char* arg=pending.text+14;
@@ -3387,7 +3434,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             LogFormat("soldier_perceive_mask; %s\r\n",line);
             debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "perceive_reset") == 0) {
-            mgscoop::soldier_perceive::PickReset();mgscoop::soldier_authority::DefenseReset();
+            mgscoop::soldier_perceive::PickReset();mgscoop::soldier_perceive::LocalReset();mgscoop::soldier_authority::DefenseReset();
             Log("soldier_perceive_reset; counters=0\r\n");
             debug::Result(pending.id,1,"perceive_reset;ok=1");
         } else if (pending.id && std::strncmp(pending.text, "perceive_force ", 15) == 0) {
@@ -5924,8 +5971,9 @@ bool SelectSoldierAuthReceipt(const char* buffer,std::size_t size,mgscoop::scrip
     if(sa::Set(static_cast<std::uint16_t>(index),remote!=0)) replacement={yes,sizeof(yes)-1};
     return true;
 }
-// Enemy sync M7 step 1 (soldier_perceive.hpp): MGS_COOP_SOLDIER_PERCEIVE_V1 -- clear | status | <index 0..511> <target
-// -1|0|1>, on the runtime thread: the per-soldier target of the offense index getter (Lua: the host's nearer-player rule).
+// Enemy sync M7 step 1 (soldier_perceive.hpp): MGS_COOP_SOLDIER_PERCEIVE_V1 -- clear | status | offense <0|1|off> |
+// <index 0..511> <target -1|0|1>, on the runtime thread: the per-soldier target of the offense index getter (Lua: the
+// host's nearer-player rule) and the single offense player of P13c's told sight (clear also drops it).
 // While a debug perceive_pick holds the targets (perceive_auto 0), a set is acknowledged but not applied. Reply
 // return <installed>,<t0>,<t1>,<auto> (status, clear) or return 1|0 (set). No game read or call.
 bool SelectSoldierPerceiveReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
@@ -5939,10 +5987,16 @@ bool SelectSoldierPerceiveReceipt(const char* buffer,std::size_t size,mgscoop::s
     namespace sp=mgscoop::soldier_perceive;
     const bool automatic=perceive_auto.load();
     if(rest=="clear" || rest=="status") {
-        if(rest=="clear" && automatic) sp::ClearTargets();
+        if(rest=="clear" && automatic) {sp::ClearTargets();sp::SetForcedIndex(-1);}
         if(SUCCEEDED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return %u,%u,%u,%u",sp::PickInstalled()?1u:0u,sp::TargetCount(0),
                                       sp::TargetCount(1),automatic?1u:0u)))
             replacement={reply,std::strlen(reply)};
+        return true;
+    }
+    // P13c told sight: offense <0|1|off>, Lua's single offense player (the forced index; refused while a debug pick holds).
+    if(const int offense=sp::OffenseCommand(rest.data(),rest.size()); offense>=-1) {
+        static constexpr char yes[]="return 1";
+        if(automatic && sp::PickInstalled()) {sp::SetForcedIndex(offense);replacement={yes,sizeof(yes)-1};}
         return true;
     }
     unsigned index=0;int target=0;
@@ -6305,6 +6359,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("terminating");
             mgscoop::soldier_authority::Clear();
             mgscoop::soldier_perceive::ClearTargets();
+            if(perceive_auto.load()) mgscoop::soldier_perceive::SetForcedIndex(-1);  // Lua's offense player ends with the mission
             restored=RestoreGameplayRules();
             // The partner tick stops while terminating, so the input window and
             // DM patch must be torn down here (before the Lua STOP receipt),
@@ -6816,8 +6871,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     // (soldier_perceive.hpp InstallPick: the offense index getter answers per soldier; the targets come
                     // from Lua, MGS_COOP_SOLDIER_PERCEIVE_V1, or perceive_pick). The scorer patch of probe P11 is no
                     // longer installed (run af17b899: a no-op in free roam).
-                    if (labc.soldier_perceive) mgscoop::soldier_perceive::InstallPick(base, Log);
-                    else Log("soldier_perceive=off; reason=key_off\r\n");
+                    if (labc.soldier_perceive) {
+                        // P13: the LOCAL accessor hooks (stock answers until perceive_local names a redirect).
+                        if (mgscoop::soldier_perceive::InstallPick(base, Log)) mgscoop::soldier_perceive::InstallLocal(base, Log);
+                    } else Log("soldier_perceive=off; reason=key_off\r\n");
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.
                     const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();
