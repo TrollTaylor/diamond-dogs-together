@@ -40,7 +40,8 @@ host = [
 ]
 guest = [
     'world_lua=event=readback; ent=1799112697; src=vert; at=500; ms=505; dy_m=0.00; held=1; far_m=30; t_ms=5',
-    # Runs 90d9b4d1 / ddcdec94: the guest was downed in the ALERT and the host's copies of its guards drifted 40-60 m
+    # Runs 90d9b4d1 / ddcdec94: the guest was downed in the ALERT and the host's copies of its guards drifted (median
+    # per second up to 29 m / 52 m)
     # (native range refusals, near=host) until the end; the host M3 error before that down is reported apart.
     'world_lua=event=downed; step=entered; role=2; generation=4; cause=1; t_ms=1000',
 ]

@@ -2423,12 +2423,13 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
     placement tick).
   - `event=drive_sink; ent; off_m; e_cm; low_ms` (was in `world_snap.lua`): the reply's `v` more than 1.5 m under the
     target for 2 s in all, summed across readings (a reading level for less than 2 s does not reset it; level for 2 s
-    does). Once per such episode.
+    does; each gap between two low readings counts up to 2 s). Once per such episode.
   - place_reach only: a read-back of a copy beyond 60 m more than 1.5 m under where it was put (and under the owner's
     newest sample of him, when one is at most 3 s old) logs `event=readback_fix; ent; src; far_m; dy_m; put=1` and
     queues that placement (or the owner's newest sample) again once; its force-realize ends when that put-back is done;
     or `put=0; why=once|owner|busy|none` (`once`: the put-back fell too; `owner`: the owner went down with him, nothing
     done). For 10 s after a fix no realize hold starts for him: `event=readback_nohold; ent; why; left_ms` once.
 - `tools/enemy_div_report.py`: `guard_fell` counts the host's `place_div why=fall` lines too; new rows `readback`
-  (held / fell per copy and source), `readback_fell_guards`, `readback_fix`, `vert_snaps`, `vert_stop`
+  (held / under / above per copy and source), `readback_under_guards`, `readback_above_guards`, `readback_2s` (armed /
+  got / cut by a newer arm / open), `readback_fix`, `vert_snaps`, `vert_stop`
   (`tests/enemy_div_report_check.py`, run by hand: `python -I tests/enemy_div_report_check.py`).
