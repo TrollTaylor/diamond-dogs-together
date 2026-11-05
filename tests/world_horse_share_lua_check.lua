@@ -177,12 +177,15 @@ local fast = 0
 for _, t in ipairs(f.tx) do if t[1] == 44 then fast = fast + 1; check(t[3] == 3 and t[4] == HORSE and t[5] == 10000, "RIDE_FAST kind 3, id 6656, the census pose") end end
 check(fast >= 9 and fast <= 11, "20 Hz while riding")
 check(f.S.busy() and f.W.travel.blocked() == 3, "riding: busy")
+-- M2 round 2 (the M1 regression part): the final_sent line carries the ride's path (the census pose read while riding).
+for _ = 1, 10 do f.horse.x = f.horse.x + 100; f.tick(25) end
 f.rides, f.horse.occupied = false, false
 f.horse.x = 12345
 f.tick(25)
 local last = f.tx[#f.tx]
 check(last[1] == 42 and last[3] == 1 and last[4] == HORSE and last[5] == 12345 and last[9] == 0 and last[10] == 65534,
     "the dismount: one final reliable RIDE_BODY kind 1 with the unridden pose")
+check(f.logged("step=final_sent;ok=1;") and f.logged(";path_cm=100;"), "final_sent: the ridden path, 1 m (10 reads 0.1 m apart)")
 local count = #f.tx
 for _ = 1, 10 do f.tick(25) end
 check(#f.tx == count and not f.S.busy(), "once")
@@ -204,4 +207,35 @@ f.W.horseCargo = {placed = function(x, y, z, yaw) heard[#heard + 1] = {x, y, z, 
 for i = 0, 8 do f.fast(5000 + i * 50, 10000 + i * 200, 2000, 30000, 100); f.tick(50) end
 check(#heard >= 1 and heard[#heard][4] == 100 and heard[#heard][1] == f.places[#f.places].x,
     "M2: world_horse_cargo hears each placement with the pose written")
+-- M3: with world_horse_pillion the ride hold shrinks to where E would claim the rear seat or the stock mount prompt shows
+-- (2.5 m, released past 2.8 m): 3 m from the partner-ridden horse E reaches the game. Without it the M1 hold stays (4 m /
+-- 4.5 m): the shrink is unproven until a pickup or revive at 3 m is seen (M3 round 1: e_free never logged).
+check(f.S.HOLD_MM == 4000 and f.S.FREE_MM == 4500 and f.S.PILLION_HOLD_MM == 2500 and f.S.PILLION_FREE_MM == 2800,
+    "M3: 4 m / 4.5 m, and 2.5 m / 2.8 m with the pillion key")
+f = fixture()
+for i = 0, 6 do f.fast(5000 + i * 50, 10000, 2000, 30000, 100); f.tick(50) end
+p = f.places[#f.places]
+f.env.vars.playerPosX, f.env.vars.playerPosZ = (p.x + 3000) / 1000, p.z / 1000
+f.fast(5400, p.x, 2000, p.z, 100)
+f.tick(50)
+check(f.S.hold, "M3: without the pillion key 3 m is still held (M1)")
+f = fixture()
+f.W.horsePillion = {keyOn = function() return true end}
+for i = 0, 6 do f.fast(5000 + i * 50, 10000, 2000, 30000, 100); f.tick(50) end
+p = f.places[#f.places]
+f.env.vars.playerPosX, f.env.vars.playerPosZ = (p.x + 3000) / 1000, p.z / 1000
+f.fast(5400, p.x, 2000, p.z, 100)
+f.tick(50)
+check(not f.S.hold and not f.logged("event=horse_hold;step=action_masked;"), "M3: 3 m from the ridden horse: no ride hold, E acts normally")
+f.env.vars.playerPosX = (p.x + 2000) / 1000
+f.fast(5450, p.x, 2000, p.z, 100)
+f.tick(50)
+check(f.S.hold, "M3: 2 m: held (the rear-seat claim zone)")
+-- M3: the pillion (world_horse_pillion.lua) hears each placement and keeps Travel / Bring waiting while seated.
+local seen = {}
+f.W.horsePillion = {placed = function(x, y, z, yaw) seen[#seen + 1] = {x, z, yaw} end, busy = function() return true end}
+f.fast(5500, p.x, 2000, p.z, 100)
+f.tick(50)
+check(#seen == 1 and seen[1][3] == 100, "M3: world_horse_pillion hears the placement")
+check(f.S.busy(), "M3: a pillion seated or driving: busy")
 print("world_horse_share_lua_check: " .. checks .. " checks passed")

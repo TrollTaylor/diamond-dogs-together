@@ -170,6 +170,87 @@ afgh-ledge: `94a7bf2a`, `adecad01` and `80cc0176` (enemy-act-1-quiet + enemy-act
   17 sites / 6 slots; the known failures carry_info, sleep_plugin, native_ui, teammate_targeting, master_server's
   argument quirk and camera_mode_window; horse_drive and vehicle_controller pass with `--executable`).
 
+## November 5, 2026: horse M3, ride behind your partner (`wp/horse`; lab key `world_horse_pillion`, off unless named)
+
+**Players get:** nothing new at the defaults. The M3 gate did not pass in this round's four proof attempts, so
+`world_horse_pillion` stays off unless named (lab and play), and the M1 ride hold keeps its 4 m without it. Details:
+`docs/mounts.md` section 12. No live run used this head with every key at its default (share on through the gun profile,
+cargo and pillion off): the last M1 play regression (`7f3155c8`) had cargo on, and every M3 run named the pillion key. The
+default path, the 4 m hold restored by 98e6a595 included, is covered by the Lua checks and CTest only.
+
+- **Built** (`lua/coop/world_horse_pillion.lua`, a new world chunk; HORSE_SEAT seat 1, no new op): beside the horse your
+  partner rides, E claims the rear seat (read before the pad masks by the new `MGS_COOP_HORSE_DRIVE_V1 pad` verb, since
+  the ride hold's ACTION mask hides E from the downed poll); the host grants, its own press commits under a 3 s press
+  lock; the passenger's copy masks the pad (the camera stays free), squats and holds body 0 on its placed horse's rear
+  seat every frame (hold0); the driver's copy leases the new `seat1` verb so the partner driver draws body 1 at the rear
+  seat of its own ridden horse, seated by the DM overlay (In::pillion); E held again hops off; the driver getting off, the
+  ride's end, a link drop, a downed passenger or a context change lay the passenger beside the horse. With the key the
+  ride hold shrinks to 2.5 m. Not built: the same-moment E tie (no local dismount request exists).
+- **Proven** (both logs, both role orders, lab and play `-WanSim bad`; runs `ba6b4bb5`, `b48f897b`, `306525db`,
+  `c4428efa`, `bdd49a57`, `a295d660`, `718b6411`): the claim, the grant (and the host's own press), seated / driver, the
+  lease and the overlay seat, the hop-off on both copies, both off when the driver gets off, the first E at an unridden
+  horse mounting before and after (attempts 3 and 4 ran every scripted step; the scripted guest claim and the passenger's
+  driver_off waitlogs matched earlier lines, and the lines they wait for are in the logs). Frames: the DRIVER's screen
+  shows two riders on the horse at walk, trot and gallop, the passenger seated right behind (`ba6b4bb5`, `306525db`,
+  `c4428efa`); in `bdd49a57` the passenger floats about 0.7 m over the rider.
+- **What blocks the gate:** (1) the passenger's own screen: their body is never seated; it stays with the horse in xz
+  (seat_pin lag mostly 4-8 cm, but windows of 36-67 cm in 5 of 7 runs) but 1-2.3 m low, on the ground beside it or
+  crouched / airborne over its rear, at every height tried and with the Lua Warp too; (2) the passenger's copy's horse
+  falls unconscious during the ride in every run; (3) when the host drives with the guest behind, the host's horse
+  stands still for about 16 s under the ride keys and then rides the gait sequence after release (not the collision, not
+  the overlay seat; cause unknown). No pickup or revive 3 m from the ridden horse was shown, so the shrunken ride hold
+  is pillion-key only. An unmasked E about 3 m from the ridden horse was never tested either: in all 7 runs the scripted
+  "stray E" landed 1.07-1.88 m from it with the ride hold's ACTION mask on and claimed the rear seat (no `two_drivers`
+  line, but no proof of the 2.5 m hold; 98e6a595's message overstates this).
+- **Next:** carry the passenger's body by the engine (the D-Horse cargo slot is the native rear-seat anchor; writing it
+  needs the user, the plan reads it only) or write it after the player's physics update (a new pinned hook); log the
+  host's census rider index and pad words through the stall.
+
+## November 4, 2026 (round 2): horse M2 finish, a downed partner on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new at the defaults. The M2 gate did not pass in this round's four proof attempts, so
+`world_horse_cargo` stays off unless named (lab and play). The M1 shared D-Horse (on with the gun profile) is unchanged
+and its regression checks passed: details below and `docs/mounts.md` sections 10-11.
+
+- **Fixed and proven this round** (every claim on both copies' logs, frames looked at): the downed player's controls now
+  hold through the whole ride and the dismount (the held posture of 04f68c11: `downed_control=observed; reason=downed;
+  posture=box`, no `controls_timeout_prone` on the horse in any run); the 0.3 s R take-down lays them on the ground at
+  the same point on both copies (the coop pickup shouldered them at 0.5 s, `a49c4d76`) and the 3 s revive after it works;
+  the guest-carrier order (claim, host grant over HORSE_SEAT, load) works; a load's E held on no longer takes them down
+  again; within 1.2 m of the horse the facing check is skipped (`20aef564`); for 2 s after a dismount the stand point
+  follows a horse still slowing from a gallop (`883dc6ab` laid them down `call_away`); the link drop lays the body down on
+  both copies (`why=stream_lost` / `why=context`); victim_gone lays body 0 down only within 5 m of the horse. Runs
+  `d2a5cafa` (lab), `c2927350` and `7f3155c8` (play `-WanSim bad`) passed every scripted step in both carrier orders;
+  `7f3155c8` ran with `world_horse_cargo` not named (on through the gun profile for that session only). Some waitlogs
+  matched earlier lines (`7f3155c8` (m1): the guest's final_sent and the host's placed; `d2a5cafa` (b): the host's
+  placed); the lines they wait for are in the logs.
+- **What blocks the gate:** the downed player's own screen. With the per-tick Lua Warp their body lies across the
+  horse's back at the load and the stop and part of each ride, but spends a second or more at a time on the ground under
+  or beside the moving horse (`a49c4d76`, `20aef564`, `d2a5cafa`; no height or offset tried with the new lab lever
+  changes that). A native mover, `MGS_COOP_HORSE_DRIVE_V1 hold0` (body 0's `T.vt+0x70` / `+0x68` as the partner driver's
+  xform mover, pinned T slots; Warp's C0 / A0 resets on request), keeps the body closer to the horse (victim_pin lag
+  windows mostly 6-9 cm, median 8, but 74-80 cm windows in every hold0 run; the Lua Warp's median 59-109 cm, windows up
+  to 102-137 cm) but plays the airborne pose with no reset (`a242d867`, `c2927350`) or the A0 reset (`8cfe8e97`,
+  `7f3155c8`; there the victim's copy also showed the horse lying on its side mid-gallop), and that pose then also shows
+  on the carrier's screen. The carrier's own screen is not reliably right with the Lua Warp either: `a49c4d76` shows
+  the body across the back at every gait and after the dismount, but `d2a5cafa`'s carrier frames show it on the ground
+  beside or under the ridden horse at the mount and the walk, in both orders. The default is back on the Lua Warp; the
+  lab lever `horse_probe cargo_pose ... <reset>` picks hold0. `8cfe8e97` also refused the guest carrier's E
+  `horse_lost` once (not reproduced in play).
+- **Next:** one session that tries hold0 with the C0 reset alone (2) and both (3) against the Lua Warp (4) at a gallop,
+  `horse-cargo-drop.txt` already rides through them; if one keeps the lying pose with the horse, make it the default and
+  run the gate (lab + play, both orders, then a run with the key not named). If none does, the body-0 hold needs a post-
+  physics write (a hook after the player's update), a new pinned site.
+- **M1 regression (the round 1 skeptic's gaps), passed:** no run names `world_horse_share` (the gun profile's default);
+  the guest's ride really travels (path 128 m in `d2a5cafa`, 102 m in `883dc6ab`, 122 m in `c2927350`, 180 m in
+  `7f3155c8`: `step=final_sent; path_cm=`); in play the host's screen shows the horse beside the guest where they got
+  off (`883dc6ab` frames `m1r-horse-host-1..3`), and the host's first E then mounts it.
+- **Commits** 72dcc018..cf93335c (red/green pairs) and this docs commit; `tools/build.ps1 -Jobs 4` 353/353 each attempt; generators
+  `--check` as on the base (carry_info / sleep_plugin differ, native_ui / teammate_targeting need local evidence),
+  horse_drive 4 sites 4 slots. No new code site (hold0 uses the partner contract's pinned T slots); no never-edit file.
+  Ghidra: a comment at 0x140B6F027. Slim archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` (JPEG frames,
+  sheets, slices).
+
 ## November 4, 2026: enemy sync M7 FM1, the far mirror - built, the gate not reached; `soldier_act` stays off (`wp/enemy-m7`, merged into `dev/oct7-continue`, not pushed)
 
 The enemy4 FM1 step (plan: owner-brains with the act layer as its act mirror, the far form first). Markers: [O] seen in

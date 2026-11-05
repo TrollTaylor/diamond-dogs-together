@@ -995,6 +995,12 @@ struct LabConfig {
     // in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
     bool world_horse_cargo = false;
     bool world_horse_cargo_given = false;
+    // world_horse_pillion=0|1 (horse plan M3, docs/mounts.md "Ride behind your partner"; with world_horse_share): E beside
+    // the shared D-Horse the partner rides sits you behind them on both screens (HORSE_SEAT seat 1,
+    // lua/coop/world_horse_pillion.lua; MGS_COOP_HORSE_DRIVE_V1 pad / seat1 / hold0). Both PCs must run it. Off unless
+    // named in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
+    bool world_horse_pillion = false;
+    bool world_horse_pillion_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
     // (relief) vehicle on both copies. The follow seeds carry the host's relief carry vars and
     // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN
