@@ -2863,7 +2863,8 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     };
     std::uint16_t seq = 0;
     sw::Request request{};
-    if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id)) return refuse("args");
+    bool quiet = false;  // enemy round 8 (quiet_place): the guest's Lua asks for the quiet move (off its player's screen)
+    if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id, quiet)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
     if (labc.role != mgscoop::LabRole::guest) return refuse("role");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
@@ -2919,9 +2920,25 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     // grant of an earlier host process that reused the same epoch and seq.
     if (!grant.serial || grant.serial > 0x7FFFFFFFu) return refuse("grant");
     const std::uint32_t id = 0x80000000u | grant.serial;
+    // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): a correction off this player's screen of a guard
+    // realized here is staged for the request manager hook, which moves him with the engine's network-position warp
+    // 0x136ece0 in its next update (soldier_act::QuietOne; no set-transform message). Same grant, gate, range and budget.
+    const unsigned quiet_idx = request.go_id & 0x1ffu;
+    const bool quiet_move = quiet && labc.quiet_place && grant.kind == mgscoop::world::place::correct && (request.go_id >> 9) == 2u &&
+                            mgscoop::soldier_act::QuietRealized(quiet_idx) == 1;
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
-    else {
+    else if (quiet_move) {
+        float squared = 0.0f;
+        for (unsigned i = 0; i < 3; ++i) squared += (request.pos[i] - request.player[i]) * (request.pos[i] - request.player[i]);
+        if (!(squared <= request.max_range * request.max_range)) result.refusal = "range";
+        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw)) result.refusal = "contract";
+        else {
+            result.out = 0;
+            result.handled = 1;
+            soldier_warp_gate.Record(result);
+        }
+    } else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
     }
@@ -2939,12 +2956,12 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
         }
         LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s\r\n", unsigned(seq),
                   unsigned(grant.kind), grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out,
-                  unsigned(result.handled), sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
+                  unsigned(result.handled), quiet_move ? "quiet" : sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {r=%d,h=%u,leaf=\"%s\"}", unrealized ? -1 : result.out,
-                     unsigned(result.handled), result.chain.pinned ? "pinned" : "engine");
+                     unsigned(result.handled), quiet_move ? "quiet" : result.chain.pinned ? "pinned" : "engine");
     return debug_reply;
 }
 
@@ -2989,11 +3006,15 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     const float target[3] = {grant.pos[0], grant.pos[1], grant.pos[2]};
     const float own[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
     const float guest[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
-    const float nearer = sw::NearerSquared(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer);
+    // Enemy round 8 track A (range_flat, design 7.22): on the ground plane (x/z), as the M3 owner rule (a code fact; the
+    // seen near=host refusals of ddcdec94 / 8b581a26 came while the guest's body was hidden for range, pose unknown).
+    const float nearer = labc.range_flat ? sw::NearerSquaredFlat(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer)
+                                         : sw::NearerSquared(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer);
     for (unsigned i = 0; i < 3; ++i) {
         request.pos[i] = grant.pos[i];
         request.player[i] = guest_nearer ? snapshot.remote_pos[i] : snapshot.player_pos[i];
     }
+    if (labc.range_flat) sw::FlattenRange(request);
     if (!(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
     request.yaw = grant.yaw;
     request.max_range = sw::kMaxRangeLimitM;
@@ -3018,9 +3039,13 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
             char line[512]{};
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
-        LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s\r\n", unsigned(seq),
+        // Enemy round 8: the guest's pose age and its height over the target (dgy_m; about -270 m while the guest's pose is
+        // unknown and read as 0, 8b581a26).
+        LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s; flat=%u; "
+                  "g_age_ms=%u; dgy_m=%.1f\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),
-                  sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none");
+                  sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none",
+                  labc.range_flat ? 1u : 0u, snapshot.remote_age_ms, snapshot.remote_pos[1] - grant.pos[1]);
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
@@ -3123,12 +3148,16 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     bool remote_nearer = false;
     const float own[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
     const float remote[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
-    const float nearer = sw::NearerSquared(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer);
+    // Enemy round 8 track A (range_flat): the host's soft follow of a guest-owned guard on the ground plane too.
+    const bool flat = labc.range_flat && labc.role == mgscoop::LabRole::host;
+    const float nearer = flat ? sw::NearerSquaredFlat(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer)
+                              : sw::NearerSquared(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer);
     if (!(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
     for (unsigned i = 0; i < 3; ++i) {
         request.pos[i] = step.pos[i];
         request.player[i] = remote_nearer ? snapshot.remote_pos[i] : snapshot.player_pos[i];
     }
+    if (flat) sw::FlattenRange(request);
     request.yaw = yaw;
     request.max_range = sw::kMaxRangeLimitM;
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
@@ -6276,6 +6305,19 @@ bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     else replacement={off,sizeof(off)-1};
     return true;
 }
+// Enemy round 8 track B (lua/coop/world_vehicle_state.lua S.lf, docs/world-sync-design.md 7.21): MGS_COOP_LRRP_CFG_V1 answers
+// the native-only lab key lrrp_follow (1 on, 0 off; off unless named, no CFG bit) on the runtime thread; otherwise nil (Lua
+// asks again). No game read or call.
+bool SelectLrrpReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_LRRP_CFG_V1'";
+    if(!buffer || size!=sizeof(query)-1 || std::memcmp(buffer,query,size)!=0) return false;
+    static constexpr char none[]="return nil", on[]="return 1", off[]="return 0";
+    replacement={none,sizeof(none)-1};
+    if(!OnRuntimeThread()) return true;
+    if(mgscoop::GetLabConfig().lrrp_follow) replacement={on,sizeof(on)-1};
+    else replacement={off,sizeof(off)-1};
+    return true;
+}
 // Enemy sync M7 (soldier_authority.hpp): MGS_COOP_SOLDIER_AUTH_V1 -- clear | status | <index 0..511> <remote 0|1>, on the
 // runtime thread: the ownership bits the damage callback reads. Reply return <enabled>,<remote count> (status, clear) or
 // return 1|0 (set). No game read or call.
@@ -6541,6 +6583,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if (SelectSupplyReceipt(buffer, size, replacement)) return true;
     if (SelectVspawnReceipt(buffer, size, replacement)) return true;
+    if (SelectLrrpReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -7214,6 +7257,12 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     if (labc.act_census) {
                         if (mgscoop::soldier_act::Install(base, game_span, Log)) mgscoop::soldier_act::SetCensus(true);
                     }
+                    // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the same hook runs the guest's
+                    // quiet corrections (GuestWarpReceipt stages them; soldier_act::QuietOne).
+                    if (labc.quiet_place && labc.soldier_follow && labc.role == mgscoop::LabRole::guest) {
+                        const bool hooked = mgscoop::soldier_act::Install(base, game_span, Log);
+                        LogFormat("soldier_act_quiet=%s\r\n", hooked ? "on" : "off");
+                    }
                     // FM1, the far mirror (soldier_act.hpp, lua/coop/world_mirror.lua): the same hook, the mirror on this
                     // copy's role, and the bullet / noise filters for the mirror puppets' shots (installed here, not only
                     // when body 1 shows a gun class).
@@ -7225,7 +7274,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s; phase=%s\r\n", hooked ? "on" : "off",
                                   labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok",
                                   labc.soldier_act_calm ? "calm" : "all");
-                    } else mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
+                        // Enemy round 8 track C (docs/world-sync-design.md 7.23): the puppets plan their own path (act_plan,
+                        // native only, off unless named; the puppet side runs it).
+                        mgscoop::soldier_act::SetPlan(hooked && labc.act_plan);
+                        LogFormat("soldier_act_plan=%s; given=%u\r\n", hooked && labc.act_plan ? "on" : "off", labc.act_plan_given ? 1u : 0u);
+                    } else {
+                        mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
+                        mgscoop::soldier_act::SetPlan(false);
+                    }
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.
                     const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();

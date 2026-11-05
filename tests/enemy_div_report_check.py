@@ -65,4 +65,25 @@ check(r['readback_fix'] == {'host': 1, 'guest': 0} and r['vert_snaps'] == {'host
 check(r['guest_downed_at'] == 1000 and r['m3_host_err_samples_before_down'] == 10 and
       r['m3_host_err_p90_m_before_down'] is not None and r['m3_host_err_p90_m_before_down'] <= 1.0 and
       r['m3_host_err_p90_m'] > 15.0, 'the host M3 error before the guest\'s first down, apart from the whole run')
+# Enemy round 8 track A (range_flat, design 7.22): the host M3 error and placements WHILE the guest is down (entered ..
+# abandoned / grant, else the log end), and the guest's quiet moves (quiet_place).
+guest2 = guest + [
+    'world_lua=event=downed; step=abandoned; role=2; generation=4; next=5; t_ms=1200',
+    'world_place=warp; seq=6; kind=3; ent=1926520947; go=1270; age_ms=0; r=0; h=1; leaf=quiet; refused=none',
+    'world_place=quiet; go=1270; seq=6; moved=1; bias=0; err_m=0.00; dy_m=0.00',
+    'world_place=warp; seq=7; kind=3; ent=1740692850; go=1039; age_ms=0; r=0; h=1; leaf=typed; refused=none',
+    'world_lua=event=readback; ent=1926520947; src=quiet; at=500; ms=510; dy_m=0.10; held=1; far_m=56; dxz_m=0.40; t_ms=1300',
+    'world_lua=event=readback; ent=1926520947; src=quiet; at=2000; ms=2010; dy_m=0.20; held=1; far_m=56; dxz_m=1.40; t_ms=1310',
+]
+host2 = host + [
+    'world_lua=event=hplace; seq=1; ent=1; kind=correct; result=refused; why=range; native=range; err_m=0.00; frames=1; t_ms=1150',
+    'world_lua=event=hplace; seq=2; ent=2; kind=correct; result=applied; why=none; native=none; err_m=0.10; frames=3; t_ms=1160',
+    'world_lua=event=place_err; n=10; h=10,0,0,0,0,0,0; p50=0.2; p95=0.5; max=0.5; fix=0; q=0; t_ms=1300',
+]
+r2 = rep.analyse(host2, guest2)
+check(r2['guest_down_windows'] == [[1000, 1200]] and r2['m3_host_err_samples_while_down'] == 10 and
+      r2['m3_host_err_p90_m_while_down'] > 15.0 and r2['m3_hplace_while_down'] == {'applied': 1, 'refused': 1},
+      'the host M3 error and placements while the guest is down')
+check(r2['quiet'] == {'warps': 1, 'moved': 1, 'bias': 0, 'readback': 2, 'readback_within_1m': 1},
+      'the guest\'s quiet moves and their read-backs (x/z and y within 1 m)')
 print('enemy_div_report_check: %d checks passed' % checks)

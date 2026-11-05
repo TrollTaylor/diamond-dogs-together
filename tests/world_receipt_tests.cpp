@@ -431,6 +431,19 @@ void Warp() {
               !parse("+1 2") && !parse(""),
           "strict grammar");
     Check(seq == 9 && go == 9, "outputs untouched on failure");
+    // Enemy round 8 (quiet_place, docs/world-sync-design.md 7.22): an optional third token 1 asks for the quiet move (the
+    // guest's Lua sends it for a correction off its player's screen); the strict two-token parse refuses it.
+    bool quiet = true;
+    const auto parseQ = [&](const char* tail) {
+        const std::string s = std::string(world::warp_prefix) + tail;
+        return world::ParseWarp(s.data(), s.size(), seq, go, quiet);
+    };
+    Check(parseQ("3 1270 1") && seq == 3 && go == 1270 && quiet, "the quiet flag");
+    Check(parseQ("4 1271") && seq == 4 && go == 1271 && !quiet, "no flag: the set-transform move");
+    Check(!parseQ("4 1271 0") && !parseQ("4 1271 2") && !parseQ("4 1271 1 ") && !parseQ("4 1271  1") && !parseQ("4 1271 1 1") &&
+              !parse("4 1271 1"),
+          "the quiet flag: only a single 1; the strict parse refuses it");
+    seq = 9; go = 9;
     const std::string other = "return 'MGS_COOP_WORLD_TX_V1' -- 1 2";
     Check(!world::ParseWarp(other.data(), other.size(), seq, go) && !world::ParseWarp(nullptr, 3, seq, go), "other receipts");
     // Enemy sync M3: the host's warp "<seq> <goId>" under its own prefix.
