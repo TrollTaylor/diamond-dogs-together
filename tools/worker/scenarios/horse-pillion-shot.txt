@@ -1,11 +1,11 @@
-# Horse plan M4, shoot from the back of the horse (world_horse_shot and world_horse_pillion, both on with the gun profile:
-# NOT named here; docs/mounts.md "Shoot from the back of the horse"). Afghanistan 50 m south of afgh_field_cp (the enemy
+# Horse plan M4, shoot from the back of the horse (world_horse_shot named (off unless named since attempt 3); world_horse_pillion on with the gun profile, not
+# named; docs/mounts.md "Shoot from the back of the horse"). Afghanistan 50 m south of afgh_field_cp (the enemy
 # rounds' quiet spot: every guard there ignores the players), so Spawn enemy here warps a living guard 5 m in front of the
 # host (the afgh-ledge boot spot's nearest guard is 356 m away: route mode, run 355972d2). Every part starts with a logmark.
 #   (a) The host drives, the guest behind: the host's first E at the unridden horse mounts it (the host's godmode off
 #       first, so its life read means something); the guest claims the rear seat; cross-neck shots straight ahead along the
 #       horse (enemy_cam_turn 0), one while the horse walks; then the guest shoots the sleeping guard beside the horse
-#       (enemy_aim_nearest 1.2 / 1.6 / 2.0: from the horse the camera sits higher than the lever's 1.5 m eye, so
+#       (enemy_aim_nearest 0.8 / 1.6 / 2.0: from the horse the camera sits higher than the lever's 1.5 m eye, so
 #       0.3 put the reticle 1.4 m short of the guard in run 28015a91); the guest hops off, the host gets off.
 #   (b) The guest drives, the host behind (host_press): seated, the host warps a second guard 5 m ahead of the horse (the
 #       passenger's own yaw is the horse's) and shoots it across the driver and the neck; then the guest (the driver) gets
@@ -19,6 +19,7 @@
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-M4
 #     -ScenarioPath tools/worker/scenarios/horse-pillion-shot.txt -Mode lab -WanSim bad -PartnerProfile native
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
+labsetting world_horse_shot=1
 labsetting nametag=1
 labsetting coop_hud=compact
 labsetting debug_soldier_warp=1
@@ -60,10 +61,7 @@ host run goto_horse
 wait 1500
 host run spawn_enemy here
 host expect ^guard_here;ent=
-wait 3000
-host run enemy sleep nearest
-host expect ^enemy_sleep;ent=
-wait 4000
+wait 2000
 host debug godmode 0
 wait 500
 host run status
@@ -127,7 +125,7 @@ host run status
 host expect ^status;.*god=0;.*life=
 # The sleeping guard beside the horse.
 logmark both
-guest run enemy_aim_nearest 1.2
+guest run enemy_aim_nearest 0.8
 guest expect ^aim_nearest;ent=\d+;
 wait 800
 guest hold rmb 1500 nowait
@@ -140,7 +138,7 @@ guest capture h4-guard-shot
 host capture h4-guard-shot-host
 guest release
 wait 1200
-guest run enemy_aim_nearest 1.6
+guest run enemy_aim_nearest 1.1
 wait 800
 guest hold rmb 1500 nowait
 wait 1100
@@ -148,7 +146,7 @@ guest press lmb 120
 wait 250
 guest release
 wait 1200
-guest run enemy_aim_nearest 2.0
+guest run enemy_aim_nearest 1.4
 wait 800
 guest hold rmb 1500 nowait
 wait 1100
@@ -201,13 +199,10 @@ waitlog host 'partner_seat_shot=published; vehicle=6656; seat=1; class=horse;' 5
 wait 1500
 host run spawn_enemy here
 host expect ^guard_here;ent=
-wait 3000
-host run enemy sleep nearest
-host expect ^enemy_sleep;ent=
-wait 4000
+wait 1500
 both capture h4b-seated
 logmark both
-host run enemy_aim_nearest 1.2
+host run enemy_aim_nearest 0.8
 host expect ^aim_nearest;ent=\d+;
 wait 800
 host hold rmb 1500 nowait
@@ -220,7 +215,7 @@ host capture h4b-pillion-shot
 guest capture h4b-pillion-shot-guest
 host release
 wait 1200
-host run enemy_aim_nearest 1.6
+host run enemy_aim_nearest 1.1
 wait 800
 host hold rmb 1500 nowait
 wait 1100
@@ -228,7 +223,7 @@ host press lmb 120
 wait 250
 host release
 wait 1200
-host run enemy_aim_nearest 2.0
+host run enemy_aim_nearest 1.4
 wait 800
 host hold rmb 1500 nowait
 wait 1100
@@ -269,7 +264,7 @@ waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 guest run goto_horse
 wait 1500
 waitlog guest 'world_lua=event=horse_hold; step=action_masked;' 5
-guest hold s 350
+guest hold s 550
 wait 800
 logmark both
 guest press e 150

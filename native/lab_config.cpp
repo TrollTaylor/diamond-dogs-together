@@ -1980,9 +1980,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): follows the gun profile in lab and
     // play since the M3c round (with its 2.5 / 2.8 m ride hold, lua/coop/world_horse_share.lua); a named 0 is the off switch.
     if (!c.world_horse_pillion_given) c.world_horse_pillion = gun;
-    // Horse plan M4, shoot from the back of the horse (docs/mounts.md "Shoot from the back of the horse"): follows the gun
-    // profile in lab and play (its proof runs do not name it); a named 0 is the off switch.
-    if (!c.world_horse_shot_given) c.world_horse_shot = gun;
+    // Horse plan M4, shoot from the back of the horse (docs/mounts.md "Shoot from the back of the horse"): off unless named
+    // in lab and play (the M4 gate was not reached: no rear-seat shot put a guard down, and the driver's screen shows no
+    // raised gun); a named 1 runs in play too.
+    if (!c.world_horse_shot_given) c.world_horse_shot = false;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
