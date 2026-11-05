@@ -23,8 +23,9 @@ do
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
         -- R per phase, metres: calm / caution the 80 m floor (no first-notice distance measured yet); evasion / ALERT
-        -- 1.5 x 92 m (run 963ab276: field-CP guards hit the host from up to 92 m in ALERT) = 138 m, above the 120 m floor
-        -- and under the realize radius (12 copies realized out to at least 141 m and ~150 m on the two copies).
+        -- 1.5 x the farthest ALERT hit (122.4 m on the host in run 3bc7280b; 92 m in 963ab276; the guest was hit from
+        -- 82-87 m) = 184 m, capped at the realize radius minus 10 m: the 12 realized copies reach at least 148 m, so
+        -- 138 m.
         M.R = {[0] = 80, [1] = 80, [2] = 138, [3] = 138}
         M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 250, 15000, 1500, 12
         M.MISSIONS = {[30010] = true, [30020] = true, [30050] = true}

@@ -349,7 +349,9 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
 - **The far rule**: a guard is a mirror puppet on the guest only while the guest's player is beyond R of him. R per phase
   is 1.5 x the farthest first notice or engagement distance measured at the defaults (floors 80 m calm / caution, 120 m
   ALERT), capped at the realize radius minus 10 m. He is taken beyond R + 15 m and released within R, so nobody is made
-  unseen who could be seen without the key. Any guest shot releases every puppet for 15 s.
+  unseen who could be seen without the key. Any guest shot releases every puppet for 15 s. In the code now: 80 m calm /
+  caution (the floor; no first-notice distance measured yet) and 138 m evasion / ALERT (1.5 x the farthest ALERT hit,
+  122.4 m in `3bc7280b`, is 184 m; capped at the realize radius, at least 148 m, minus 10 m).
 - **The path** (native/soldier_act.cpp, lua/coop/world_mirror.lua, SOLDIER_ACT 0x58 in protocol section 33):
   - the host registers its own NORMAL guards within 250 m of the guest and beyond R - 10 m (`ACT_V1 t`); its hook packs
     them with the engine's pack each frame, stages a changed record (a destination 5 cm or a facing 1 degree off is
@@ -367,6 +369,16 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   bytes), `soldier_act_payload` (U3), `soldier_engage_bins` (Defend hits on the local player per shooter with its
   distance), `soldier_act_bands` every 10 s (realized copies per 25 m band); `act_probe` (U2) puppets one guard and
   posts another's request to him on one copy.
+- **Runs** (play, `-WanSim bad`, the gun profile, research build, afgh-ledge): `125d916b` (the census at the defaults:
+  the hook resolved nothing, M is the +0x20 sub-object, vtable 0x1423e8a48, not 0x1423e8a18), `0a271c10` and `963ab276`
+  (`soldier_act=1`, enemy-act-1-quiet + enemy-act-2-alert: 0 puppets; one clock bug, then the reply key `or`, a Lua
+  reserved word, kept Lua from seeing `f=1`; both fixed after their runs, unproven), `3bc7280b` (the latch regression
+  with `soldier_act=1`: 0 latches, faults or game overs, place error p50 0.76 / p90 6.8 m; but `m` sent for mere
+  candidates armed the fire drop of 9 guards whose own brain ran: 582 of their bullets and 343 noises dropped on the
+  guest's copy; fixed after the run: candidates are only queried, `q`). [O] U1: `*(S+0xe0)` is NULL offline; the lent
+  table carried 125 unpacks in two runs with 0 faults. [O] ALERT hits came from up to 122.4 m (host) and 82-87 m
+  (guest); the watcher's walk south stops about 105 m from the outpost, inside that range. [U] U2, the frames and
+  counts of the gate.
 
 ### 8. Soldier transforms (W6)
 
