@@ -627,11 +627,23 @@ void TestPillionMap() {
     // M4 (run d935beae): the lease came back after a lapse, but finish() had kept the seat as the remote episode's done
     // entry, so the overlay never seated body 1 again (body 1 1.9 m under the rear seat for the rest of the ride; the seat
     // gun's hook then refused body_act). The pillion seat is a held lease, not a remote episode: it seats again.
-    g.Run(1000);
-    Check(!pdo::Active(g.s), "pillion: released after the lapse");
-    g.in.pillion = true;
-    g.Run(3000);
-    Check(pdo::Active(g.s) && g.s.index == ride && g.plays == 2, "pillion: the lease back seats body 1 again");
+    Game r;
+    r.in.mode = PartnerNativeOverlay::off;
+    r.in.pillion = true;
+    r.in.remote_valid = true;
+    r.in.remote_act = 3;
+    r.in.body_valid = true;
+    r.in.body_act = 3;
+    r.Run(1000);
+    Check(r.s.phase == pdo::Phase::playing && r.plays == 1, "lapse: seated first");
+    r.stops = false;  // the stop is still in flight when the lease comes back
+    r.in.pillion = false;
+    r.Run(400);
+    Check(r.Saw("stop:map_exit") || r.Saw("stop:setting_off"), "lapse: the lease's end stops the seat");
+    r.in.pillion = true;
+    r.stops = true;
+    r.Run(3000);
+    Check(pdo::Active(r.s) && r.s.index == ride && r.plays == 2, "pillion: the lease back seats body 1 again");
     Game n;
     n.in.mode = PartnerNativeOverlay::off;
     n.in.pillion = true;
