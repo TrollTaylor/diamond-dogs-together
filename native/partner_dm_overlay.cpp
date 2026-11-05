@@ -175,8 +175,8 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     const bool fulton_act = in.fulton && in.remote_valid && want == kNone && MapFulton(in.remote_act) != kNone;
     if (fulton_act) want = MapFulton(in.remote_act);
     // Horse plan M1: the shared-horse rider's seat (a map source the setting off never stops).
-    const bool horse_act = in.horse && in.remote_valid && want == kNone && MapHorse(in.remote_act) != kNone;
-    if (horse_act) want = MapHorse(in.remote_act);
+    const bool horse_act = in.horse && want == kNone && (!in.remote_valid || MapHorse(in.remote_act) != kNone);
+    if (horse_act) want = kRideOnIdle;
     if (want != s.map_cand) {
         s.map_cand = want;
         s.map_cand_ms = now;

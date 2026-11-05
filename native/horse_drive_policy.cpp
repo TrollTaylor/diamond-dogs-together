@@ -24,9 +24,8 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 }
 
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept {
-    (void)stream;
-    (void)anchored;
-    return false;  // red
+    const float dx = anchored[0] - stream[0], dy = anchored[1] - stream[1], dz = anchored[2] - stream[2];
+    return std::isfinite(dx) && std::isfinite(dy) && std::isfinite(dz) && dx * dx + dy * dy + dz * dz <= kAnchorMaxM * kAnchorMaxM;
 }
 
 bool Parse(const char* text, std::size_t size, Request& out) noexcept {

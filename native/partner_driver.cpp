@@ -7939,10 +7939,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         const bool horse_before = m.visibility.horse;
         rw::Observe(m.visibility, vi);
         if (m.visibility.horse != horse_before)
-            EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=%s; mount=horse; act=%u; kind=%u; reason=shared_horse\r\n",
-                       m.visibility.horse ? "show" : "show_end", unsigned(visibility_sample.act), unsigned(vi.kind));
+            EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=%s; mount=horse; act=%u; valid=%u; kind=%u; live=%u; fresh=%u; "
+                       "reason=shared_horse\r\n", m.visibility.horse ? "show" : "show_end", unsigned(visibility_sample.act),
+                       visibility_sample.anim_valid ? 1u : 0u, unsigned(vi.kind), vi.ride_live ? 1u : 0u, vi.horse_shown ? 1u : 0u);
         // The rider's body anchors the next horse placement (the saddle under body 1 on this screen).
-        if (m.visibility.horse && body_read) {
+        if (m.visibility.horse && body_read && pp::Realized(st, partner::partner_index) && st.parts[1] == c::parts_loaded_state) {
             const float rider[3] = {body_pos[0], body_pos[1], body_pos[2]};
             horse_drive::NoteRiderBody(rider, now);
         }

@@ -51,15 +51,27 @@ guest press e 150
 wait 2000
 guest run horse_status
 guest require localMounted=0
-# The host rides off: walk, trot, gallop (frames from the guest's screen).
-heldcapture host guest w h1-host-walk 3
-heldcapture host guest w h1-host-trot 2
-host hold w+shift 1500 nowait
-guest burst h1-host-gallop 4 300
-host hold w+shift 1500 nowait
-guest burst h1-host-gallop2 4 300
+# The host rides off: walk, trot, gallop. Run 3d1439e6: the horse left the guest's fixed view, so the guest goes beside
+# the moving horse (goto_horse) right before each burst, and the host turns so the horse stays near.
+host hold w 1500 nowait
+guest run goto_horse
+guest burst h1-host-walk 3 250
+host hold w 1500 nowait
+wait 800
+host hold w+a 1500 nowait
+guest run goto_horse
+guest burst h1-host-trot 3 250
+host hold w+shift+a 1500 nowait
+guest run goto_horse
+guest burst h1-host-gallop 4 200
+host hold w+shift+a 1500 nowait
+guest run goto_horse
+guest burst h1-host-gallop2 4 200
 host release
 wait 3000
+guest run goto_horse
+wait 800
+guest capture h1-host-stopped
 waitlog guest 'world_lua=horse_place=stats; placed=' 10
 # The host gets off where it stopped: the horse stays there on both screens.
 host press e 150
@@ -97,14 +109,25 @@ host press e 150
 wait 2000
 host run horse_status
 host require localMounted=0
-heldcapture guest host w h1b-guest-walk 3
-heldcapture guest host w h1b-guest-trot 2
-guest hold w+shift 1500 nowait
-host burst h1b-guest-gallop 4 300
-guest hold w+shift 1500 nowait
-host burst h1b-guest-gallop2 4 300
+guest hold w 1500 nowait
+host run goto_horse
+host burst h1b-guest-walk 3 250
+guest hold w 1500 nowait
+wait 800
+guest hold w+a 1500 nowait
+host run goto_horse
+host burst h1b-guest-trot 3 250
+guest hold w+shift+a 1500 nowait
+host run goto_horse
+host burst h1b-guest-gallop 4 200
+guest hold w+shift+a 1500 nowait
+host run goto_horse
+host burst h1b-guest-gallop2 4 200
 guest release
 wait 3000
+host run goto_horse
+wait 800
+host capture h1b-guest-stopped
 waitlog host 'world_lua=horse_place=stats; placed=' 10
 guest press e 150
 wait 3000
