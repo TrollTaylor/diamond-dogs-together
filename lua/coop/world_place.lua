@@ -124,7 +124,7 @@ do
                 P.rz[h] = r
                 L("event=realize_hold;ent=%.0f;on=1;ok=%d;n=%d;why=%s;b=%d", h, ok and 1 or 0, n + 1, tostring(why), b or -1)
             end
-            r.rf, r.retry, r.c = r.rf + 1, now + (tonumber(b) or 3000) + 50, c
+            r.rf, r.retry, r.c = r.rf + 1, now + (tonumber(b) or 3000) + 50, c or r.c
             return r
         end
         -- S.drive's side (world_snap.lua): st / rs count a held guard's landed / resting steps.
