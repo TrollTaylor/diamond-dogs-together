@@ -1054,6 +1054,10 @@ if arg[7] and arg[8] then
     ticks(fgB, 4)
     check(receipt(fgB, "'MGS_COOP_WORLD_WARP_V1' -- 3 1 1") and logged(fgB, 'event=place;seq=3;ent=' .. ENT1 .. ';kind=correct;result=applied'),
         'quiet_place: an off-screen correction asks for the quiet move and lands')
+    -- Its position is read back 0.5 s and 2 s after (src=quiet), x/z (dxz_m) and y (dy_m) against the target.
+    ticks(fgB, 20)
+    check(logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=500;') and logged(fgB, ';dxz_m=3.00'),
+        'quiet_place: the quiet move is read back (x/z and y)')
     fgA.warp = {{r = 0, h = 1, leaf = 'engine'}}
     ticks(fgA, 4)
     check(receipt(fgA, "'MGS_COOP_WORLD_WARP_V1' -- 5 1") and not receipt(fgA, "'MGS_COOP_WORLD_WARP_V1' -- 5 1 1"),
