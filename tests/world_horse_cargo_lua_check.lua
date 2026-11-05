@@ -141,9 +141,13 @@ check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (2.0 + f.C.RISE_MM /
  math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and w.rotY == 0, "body 1 on the cargo point (behind the root, up), the horse's yaw")
 f.horse.x, f.horse.yaw = 102000, 1571
 f.mounted = true
+f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 2.5
 f.tick(50)
 w = f.lastWarp(1)
-check(math.abs(w.x - (102.0 - f.C.BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3, "the cargo point follows this copy's horse")
+check(math.abs(w.x - (102.1 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3 and
+ math.abs(w.y - (2.5 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
+check(f.logged("step=pin;how=rider;mounted=1"), "the pin stats line names the rider anchor")
+f.env.vars.playerPosX, f.env.vars.playerPosY = 100, 2
 local keeps = f.count(6)
 for i = 1, 22 do f.tick(50) end
 check(f.count(6) - keeps >= 1 and f.count(6) - keeps <= 2, "KEEP at 1 Hz")
@@ -158,12 +162,10 @@ f.env.vars.playerPosX, f.env.vars.playerPosZ, f.env.vars.playerPosY = 101.6, 301
 f.hold("R", 700)
 check(f.C.state == "carrier", "R under 1 s: still on")
 f.hold("R", 1050)
-check(f.C.state == "release" and f.C.busy(), "R held 1 s: taken down; body 1 held on the point while R stays down")
-local nc = #f.cargo
-f.holdR(true); f.tick(50); f.D.rawCarryHeldAt = f.now
-check(f.C.state == "release" and f.cargo[#f.cargo] == "100" and #f.cargo > nc, "still held while R is down (no stock pickup of the body)")
-f.holdR(false); f.tick(50)
-check(f.C.state == "off" and f.cargo[#f.cargo] == "000" and f.logged("step=released;seat=2"), "R up: the hold cleared (CARGO_V2 0 0 0)")
+check(f.C.state == "carrier" and f.logged("step=take_armed;key=r") and f.count(5) == 0,
+ "R held 1 s: armed; the body stays on while R is down (a stock pickup of a body on the ground: run 7359e4d2)")
+f.tick(50)
+check(f.C.state == "off" and f.cargo[#f.cargo] == "000", "R up: taken down, the hold cleared (CARGO_V2 0 0 0)")
 local u = f.sent(5)
 check(u and u[6] == 4 and u[7] == 22, "UNLOADED cause taken_down (4) with the victim's generation")
 w = f.lastWarp(1)
@@ -176,9 +178,21 @@ check(not f.C.busy(), "not busy after the take-down")
 -- An E hold also takes them down (where E does not mount).
 f = fixture(); load(f); f.hold("E", 1100); f.tick(50)
 check(f.C.state == "off" and f.logged("step=take_down;key=e"), "an E hold 1 s takes them down too")
-f = fixture(); load(f); f.hold("R", 1050)
+f = fixture(); load(f); f.hold("R", 4100)
+check(f.C.state == "release" and f.C.busy() and f.count(5) == 1, "R held 4 s: taken down; body 1 held on the point while R stays down")
+f.holdR(true); f.tick(50); f.D.rawCarryHeldAt = f.now
+check(f.C.state == "release" and f.cargo[#f.cargo] == "100", "still held while R is down (no stock pickup)")
+f.holdR(false); f.tick(50)
+check(f.C.state == "off" and f.cargo[#f.cargo] == "000" and f.logged("step=released;seat=2"), "R up: the hold cleared")
+f = fixture(); load(f); f.hold("R", 4100)
 for i = 1, 70 do f.holdR(true); f.tick(50); f.D.rawCarryHeldAt = f.now end
 check(f.C.state == "off", "a key held on and on: the hold goes after 3 s anyway")
+-- On foot by the horse: an unridden census far over the carrier's ground is kept 1.45 m over that ground.
+f = fixture(); load(f); f.horse.y = 4000; f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6 and f.logged("how=ground"), "a census 2 m high: the body kept 1.45 m over the ground")
+f.horse.y = 2000; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (2.0 + f.C.RISE_MM / 1000)) < 1e-6, "a census in the window: the census cargo point")
 -- Out of reach: nothing.
 f = fixture(); load(f); f.env.vars.playerPosX = 110; f.hold("R", 1200)
 check(f.C.state == "carrier", "the R hold out of reach: still on")
@@ -230,6 +244,7 @@ w = f.lastWarp(0)
 check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.RISE_MM / 1000)) < 1e-6 and
  math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6, "body 0 warped to its own horse's cargo point")
 check(f.C.busy(), "the victim's copy is busy too")
+check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
 f.W.horseShare = {track = {}}
 f.horse.x = 160000
