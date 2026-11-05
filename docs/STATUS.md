@@ -1,3 +1,43 @@
+## November 4, 2026: horse M2, a downed partner on the horse (`wp/horse`; lab key `world_horse_cargo`, off unless named)
+
+**Players get:** nothing new at the defaults. The M2 gate did not pass in four proof attempts, so `world_horse_cargo`
+stays off unless named (lab and play; a named 1 runs it). Details: `docs/mounts.md` section 11, the op:
+`docs/world-sync-protocol.md` section 31.
+
+- **Built.** `lua/coop/world_horse_cargo.lua` rewritten for M2 (the offset prototype and its op 43 stream retired):
+  carry the downed partner to the shared D-Horse, hold E 450 ms facing it within 2.5 m (`IsCarriedHostage` refuses
+  `npc_cargo`), a guest's claim granted by the host over the new HORSE_SEAT (0x50, seat 2) against the victim's downed
+  generation, the stock put-down then `SetCargoHold(1)` (only the existing `MGS_COOP_CARGO_V2` calls), body 1 pinned on
+  the carrier's horse, LOADED / KEEP with the horse pose, the victim's copy placing its own horse there and pinning body 0
+  (right after each M1 placement while the carrier rides), the 0.5 s R / E take-down to the ground beside the horse,
+  the automatic lay-downs (horse lost / called away, link, context, victim up or gone), Travel / Bring / the guest's
+  checkpoint waiting while loaded, and world_downed reporting a held posture (as the cardboard box) while body 0 is
+  cargo. Native: the HORSE_SEAT op spec, the lab key, the HORSE_DRIVE cfg reply's `cargo` field. No patch, read or hook
+  site; no never-edit file. Commits 284b7b97..04f68c11 (red/green pairs); `tools/build.ps1 -Jobs 4` 352/352; generators
+  `--check` as on the base.
+- **Hidden runs (queue, `-WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed
+  afgh-ledge`, the host carrying; slim archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).** Every run loaded
+  (`step=loaded; seat=2`, `coop_carry=cargo_hold; on=1`, guest `step=cargo; seat=2`), mounted with the first E, rode at
+  walk / trot / gallop and kept the body on through the dismount, on both copies. `7359e4d2` / `c667a209` (lab): the R
+  take-down laid them down but the same R hold's coop pickup shouldered them again, and the revive E loaded them a
+  second time. `6fd054c4` (lab): a pickup straight off the horse timed out the victim's downed controls
+  (`downed_control=refused; reason=controls_timeout_prone`, `step=abandoned`). `83ac3950` (lab) / `547b431e` (play):
+  after the dismount the victim's controls timed out the same way (a body held on the horse is never prone; fixed in
+  04f68c11 by the held posture, not yet run). `d26aaf70` (play): the guest's horse_spawn after the host's was refused by
+  its buddy sync (the play scenario now spawns the guest's first).
+- **Frames [O, looked at].** `83ac3950`: the carrier's screen shows the body across the horse's back at the load, behind
+  the rider at a trot and a gallop; the victim's own screen shows its body across the back behind the rider at the load,
+  a trot and a stop. At a gallop body 0 slips off to the ground under the horse on the victim's screen (also
+  `6fd054c4`, `547b431e`), and in `547b431e` body 1 trailed low at a gallop on the carrier's screen.
+- **Blocks the gate.** (1) the victim's downed controls timing out on the horse (fix in, unproven); (2) body 0 slipping
+  off at a gallop (a per-tick Warp holds the local body only while the horse supports it: `step=victim_pin` wanted
+  338.4-340.7 m, reported 336.7-339.9 m); (3) never reached: the guest-carrier order, the 0.5 s take-down and the revive
+  after it, the link drop. Next: one lab + play session with the held posture; if body 0 still slips at a gallop, a
+  native per-frame hold of body 0 (the CS `vt+0xA8` write of `horse_drive`, a new site) is the next step.
+- **Deviation from the plan text.** E at the horse's flank is the stock mount, so the take-down is the carry key (R) or
+  an E hold where E does not mount, 0.5 s, and lays the body on the ground; an R held on then shoulders them (the stock
+  unload of a guard on D-Horse is an R hold too, P2).
+
 ## November 4, 2026: horse M1, your partner rides on your screen (the shared D-Horse, `wp/horse`; on with the gun profile)
 
 **Players get:** in Afghanistan and Africa free roam, when either player rides D-Horse the other screen shows them
