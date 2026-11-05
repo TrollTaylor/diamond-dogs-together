@@ -764,7 +764,7 @@ function Invoke-DebugResult([string]$Role,[string]$Command,[int]$TimeoutMs=8000)
     }
     throw "[$Role] debug '$Command' produced no result."
 }
-function Wait-Frame([string]$Role,[uint64]$Sequence,[string]$Label,[uint64]$RequestedAt=0,[hashtable]$Hold=$null){
+function Wait-Frame([string]$Role,[uint64]$Sequence,[string]$Label,[uint64]$RequestedAt=0,[hashtable]$Hold=$null,[switch]$Retryable){
     $path=Join-Path $run "$Role-frame-$Sequence.bmp"
     $deadline=[Environment]::TickCount64+5000
     $native=$null
@@ -806,7 +806,11 @@ function Wait-Frame([string]$Role,[uint64]$Sequence,[string]$Label,[uint64]$Requ
             local_motion_during_hold=($timely -and $sameScene -and !$source['stale'] -and $null -ne $sourceDelta -and $sourceDelta -le 250 -and $motion)}
         if($Hold.ContainsKey('turn')){$row.hold.turn=$Hold.turn}
     }
+    # A capture the native inbox refused never became a frame request; Capture-Step sends it once more.
+    $retry=$Retryable -and !$hasFrame -and $native -and $native['event'] -ceq 'command_refused'
+    if($retry){$row.capture_retried=$true}
     Add-Content -LiteralPath (Join-Path $run 'captures.jsonl') -Value ($row|ConvertTo-Json -Compress -Depth 8)
+    if($retry){return $null}
     if(!$hasFrame){throw "[$Role] frame $Sequence was not written: $($row.frame_result)"}
     if((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Captured frame must be a plain owned file.'}
     $lastFrameAt[$Role]=$writtenAt
@@ -822,12 +826,19 @@ function Wait-Frame([string]$Role,[uint64]$Sequence,[string]$Label,[uint64]$Requ
     return $row
 }
 function Capture-Step([string]$Role,[string]$Label,[hashtable]$Hold=$null){
-    # Native capture requests are rate-limited to 250 ms. A completed frame is
-    # later than its request, so this margin also works with deferred readback.
-    $remaining=[int64]$lastFrameAt[$Role]+300-[Environment]::TickCount64
-    if($remaining -gt 0){Start-Sleep -Milliseconds $remaining}
-    $c=Send-Step $Role @{Operation='capture'}
-    return Wait-Frame $Role ([uint64]$c.sequence) $Label ([uint64]$c.expires_tick_ms-2000) $Hold
+    for($attempt=0;;$attempt++){
+        # Native capture requests are rate-limited to 250 ms. A completed frame is
+        # later than its request, so this margin also works with deferred readback.
+        $remaining=[int64]$lastFrameAt[$Role]+300-[Environment]::TickCount64
+        if($remaining -gt 0){Start-Sleep -Milliseconds $remaining}
+        $c=Send-Step $Role @{Operation='capture'}
+        $row=Wait-Frame $Role ([uint64]$c.sequence) $Label ([uint64]$c.expires_tick_ms-2000) $Hold -Retryable:($attempt -eq 0)
+        if($row){return $row}
+        # Refused by the native inbox (its receipt names the check): one more capture after the 250 ms cadence and
+        # any capture still pending; a second refusal stops the step (horse round 4 lost 4 sessions to one refusal).
+        Write-Warning "[$Role] capture $($c.sequence) was refused by the native inbox; one retry."
+        Start-Sleep -Milliseconds 300
+    }
 }
 function Set-ScenarioStance([string]$Role,[string]$Stance){
     Release-RoleInput $Role
@@ -1018,7 +1029,7 @@ function Wait-ViewerLanding([string]$Role,[double]$ExpectedX,[double]$ExpectedZ,
         throw "[$Role] viewer landing starts without a valid partner pose."
     }
     $deadline=[Environment]::TickCount64+3000
-    $previousTick=[uint64]$initial['tick_ms'];$previousY=$null;$anchorY=$null;$stable=0;$lastPosition=$null
+    $previousTick=[uint64]$initial['tick_ms'];$previousY=$null;$anchorY=$null;$stable=0;$lastPosition=$null;$missed=0
     for($sample=0;$sample -lt 12 -and [Environment]::TickCount64+250 -lt $deadline;$sample++){
         Start-Sleep -Milliseconds 250
         $current=Read-FreshRole $Role
@@ -1027,8 +1038,14 @@ function Wait-ViewerLanding([string]$Role,[double]$ExpectedX,[double]$ExpectedZ,
            !$current['realized'] -or !$current['body_valid'] -or !$current['pose_valid']){
             throw "[$Role] viewer landing lost its scene or valid partner pose."
         }
-        if([uint64]$current['tick_ms'] -le $previousTick){throw "[$Role] viewer landing has no new position sample."}
-        $previousTick=[uint64]$current['tick_ms']
+        if([uint64]$current['tick_ms'] -le $previousTick){
+            # One 250 ms interval without a new state sample is a game frame stall (the state publishes every
+            # 100 ms from the game's update; right after a teleport a frame can take longer). Two in a row stop it.
+            $missed++
+            if($missed -ge 2){throw "[$Role] viewer landing has no new position sample."}
+            continue
+        }
+        $missed=0;$previousTick=[uint64]$current['tick_ms']
         $position=$current['player_pos']
         if($position -isnot [Array] -or $position.Count -ne 3){throw "[$Role] viewer landing has no local position readback."}
         foreach($coordinate in $position){
