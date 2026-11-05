@@ -81,6 +81,13 @@ bool OrderHasTarget(const unsigned char (&packed)[0x18]) noexcept;
 // Clears the target of an unpacked order record (R+0x1b0, 0x20 bytes): +0x00..+0x0b zero, +0x0c's low 3 bits zero (as the
 // owner's record of an order without a target); true when it held one.
 bool ClearOrderTarget(unsigned char (&record)[0x20]) noexcept;
+// Round 6, runs fbf3522a / f11fe8a1 (design 7.19): a puppet keeps walking his own leg (the destination his own brain had
+// before the take) at the host copy's speed although his record holds the host copy's request (packed byte-identical):
+// takes whose own destination was the host copy's replayed at p50 0.0 m, the others at 3.5 m (guards 15 / 18: 56-58 m
+// apart, 7-11 m off). A candidate is taken only when the host copy's request is not a move (action A kind 1) or this
+// copy's own destination (R+0x80) is within kActLegM (flat) of its destination; unknown own destination: not a move match.
+inline constexpr float kActLegM = 3.0f;
+bool LegMatch(const unsigned char (&host_request)[0x70], const float (&own_dest)[3], bool own_valid) noexcept;
 // The rate cap: a change goes out kActMinMs after the last send at the earliest, an unchanged record every kActResendMs.
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept;
 // The network-position entry 0x136f810 reads (0x18 bytes): xyz, yaw, flags +0x14 bit 0 (valid).

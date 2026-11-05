@@ -156,6 +156,11 @@ bool ClearOrderTarget(unsigned char (&record)[0x20]) noexcept {
     return had;
 }
 
+bool LegMatch(const unsigned char (&host_request)[0x70], const float (&own_dest)[3], bool own_valid) noexcept {
+    (void)host_request; (void)own_dest; (void)own_valid;
+    return true;
+}
+
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept {
     if (!last_ms) return true;
     const std::uint64_t age = now_ms >= last_ms ? now_ms - last_ms : 0;

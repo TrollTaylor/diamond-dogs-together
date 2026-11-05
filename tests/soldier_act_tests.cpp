@@ -252,6 +252,21 @@ int main() {
               "target and mode cleared, the other bytes kept");
         Check(!sa::ClearOrderTarget(rec), "nothing to clear the second time");
     }
+    // Runs fbf3522a / f11fe8a1: a puppet keeps walking his own pre-take leg. Guard 15: the host copy walked to (363.6,
+    // 2159.8), this copy's own brain to (414.9, 2132.8); a walker is taken only on the same leg (kActLegM 3 m, flat).
+    {
+        unsigned char req[0x70]{};
+        const float hostDest[3] = {363.64f, 270.96f, 2159.78f};
+        const std::uint64_t packed = sa::EncodePacked(hostDest);
+        std::memcpy(req + 0x40, &packed, sizeof(packed));
+        req[0x63] = 1;  // action A kind 1: a move
+        const float other[3] = {414.94f, 268.0f, 2132.75f}, same[3] = {362.0f, 275.0f, 2161.5f}, far3[3] = {366.5f, 271.0f, 2159.78f};
+        Check(!sa::LegMatch(req, other, true) && sa::LegMatch(req, same, true) && !sa::LegMatch(req, far3, true),
+              "a walker on another leg is not taken; the same leg (within 3 m flat, any height) is");
+        Check(!sa::LegMatch(req, same, false), "a walker whose own destination is unknown is not taken");
+        req[0x63] = 17;  // not a move (standing at a point): the leg does not matter
+        Check(sa::LegMatch(req, other, true) && sa::LegMatch(req, other, false), "a guard who does not move is taken as before");
+    }
     {
         Check(sa::kActReapplyMovingMs == 1000 && sa::kActReapplyMs == 5000, "re-apply: 1 s moving, 5 s still");
         Check(sa::ReapplyDue(true, false, false, 0) && sa::ReapplyDue(false, true, false, 0), "re-apply: first / changed at once");
