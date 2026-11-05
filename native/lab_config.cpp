@@ -2099,6 +2099,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Africa was not run. Round 9 B (7.25: 68491f7f / 801cd90b named, d7b3a81c not named): followed trucks within 0.6 m
     // p90, but SetRelativeVehicle seated nobody, the crews' get-outs did not line up (9-42 m p90 20-40 s after the host's),
     // a deferred truck's riders stayed ~427 m off, and its lines filled 81-83% of the guest's world log (log_cap drops).
+    // Round 10 B (7.28: ffd0248d named): the crews now take the host's travel step (StartTravel step; get-outs within 1 s,
+    // 0-1.75 m p90 20-40 s after, 0 log_cap), but a truck within 400 m of the guest at the pairing stays the guest's own
+    // (riders ~499 m off for 54 s): still off unless named; the flip is the user's decision (D-B10).
     // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place stays off unless named. Its named run bcd95b14
     // passed (guard 246 moved quietly, read back within 0.2 m, no kind 3 / 13, no guest-only phase change in calm), but
     // its no-key run 1befcef4 failed the place_sink row: guard 1904171355 walked 13-14 m back off each quiet move (22
