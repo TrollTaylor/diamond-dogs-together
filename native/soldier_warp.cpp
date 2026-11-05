@@ -303,14 +303,21 @@ bool DriveTarget(const DriveSample& prev, const DriveSample& cur, std::uint64_t 
 }
 
 DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool active, float start_m, float stop_m, float max_step,
-                          float snap_m, float lift_m, float feet_m) noexcept {
+                          float snap_m, float lift_m, float feet_m, float vert_m) noexcept {
     DriveStepResult r{};
     const float dx = to[0] - from[0], dz = to[2] - from[2];
     r.error = std::sqrt(dx * dx + dz * dz);
     for (unsigned i = 0; i < 3; ++i) r.pos[i] = from[i];
     if (!std::isfinite(r.error)) return r;
     r.active = active ? r.error >= stop_m : r.error > start_m;
-    if (!r.active) return r;
+    if (!r.active) {
+        // drive_vert: at rest in x/z but a storey off the target (a ledge, a wall top, a roof): the target's spot.
+        if (vert_m > 0.0f && std::isfinite(to[1] - from[1]) && std::fabs(to[1] - from[1]) > vert_m) {
+            r.move = r.vert = true;
+            for (unsigned i = 0; i < 3; ++i) r.pos[i] = to[i];
+        }
+        return r;
+    }
     r.move = true;
     if (r.error > snap_m) {
         r.hard = true;
@@ -324,6 +331,39 @@ DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool act
     r.pos[1] = std::fabs(to[1] - feet) > 1.0f ? to[1] : feet + lift_m;
     if (k >= 1.0f) r.active = false;  // arrived: at rest until it drifts past start_m again
     return r;
+}
+
+bool DriveVertDue(float gap_m, std::uint64_t now_ms, std::uint64_t& since_ms) noexcept {
+    if (!(std::fabs(gap_m) > kDriveVertM)) {
+        since_ms = 0;
+        return false;
+    }
+    if (!since_ms) {
+        since_ms = now_ms ? now_ms : 1;
+        return false;
+    }
+    return now_ms >= since_ms && now_ms - since_ms >= kDriveVertMs;
+}
+
+bool DriveVertAllow(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept {
+    if (!window_ms || now_ms < window_ms || now_ms - window_ms >= kDriveVertWindowMs) {
+        window_ms = 0;
+        count = 0;
+        return true;
+    }
+    return count < kDriveVertMax;
+}
+
+void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept {
+    if (!window_ms) window_ms = now_ms ? now_ms : 1;
+    ++count;
+}
+
+bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept {
+    if (!out || !capacity || !why) return false;
+    const HRESULT hr = back_ms ? StringCchPrintfA(out, capacity, "return {refused=\"%s\",b=%llu}", why, static_cast<unsigned long long>(back_ms))
+                               : StringCchPrintfA(out, capacity, "return {refused=\"%s\"}", why);
+    return SUCCEEDED(hr);
 }
 
 const char* DriveAdmit(const DriveRule& rule) noexcept {

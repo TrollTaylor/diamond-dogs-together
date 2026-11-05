@@ -316,7 +316,7 @@ do
                 c.seq, id))
             if type(r) ~= "table" then return P.done(c, "native_off") end
             if r.refused ~= nil then
-                c.native = tostring(r.refused)
+                c.native, c.back = tostring(r.refused), r.b
                 return P.done(c, NATIVE[c.native] or "native_other")
             end
             if r.h == 1 then c.landed, c.leaf = c.frames, tostring(r.leaf)

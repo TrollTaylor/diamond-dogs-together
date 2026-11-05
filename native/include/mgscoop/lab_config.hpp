@@ -757,6 +757,10 @@ struct LabConfig {
     // soldier_follow. Lab and play; off unless named until its gate run passes.
     bool soldier_act = false;
     bool soldier_act_given = false;
+    // FM1 round 6 (docs/world-sync-design.md 7.19), the user's decision D-FM1 (a): soldier_act on (1 or calm) mirrors only in
+    // calm / caution (the far rule releases and skips a guard whose CP is in evasion / ALERT); soldier_act=all (research)
+    // keeps every phase. Carried in the ACT_V1 p reply (pl=1), no CFG bit.
+    bool soldier_act_calm = false;
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
@@ -769,11 +773,16 @@ struct LabConfig {
     // disabled_local) and keeps the resting spot where this copy's body lies after it (no report back); place_reach (bit
     // 2048, with soldier_follow) force-realizes a guard whose placement the game relayed (not realized here) for 8 s and
     // lets the M4 stream reach 160 m (run 798b51dd: every M3 host sample 60-160 m from the host, 57 refused unrealized).
-    // Lab and play; both off unless named (lab_config.cpp: why place_reach is not on by default yet).
+    // Lab and play; both off unless named (lab_config.cpp: place_reach's no-key run 35d4074f failed the drive_sink row).
     bool body_dead = false;
     bool body_dead_given = false;
     bool place_reach = false;
     bool place_reach_given = false;
+    // Enemy gaps 3 (docs/world-sync-design.md 7.18, native DriveReceipt only, no CFG bit): the soft follow also puts a copy
+    // at rest in x/z that stands more than 1.5 m above or below the owner's for 1 s on the owner's spot (drive_sink at the
+    // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
+    bool drive_vert = false;
+    bool drive_vert_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
@@ -997,8 +1006,8 @@ struct LabConfig {
     bool world_horse_cargo_given = false;
     // world_horse_pillion=0|1 (horse plan M3, docs/mounts.md "Ride behind your partner"; with world_horse_share): E beside
     // the shared D-Horse the partner rides sits you behind them on both screens (HORSE_SEAT seat 1,
-    // lua/coop/world_horse_pillion.lua; MGS_COOP_HORSE_DRIVE_V1 pad / seat1 / hold0). Both PCs must run it. Off unless
-    // named in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
+    // lua/coop/world_horse_pillion.lua; MGS_COOP_HORSE_DRIVE_V1 pad / seat1 / hold0). Both PCs must run it. Follows the
+    // gun profile in lab and play since the M3c round (runs 51f6a2cc lab / 4f52fa2a play); a named 0 is the off switch.
     bool world_horse_pillion = false;
     bool world_horse_pillion_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie

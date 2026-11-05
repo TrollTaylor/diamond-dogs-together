@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mgs_coop VERSION 0.15.1 LANGUAGES CXX)
+project(mgs_coop VERSION 0.15.2 LANGUAGES CXX)
 option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)
 option(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER "Private copied-save worker: observe native actor reactivation completion" OFF)
 if(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER AND (NOT MGS_BACKGROUND_WORKER OR NOT MGS_LOCAL_OFFLINE_EQUIPMENT_TEST OR NOT MGS_LOCAL_STOCK46_PRELOAD_TEST OR NOT MGS_LOCAL_STOCK46_WRITER_TEST))
@@ -247,7 +247,7 @@ add_test(NAME partner_act_log_tests COMMAND partner_act_log_tests)
 # Melee on the partner (docs/native-puppet.md "Melee"): the attacker-side reach test of a local CQC strike, pure.
 target_sources(mgs_coop_core PRIVATE native/partner_melee.cpp)
 # Horse plan M1 shared D-Horse (MGS_COOP_HORSE_DRIVE_V1): the pure part (grammar, matrix, saddle anchor, shared state).
-target_sources(mgs_coop_core PRIVATE native/horse_drive_policy.cpp)
+target_sources(mgs_coop_core PRIVATE native/horse_drive_policy.cpp native/horse_body_watch_policy.cpp)
 add_executable(horse_drive_tests tests/horse_drive_tests.cpp)
 target_link_libraries(horse_drive_tests PRIVATE mgs_coop_core)
 if(MSVC)
@@ -455,7 +455,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
   # split at the last line break in its first 16000 bytes, so each stays at most
   # 16000 bytes, under the MSVC literal limit (16380).
-  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY ARRIVAL DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC SUPPLY SNAP HORSE_SHARE HORSE_PILLION MIRROR)
+  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY ARRIVAL DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC SUPPLY SNAP HORSE_SHARE HORSE_PILLION MIRROR READBACK)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mgs_world_path}")
@@ -600,7 +600,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_compile_options(steam_identity_tests PRIVATE /W4 /WX)
   add_test(NAME steam_identity_tests COMMAND steam_identity_tests)
   # Offline partner spike: guarded player-instance access and the log-only crash probe.
-  add_library(mgs_partner_player STATIC native/partner_player.cpp native/coop_carry.cpp native/coop_passenger.cpp native/coop_vehicle_mirror.cpp native/vehicle_native_protection.cpp native/horse_physical_probe_glue.cpp native/horse_cargo_flow_probe.cpp native/coop_sleep.cpp native/carry_info.cpp native/sleep_info.cpp native/sleep_partner_test.cpp native/vehicle_info.cpp native/downed_player.cpp native/downed_damage.cpp native/dog_guard.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_support_guard.cpp native/partner_support_equip.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_ride_seat.cpp native/partner_vehicle.cpp native/partner_board.cpp native/vehicle_door.cpp native/partner_pass_camera.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp native/partner_placed_census.cpp native/partner_icon.cpp native/partner_gesture.cpp native/partner_ui_filter.cpp native/partner_gesture_lever.cpp native/horse_drive.cpp native/soldier_perceive.cpp)
+  add_library(mgs_partner_player STATIC native/partner_player.cpp native/coop_carry.cpp native/coop_passenger.cpp native/coop_vehicle_mirror.cpp native/vehicle_native_protection.cpp native/horse_physical_probe_glue.cpp native/horse_cargo_flow_probe.cpp native/coop_sleep.cpp native/carry_info.cpp native/sleep_info.cpp native/sleep_partner_test.cpp native/vehicle_info.cpp native/downed_player.cpp native/downed_damage.cpp native/dog_guard.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_support_guard.cpp native/partner_support_equip.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_ride_seat.cpp native/partner_vehicle.cpp native/partner_board.cpp native/vehicle_door.cpp native/partner_pass_camera.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp native/partner_placed_census.cpp native/partner_icon.cpp native/partner_gesture.cpp native/partner_ui_filter.cpp native/partner_gesture_lever.cpp native/horse_drive.cpp native/horse_body_watch.cpp native/soldier_perceive.cpp)
   target_include_directories(mgs_partner_player PUBLIC native/include PRIVATE native)
   target_compile_options(mgs_partner_player PRIVATE /W4 /WX)
   if(MGS_BACKGROUND_WORKER)

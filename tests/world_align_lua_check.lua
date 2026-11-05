@@ -46,6 +46,7 @@ local function fixture(host, level, mb)
             if command.id == 'GetStatus' and c.status then return c.status[id] end
             if command.id == 'GetGameObjectIdUsingRoute' then return c.routeIds and c.routeIds[command.route] end
             if command.id == 'IsOnRoute' then return c.onRoute ~= nil and c.onRoute[id] == command.route end
+            if command.id == 'GetVehicleGameObjectId' and c.vehicles then return c.vehicles[id] or 65535 end
             c.commands[#c.commands + 1] = {id, command.id, command.state or command.phase, command.forceRealize, command.route}
             if command.id == 'ChangeLifeState' then if not c.inert then c.life[id] = command.state end
             elseif command.id == 'RequestForceFulton' then c.action[id] = 10
@@ -128,7 +129,7 @@ local function fixture(host, level, mb)
         W.follow.token = false
         return unpack(result)
     end
-    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9], arg[10]}) do
+    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9], arg[10], arg[11], arg[12]}) do
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.align.install({level or 3})
@@ -1618,6 +1619,157 @@ if arg[7] and arg[8] then
     rw.driveReply = {refused = 'relayed'}
     ticks(rw, 2)
     check(sent(rw, 1, 'SetForceRealize') == 0, 'place_reach off: a relayed drive step holds nobody')
+    check(logged(rv, ';src=drive;') and logged(rv, ';landed=0;timeout=1'),
+        'place_reach: the release line names the source of the hold and counts the landed / timed-out holds')
+    -- Enemy gaps 3 (design 7.18; run 3c9d1250: 14 host drive holds, every relay streak 1, all "timed out": a landed drive
+    -- step never released a hold, and a backoff refusal never got one): a backoff drive step holds him too, his next step
+    -- waits for the backoff's end (the native b), and a landed step releases him (why=landed, st=1).
+    local rb = guestFix(180)
+    rb.W.snapOn, rb.W.reachOn = true, true
+    rb.positions[1] = {0, 1.8, 100.0}
+    rb.driveReply = {refused = 'backoff', b = 1200}
+    ticks(rb, 2)
+    local nb = #rb.drives
+    check(sent(rb, 1, 'SetForceRealize') == 1 and logged(rb, 'event=realize_hold;ent=3000000001;on=1;ok=1;n=1;why=backoff;b=1200'),
+        'place_reach: a backoff drive step holds the guard')
+    ticks(rb, 30)
+    local nb2 = #rb.drives
+    rb.driveReply = {e = 40, s = 1, r = 0, h = 1}
+    ticks(rb, 10)
+    check(nb == 1 and nb2 == nb and #rb.drives > nb2 and sent(rb, 1, 'SetForceRealize', false) == 1 and
+        logged(rb, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rb, ';src=drive;st=1;') and
+        logged(rb, ';landed=1;timeout=0'), 'place_reach: the held drive step waits for the backoff end, lands and releases him')
+    -- A correction refused in the backoff holds him too and is queued again when the backoff ends; it lands, releasing him.
+    local rq = guestFix(180)
+    rq.W.reachOn = true
+    rq.positions[1] = {0, 1.8, 20.0}
+    rq.warp = {{refused = 'backoff', b = 600}, {r = 0, h = 1, leaf = 'typed'}}
+    sample(rq, 80, ENT1, 3000, 20000)
+    ticks(rq, 3)
+    check(logged(rq, 'event=place;seq=80;ent=3000000001;kind=correct;result=refused;why=unrealized;native=backoff') and
+        logged(rq, 'event=realize_hold;ent=3000000001;on=1;ok=1;n=1;why=backoff;b=600'), 'place_reach: a backoff correction holds the guard')
+    ticks(rq, 30)
+    check(logged(rq, 'event=place;seq=80;ent=3000000001;kind=correct;result=applied') and
+        logged(rq, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rq, ';src=place;') and logged(rq, ';rq=1;'),
+        'place_reach: the held correction is queued again at the backoff end and lands')
+    -- A drive step refused while that correction waits keeps its retry (it used to clear it: P.hold set r.c = nil).
+    local rr = guestFix(180)
+    rr.W.snapOn, rr.W.reachOn = true, true
+    rr.positions[1] = {0, 1.8, 20.0}
+    rr.warp = {{refused = 'backoff', b = 600}, {r = 0, h = 1, leaf = 'typed'}}
+    rr.driveReply = {refused = 'relayed', b = 3000}
+    sample(rr, 81, ENT1, 3000, 20000)
+    ticks(rr, 3)
+    local relayedDrive = rr.drives and #rr.drives or 0
+    ticks(rr, 110)
+    check(relayedDrive >= 1 and logged(rr, 'event=place;seq=81;ent=3000000001;kind=correct;result=applied') and
+        logged(rr, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rr, ';rq=1;'),
+        'place_reach: a relayed drive step keeps the held correction queued for the backoff end')
+    -- Enemy round 7 track A (design 7.20; lua/coop/world_readback.lua) ------------------------------------------------
+    do
+    local t
+    -- drive_sink counts the time under the target apart from snaps: round 6's 1 s drive_vert snap reset the 2 s window,
+    -- so a copy more than 1.5 m under for at least 3 of about 4 s (025fbb28, 2942862796) logged none.
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 30)
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = 40}
+    ticks(t, 15)
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 36)
+    check(logCount(t, 'event=drive_sink;ent=3000000001;') == 1, 'drive_sink: a snap that does not hold still counts (1 s + 1.2 s under)')
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 30)
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = 40}
+    ticks(t, 66)
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 36)
+    check(not logged(t, 'event=drive_sink;'), 'drive_sink: level for 2 s starts the count over')
+    -- Sparse readings (round 7 skeptic): a copy read once a second more than 1.5 m under logs drive_sink 2 s after the
+    -- first low reading, as 0.15.1 did (a 500 ms cap on each gap made it 4 s).
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 3, 1000)
+    check(logCount(t, 'event=drive_sink;ent=3000000001;') == 1, 'drive_sink: readings 1 s apart count in full (2 s, as 0.15.1)')
+    -- A y read-back 0.5 s and 2 s after a drive_vert snap (reply s=3; v: his y minus the target's before the snap, cm).
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 10, s = 3, r = 0, h = 1, v = -300}
+    ticks(t, 1)
+    t.driveReply = {e = 10, s = 0, r = 0, h = 1, v = 0}
+    t.positions[1] = {0, 4.75, 20.0}
+    ticks(t, 20)
+    check(logged(t, 'event=readback;ent=3000000001;src=vert;at=500;') and logged(t, ';dy_m=-0.05;held=1;far_m=20'),
+        'readback: 0.5 s after a vert snap, held on the target (dy within 1 m)')
+    ticks(t, 50)
+    check(logCount(t, 'event=readback;ent=3000000001;src=vert;') == 2 and logged(t, 'event=readback;ent=3000000001;src=vert;at=2000;'),
+        'readback: and again 2 s after it, once each')
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 10, s = 3, r = 0, h = 1, v = -300}
+    ticks(t, 1)
+    t.driveReply = {e = 10, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 70)
+    check(logged(t, 'event=readback;ent=3000000001;src=vert;at=500;') and logged(t, ';dy_m=-3.00;held=0;far_m=20') and
+        logged(t, 'event=readback;ent=3000000001;src=vert;at=2000;') and not logged(t, 'event=readback_fix;'),
+        'readback: a snap that did not hold is logged held=0 with its dy; within 60 m nothing more')
+    -- A held guard's landed drive step (it ends a place_reach hold) is read back too.
+    t = guestFix(180)
+    t.W.snapOn, t.W.reachOn = true, true
+    t.positions[1] = {0, 1.8, 30.0}
+    t.driveReply = {refused = 'backoff', b = 300}
+    ticks(t, 2)
+    t.driveReply = {e = 40, s = 1, r = 0, h = 1, v = -20}
+    ticks(t, 40)
+    check(logged(t, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and
+        logged(t, 'event=readback;ent=3000000001;src=drive;at=500;') and logged(t, ';dy_m=-0.20;held=1;'),
+        'readback: the landed drive step that ends a hold')
+    -- Far copies (place_reach; run 35d4074f: the host's copy of 1179373153 ~150 m off landed, was force-realized and
+    -- dropped 3.7-5.4 m): a copy beyond 60 m more than 1.5 m under its target at a read-back is put back once, his
+    -- force-realize ends and he is not held again for 10 s; falling again after that is only logged.
+    t = guestFix(180)
+    t.W.reachOn = true
+    t.positions[1] = {0, 1.0, 100.0}
+    t.warp = {{r = 0, h = 1, leaf = 'typed'}}
+    sample(t, 90, ENT1, 3000, 100000)
+    ticks(t, 6)
+    check(logCount(t, 'event=place;seq=90;ent=3000000001;kind=correct;result=applied') == 1, 'far: the correction lands')
+    t.positions[1] = {3.0, -2.5, 100.0}
+    ticks(t, 20)
+    check(logged(t, 'event=readback;ent=3000000001;src=place;at=500;') and logged(t, ';dy_m=-3.50;held=0;far_m=100') and
+        logged(t, 'event=readback_fix;ent=3000000001;src=place;far_m=100;dy_m=-3.50;put=1'),
+        'far: a copy 100 m off that fell 3.5 m is put back once')
+    ticks(t, 10)
+    check(logCount(t, 'event=place;seq=90;ent=3000000001;kind=correct;result=applied') == 2, 'far: the put-back lands')
+    ticks(t, 70)
+    check(logged(t, 'event=readback;ent=3000000001;src=put;at=500;') and
+        logged(t, 'event=readback_fix;ent=3000000001;src=put;far_m=100;dy_m=-3.50;put=0;why=once') and
+        logCount(t, 'event=place;seq=90;ent=3000000001;kind=correct;result=applied') == 2, 'far: falling again is not put back again')
+    t.warp = {{refused = 'relayed'}}
+    sample(t, 91, ENT1, 9000, 100000)
+    ticks(t, 6)
+    check(logged(t, 'event=place;seq=91;ent=3000000001;kind=correct;result=refused') and sent(t, 1, 'SetForceRealize') == 0 and
+        logged(t, 'event=readback_nohold;ent=3000000001;'), 'far: no new force-realize hold for him within 10 s')
+    -- The same fall within 60 m is not put back (only far copies), nor without place_reach.
+    t = guestFix(180)
+    t.positions[1] = {0, 1.0, 100.0}
+    t.warp = {{r = 0, h = 1, leaf = 'typed'}}
+    sample(t, 92, ENT1, 3000, 100000)
+    ticks(t, 6)
+    t.positions[1] = {3.0, -2.5, 100.0}
+    ticks(t, 80)
+    check(logged(t, 'event=readback;ent=3000000001;src=place;at=500;') and not logged(t, 'event=readback_fix;'),
+        'far without place_reach: read back and logged only')
+    end
     end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
     local hu = guestFix(180)
@@ -1697,6 +1849,7 @@ if arg[7] and arg[8] then
     do
     local mg = guestFix(0)
     mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
+    mg.W.handlers[92]({1, 6})                               -- the partner's ACT_CAPS (round 6)
     -- R(ALERT) is 1.5 x the farthest ALERT hit (122.4 m on the host, run 3bc7280b) = 184 m, not capped: 12 copies stayed
     -- realized out to 212 m (host) and 400 m (guest), so no realize radius was measured (skeptic of 7b709720).
     -- FM1 retry (run 94a7bf2a): the guest's own copies hit it from up to 173.9 m in ALERT (guard 16), so R(ALERT) is
@@ -1764,6 +1917,7 @@ if arg[7] and arg[8] then
     -- The host side: its own NORMAL guard within 250 m of the guest and beyond R - 10 m is registered; nearer ones not.
     local mh = followFixture(true)
     mh.W.snapOn, mh.W.actOn, mh.W.mission = true, true, 30010
+    mh.W.handlers[92]({1, 6})
     mh.positions[900] = {0, 0, 0}
     mh.positions[1] = {0, 1.8, 100.0}
     mh.positions[2] = {0, 1.8, 30.0}
@@ -1777,6 +1931,7 @@ if arg[7] and arg[8] then
     check((function()
         local ma = guestFix(0)
         ma.W.snapOn, ma.W.actOn, ma.W.mission = true, true, 30010
+        ma.W.handlers[92]({1, 6})
         ma.positions[1] = {0, 1.8, 100.0}
         ma.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
         ticks(ma, 70)
@@ -1784,7 +1939,7 @@ if arg[7] and arg[8] then
         ma.actReply = {f = 1, sh = 0, ox = 0, oy = 8800, oz = 100000}
         ticks(ma, 20)
         if logged(ma, 'why=apart') then return false end  -- not before 2 s, nor in his first 4 s as a puppet
-        ticks(ma, 100)
+        ticks(ma, 160)  -- round 6: the owner copy still for 2 s first (here it jumped 7 m up), then 2 s apart
         if not (logged(ma, 'event=mirror_apart;ent=3000000001;apart_m=7.0') and logged(ma, 'on=0;why=apart') and acted(ma, 'r 1 1') and
             cmdCount(ma, 'SetPuppet') == 2) then return false end
         ma.actReply = {f = 1, sh = 0}
@@ -1796,6 +1951,7 @@ if arg[7] and arg[8] then
     check((function()  -- its own function: the main chunk is at Lua's 200-local limit
         local mr = followFixture(true)
         mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
+        mr.W.handlers[92]({1, 6})
         mr.positions[900] = {0, 0, 0}
         mr.positions[1] = {0, 1.8, 280.0}
         mr.positions[2] = {0, 1.8, 320.0}
@@ -1813,6 +1969,7 @@ if arg[7] and arg[8] then
     end
     local mr = guestFix(0)
     mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
+    mr.W.handlers[92]({1, 6})
     mr.positions[1] = {0, 1.8, 100.0}
     ticks(mr, 4)
     check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet (setup)')
@@ -1864,6 +2021,120 @@ if arg[7] and arg[8] then
     pb.now = pb.now + 10000
     ticks(pb, 60)
     check(pCount(pb) >= 9, 'FM1: ACT_V1 p every 250 ms once the hook takes it')
+    -- FM1 round 6 (docs/world-sync-design.md 7.19, protocol section 36): the far mirror runs only after the partner's
+    -- ACT_CAPS (0x5C) with bit 1. A 0.15.0 partner has no op 0x5C and never sends one: nothing of soldier_act runs.
+    ;(function()
+        local function n(c, pat)
+            local k = 0
+            for _, s in ipairs(c.acts or {}) do if s:find(pat, 1, true) then k = k + 1 end end
+            return k
+        end
+        local og = guestFix(0)
+        og.W.snapOn, og.W.actOn, og.W.mission = true, true, 30010
+        og.positions[1] = {0, 1.8, 100.0}
+        ticks(og, 60)
+        check(n(og, ' -- q ') == 0 and n(og, ' -- m ') == 0 and next(og.W.mirror.pp) == nil and cmdCount(og, 'SetPuppet') == 0,
+            'FM1 round 6: an old partner (no ACT_CAPS): the guest asks nothing and takes no puppet')
+        local oh = followFixture(true)
+        oh.W.snapOn, oh.W.actOn, oh.W.mission = true, true, 30010
+        oh.positions[900] = {0, 0, 0}
+        oh.positions[1] = {0, 1.8, 100.0}
+        ticks(oh, 60)
+        check(n(oh, ' -- t ') == 0 and n(oh, ' -- s ') == 0, 'FM1 round 6: an old partner: the host registers and sends nothing')
+        local capsTx = 0
+        for _, t in ipairs(oh.tx) do if t.op == 92 and t.v[1] == 1 and t.v[2] == 6 then capsTx = capsTx + 1 end end
+        check(capsTx == 1, 'FM1 round 6: a PC with soldier_act announces ACT_CAPS {1, 6} once while paired')
+        og.W.handlers[92]({1, 6})
+        ticks(og, 8)
+        check(og.W.mirror.pp[3000000001] ~= nil and logged(og, 'event=mirror_peer;caps=1;rev=6'),
+            'FM1 round 6: after the partner\'s ACT_CAPS: a puppet')
+        oh.W.handlers[92]({1, 6})
+        ticks(oh, 8)
+        check(n(oh, ' -- t 1 1') >= 1 and n(oh, ' -- s ') >= 1, 'FM1 round 6: after the partner\'s ACT_CAPS: the host sends')
+        og.W.handlers[92]({0, 6})
+        ticks(og, 2)
+        check(logged(og, 'on=0;why=peer') and next(og.W.mirror.pp) == nil, 'FM1 round 6: a partner without the mirror releases every puppet')
+        og.W.handlers[92]({1, 6})
+        for _, f in ipairs(og.W.unpairedHooks) do f(1) end
+        check(og.W.mirror.peer == nil, 'FM1 round 6: unpaired forgets the partner\'s caps')
+        local ow = guestFix(0)
+        ow.W.snapOn, ow.W.mission = true, 30010
+        ticks(ow, 60)
+        local quiet = true
+        for _, t in ipairs(ow.tx) do if t.op == 92 then quiet = false end end
+        check(quiet, 'FM1 round 6: without soldier_act nothing is announced (the defaults send nothing new)')
+    end)()
+    -- FM1 round 6 (4): the phase lever (soldier_act=calm, native's ACT_V1 p reply pl=1) mirrors only in calm / caution;
+    -- without it (pl=0, the current behaviour) an ALERT puppet beyond R(ALERT) + 15 m stays.
+    ;(function()
+        local pl = guestFix(0)
+        pl.W.snapOn, pl.W.actOn, pl.W.mission = true, true, 30010
+        pl.W.handlers[92]({1, 6})
+        pl.positions[1] = {0, 1.8, 280.0}
+        ticks(pl, 8)
+        check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever: a puppet at 280 m in calm (setup)')
+        pl.W.cp[100].localPhase = 3
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] ~= nil and not logged(pl, 'why=phase_limit'), 'phase lever off (pl=0): an ALERT puppet at 280 m stays')
+        pl.pReply = {p = 1, pl = 1}
+        ticks(pl, 20)
+        check(logged(pl, 'event=mirror;ent=3000000001;on=0;why=phase_limit') and pl.W.mirror.pp[3000000001] == nil,
+            'phase lever pl=1: released in ALERT')
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] == nil, 'phase lever pl=1: none taken in ALERT')
+        pl.W.cp[100].localPhase = 1
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever pl=1: a puppet again in caution')
+    end)()
+    -- FM1 round 6 (2): riders (GetVehicleGameObjectId) are skipped by the far rule (run adecad01: two LRRP riders of another
+    -- CP were puppeted at 297 m and released apart 283-285 m off); a puppet who mounts is released (why=vehicle).
+    ;(function()
+        local rv = guestFix(0)
+        rv.W.snapOn, rv.W.actOn, rv.W.mission = true, true, 30010
+        rv.W.handlers[92]({1, 6})
+        rv.vehicles = {[1] = 77}
+        rv.positions[1] = {0, 1.8, 120.0}
+        ticks(rv, 40)
+        check(next(rv.W.mirror.pp) == nil, 'riders: a guard in a vehicle is never taken')
+        rv.vehicles = {}
+        ticks(rv, 40)
+        check(rv.W.mirror.pp[3000000001] ~= nil, 'riders: on foot he is taken (setup)')
+        rv.vehicles = {[1] = 77}
+        ticks(rv, 40)
+        check(logged(rv, 'event=mirror;ent=3000000001;on=0;why=vehicle') and rv.W.mirror.pp[3000000001] == nil,
+            'riders: a puppet who mounts is released')
+        local hv = followFixture(true)
+        hv.W.snapOn, hv.W.actOn, hv.W.mission = true, true, 30010
+        hv.W.handlers[92]({1, 6})
+        hv.positions[900] = {0, 0, 0}
+        hv.positions[1] = {0, 1.8, 100.0}
+        hv.vehicles = {[1] = 77}
+        ticks(hv, 8)
+        local t = 0
+        for _, s in ipairs(hv.acts or {}) do if s:find(' -- t 1 1', 1, true) then t = t + 1 end end
+        check(t == 0, 'riders: the host does not send a rider')
+    end)()
+    -- FM1 round 6 (1): apart only for a still owner copy (the tower case); a walker lagging behind a moving owner copy is the
+    -- catch-up's (native re-applies his request every 1 s), not apart's (runs adecad01 / 80cc0176: apart took them).
+    ;(function()
+        local mw = guestFix(0)
+        mw.W.snapOn, mw.W.actOn, mw.W.mission = true, true, 30010
+        mw.W.handlers[92]({1, 6})
+        mw.positions[1] = {0, 1.8, 100.0}
+        mw.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
+        ticks(mw, 70)
+        local oz = 107000
+        for _ = 1, 300 do
+            oz = oz + 33
+            mw.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = oz}
+            mw.positions[1] = {0, 1.8, (oz - 7000) / 1000}
+            ticks(mw, 1)
+        end
+        check(not logged(mw, 'why=apart') and mw.W.mirror.pp[3000000001] ~= nil,
+            'apart: a walker 7 m behind a moving owner copy stays a puppet')
+        ticks(mw, 200)
+        check(logged(mw, 'on=0;why=apart'), 'apart: once the owner copy is still 2 s, 7 m off for 2 s releases him')
+    end)()
     end
     -- M7 step 1 (W.perceiveOn): the host tells native soldier_perceive each sampled guard's nearer player (3 m band, a
     -- choice held 4 s); the guest never does.
