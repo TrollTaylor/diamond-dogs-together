@@ -188,6 +188,31 @@ def analyse(host, guest):
     r['m3_host_err_samples'] = hs
     r['m3_host_err_p50_m'] = quantile(hb, 0.5)
     r['m3_host_err_p90_m'] = quantile(hb, 0.9)
+    # Enemy round 7 (runs 90d9b4d1 / ddcdec94): after the guest is downed the host refuses its M3 placements as out of
+    # range (near=host) and its copies of the guest's guards drift 40-60 m; the error before the guest's first down apart.
+    down = None
+    for l in guest:
+        if 'event=downed' in l and 'step=entered' in l:
+            m = re.search(r't_ms=(\d+)', l)
+            if m:
+                down = int(m.group(1))
+                break
+    r['guest_downed_at'] = down
+    db, ds = [0] * 7, 0
+    for l in host:
+        if 'event=place_err' not in l:
+            continue
+        f = fields(l)
+        try:
+            h = [int(x) for x in f.get('h', '').split(',')]
+            t = int(f.get('t_ms', 0) or 0)
+        except ValueError:
+            continue
+        if len(h) == 7 and (down is None or t < down):
+            db, ds = [a + b for a, b in zip(db, h)], ds + int(f.get('n', 0))
+    r['m3_host_err_samples_before_down'] = ds
+    r['m3_host_err_p50_m_before_down'] = quantile(db, 0.5)
+    r['m3_host_err_p90_m_before_down'] = quantile(db, 0.9)
     owners = [fields(l) for l in host if 'event=owner;' in l or 'event=owner; ' in l]
     r['m3_owner_changes'] = len(owners)
     last, fast = {}, 0
@@ -318,6 +343,11 @@ def main(argv=None):
                   r['m3_host_err_samples'], r['m3_host_err_p50_m'] and round(r['m3_host_err_p50_m'], 2),
                   r['m3_host_err_p90_m'] and round(r['m3_host_err_p90_m'], 2), r['m3_guest_place_first'], r['m3_engage'],
                   r['m3_phase_down'], r['m3_phase_down_applied']))
+        if r['guest_downed_at'] is not None:
+            print('  M3: the guest was first downed at t_ms %d; host place error before it %d samples p50 %s m p90 %s m' % (
+                r['guest_downed_at'], r['m3_host_err_samples_before_down'],
+                r['m3_host_err_p50_m_before_down'] and round(r['m3_host_err_p50_m_before_down'], 2),
+                r['m3_host_err_p90_m_before_down'] and round(r['m3_host_err_p90_m_before_down'], 2)))
     if r['m4_host']['tx'] or r['m4_guest']['calls']:
         print('  M4: host snap %s / drive %s; guest snap %s / drive %s' % (r['m4_host'], r['m4_host_native'], r['m4_guest'],
                                                                           r['m4_guest_native']))
