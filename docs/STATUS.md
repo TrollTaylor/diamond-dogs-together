@@ -1,3 +1,63 @@
+## November 5, 2026: enemy round 10 track A - the wall guard at the same height on both screens with `drive_vert` named (3 of 3 moves held, frames on both screens), but while he climbs his copy still waits below about 3 s, so the `drive_sink` row fails and `drive_vert` stays off unless named; user decision D-A10 (`wp/enemy-m7`, not pushed)
+
+Design 7.27, protocol section 44. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
+sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge (join, latch-quiet, integ-carry,
+`enemy-vert-near.txt`): `c59ae699` (`drive_vert=1`, 0.15.2+fbd3def), `948c978a` (`drive_vert=1`, 0.15.2+0463d36: the
+guest onto the wall top) and `ef9584e4` (no key named, at the final code head 0463d36d, 0.15.2+0463d36). None void (first frames of both copies: gameplay, connected, no modal). Two earlier
+jobs stopped in the worker's own audited CTest before any game (`partner_defer_tests` check 185, `ddt_core_tests_1`
+CloseDuringSetup: timing tests; this tree's build passed 355/355); I counted the second against the three. Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults (`drive_vert` stays off unless named; at the defaults only the
+  `world_drive=stats` line gains `vert_wait=0`). Named, the guard on the wall top stands at the same height on both
+  screens once he stops: 3 of 3 moves of his copy held within 0.02 m at 0.5 s and 2 s, 3-49 m from the player.
+- **Built** (red first): a vert snap only while the owner copy is at rest in y (the rendered target within 0.2 m for 1
+  s; `sw::OwnerYAtRest`; a call gap over 600 ms or a NaN starts over); a waiting due snap logs `world_drive=vert_wait`;
+  the vert line adds `rest_ms`. 629f0a42 red (`soldier_warp_tests` FAIL "the owner copy level within 0.2 m for 1 s is at
+  rest") / fbd3def4 green. Scenario `enemy-vert-near.txt` (the host 31 m from the guard, the guest on the wall top).
+- **drive_vert gate (named runs)**:
+  - PASS [O] a vert snap within 60 m whose read-backs at 0.5 s and 2 s are within 1 m: 3 of 3 (2929558510: `c59ae699`
+    guest copy far 3 m, gap +4.24 m, 0.00 / 0.00 m; host copy far 31 m, gap -5.79 m, -0.02 / -0.02 m; `948c978a` guest
+    copy far 49 m, gap +4.44 m, 0.01 / 0.01 m). Owner rest at the snap 1058-1178 ms. 0 `vert_stop`.
+  - FAIL [O] 0 `drive_sink`: 1 on the guest in each run, 2929558510 (-3.30 m, low 2.1 s; -3.48 m, low 2.3 s), in the
+    alert's first block while the host owned him. `vert_wait` first (the owner's rest window just restarted, gap 2.50 /
+    3.48 m), the host's copy rose 1.0-1.7 m more at 1.06-1.07 m planar [I: a ladder] and came to rest within 25 ms of
+    `drive_sink` firing; the snap came 1.1 s later. His copy was under 3.2-3.4 s, then on him. No rest-gated snap can
+    beat the 2 s detector when the climb alone keeps the gap over 1.5 m for 2 s.
+  - PASS [O] 0 `place_sink`, `guard_fell`, latches, faults, game overs, roster mismatches, overflow (both runs, both
+    copies; `enemy_div_report.py`).
+  - PASS [O] frame pair (`948c978a` v-a..v-c, looked at): the guest on the wall top sees him standing on it about 11 m
+    ahead (aim 10.9 m, 6.1 deg down); the host's binoculars at 31 m (12.9 deg up) show his silhouette at the wall top
+    under his marker, behind the parapet [I: both about the same height from the two aim readouts]. `c59ae699` FAIL: the
+    guest's goto left the guest at the wall's foot and its frames show only the wall.
+  - reported: guest place error p90 1.81 / 1.66 m; host M3 p90 15.09 m (6.55 m before the guest's down at 367062820) /
+    7.68 m.
+- **The no-key run `ef9584e4`** (`drive_vert` off; the shipped defaults plus the log line) [O]:
+  - the bug at the defaults, within 60 m: in block 1 the guest's copy of 2929558510 was under the host's (owner) copy,
+    `drive_sink` -4.54 m (low 3.5 s), as in the named runs, and nothing moved it (0 vert lines); 1.0 s later the guest
+    became his owner. In v-a / v-c the host's binoculars show him standing on the ground 28-29 m off (aim 1.3-2.4 deg up)
+    and the guest's aim from the wall top is 17-24 deg down: both copies on the ground by then [I: the host's copy walked
+    down]. The guest's frames show only the guest's own character lying on the wall top.
+  - PASS 0 latches, faults, game overs, roster mismatches, overflow, `guard_fell`; guest place error p50 0.57 / p90 1.17
+    m (165 samples; gate 2 m).
+  - FAIL `place_sink` 1 (host): 3268415846 4.89 m under where he was put, his owner's newest sample 4.89 m lower too, 0.1
+    m planar [I: he went down a ladder on both screens; that code is unchanged this round].
+  - reported: host M3 p50 2.15 / p90 6.94 m (934 samples; the guest was not downed).
+  - integ-carry: `body_tx sent=1` and `place_body fix=1` (13.7 m) [O]; the part failed at its second `placebehind` (the
+    host's viewer position did not settle within 3 s), so no c-b frames.
+- **Failing rows** (`enemy_div_report.py`): `c59ae699` M3 host placements 228/286, host M3 (2.21, 15.09) m, drive_sank 1;
+  `948c978a` host M3 (2.07, 7.68) m, drive_sank 1;
+  `ef9584e4` host M3 (2.15, 6.94) m, drive_sank 1, guard_sank 1 (the place_sink above), the integ-carry part's placebehind.
+- **User decision D-A10**: turn `drive_vert` on with the gun profile, reading the `drive_sink` row as "left under after
+  the guard has stopped" (players: a guard on a wall top stands on the wall on both screens about 1 s after he stops; while
+  he climbs, his copy waits at the foot for about 3 s, as today), or keep it off. The flip is one line plus its test, then
+  one no-key run.
+- **Next**: on a yes, flip (lab_config red / green) and run this batch with no key. Otherwise a `drive_sink` counted only
+  while the owner copy is at rest in y measures the bug, not the climb (a detector change: needs a yes too).
+- **Checks**: full `tools/build.ps1 -Jobs 4` at fbd3def4: CTest 355/355; every `generate_*_contract.py --check` known
+  failures only (camera_mode_window, carry_info, horse_drive, master_server, native_ui, sleep_plugin,
+  teammate_targeting, vehicle_controller). No new contract site, Lua unchanged.
+
 ## November 5, 2026: enemy round 9 track C - the far mirror's walkers plan their own path: the plans land and the one mirrored calm walker's place error fell from 9 to 1.3 m (p50), but 3 of 4 calm walkers are never taken, released walkers freeze, and the calm gate is not reached; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.26, protocol section 43. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
