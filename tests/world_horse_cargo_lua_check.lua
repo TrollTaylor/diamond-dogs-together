@@ -120,8 +120,12 @@ f = fixture(); f.role = 1; f.D.records[2].down = false; f.hold("E", 600)
 check(f.C.state == "off" and f.logged("step=refuse;why=awake"), "a partner who is not down is never loaded")
 f = fixture(); f.role = 1; f.horse.x = 103000; f.hold("E", 600)
 check(f.C.state == "off" and f.logged("step=refuse;why=far;dist_cm=300"), "the horse 3 m away: far")
-f = fixture(); f.role = 1; f.env.vars.playerRotY = -90; f.hold("E", 600)
-check(f.C.state == "off" and f.logged("step=refuse;why=facing"), "the horse behind the carrier: facing")
+f = fixture(); f.role = 1; f.env.vars.playerRotY = -90; f.horse.x = 102000; f.hold("E", 600)
+check(f.C.state == "off" and f.logged("step=refuse;why=facing"), "the horse 2 m behind the carrier: facing")
+-- Round 2 (run 20aef564: the guest carrier 0.85 m from the horse's root, facing away, refused facing): within 1.2 m
+-- the carrier is against the horse and the facing check is skipped.
+f = fixture(); f.role = 1; f.env.vars.playerRotY = -90; f.horse.x = 100850; f.hold("E", 600)
+check(f.C.state == "loading", "within 1.2 m of the horse: loads whichever way the carrier faces")
 f = fixture(); f.role = 1; f.hostage = true; f.hold("E", 600)
 check(f.C.state == "off" and f.logged("step=refuse;why=npc_cargo"), "a guard already on the horse: npc_cargo")
 f = fixture(); f.role = 1; f.horse.occupied = true; f.hold("E", 600)
@@ -172,12 +176,14 @@ check(f.C.state == "carrier", "mounted: the take-down hold does nothing")
 f.mounted = false
 f.tick(50)
 f.env.vars.playerPosX, f.env.vars.playerPosZ, f.env.vars.playerPosY = 101.6, 301.2, 1.9
-f.hold("R", 300)
-check(f.C.state == "carrier", "R under 0.5 s: still on")
+-- Round 2 (run a49c4d76: the coop pickup shouldered them off the horse before a 0.5 s hold): the take-down is 0.3 s.
+check(f.C.TAKE_MS == 300, "the take-down hold is 0.3 s")
+f.hold("R", 150)
+check(f.C.state == "carrier", "R under 0.3 s: still on")
 f.tick(50)
-f.hold("R", 550)
+f.hold("R", 350)
 check(f.C.state == "off" and f.cargo[#f.cargo] == "000" and f.logged("step=take_down;key=r"),
- "R held 0.5 s: laid down at once (an R held on picks them up from the ground), the hold cleared (CARGO_V2 0 0 0)")
+ "R held 0.3 s: laid down at once (an R held on picks them up from the ground), the hold cleared (CARGO_V2 0 0 0)")
 local u = f.sent(5)
 check(u and u[6] == 4 and u[7] == 22, "UNLOADED cause taken_down (4) with the victim's generation")
 w = f.lastWarp(1)
@@ -190,6 +196,17 @@ check(not f.C.busy(), "not busy after the take-down")
 -- An E hold also takes them down (where E does not mount).
 f = fixture(); load(f); f.hold("E", 1100); f.tick(50)
 check(f.C.state == "off" and f.logged("step=take_down;key=e"), "an E hold 1 s takes them down too")
+-- Round 2 (run a49c4d76: the E hold that loaded them, held on, took them down 0.5 s later): after the load the
+-- take-down waits until E and R have been up once.
+f = fixture(); f.role = 1
+for i = 1, 10 do f.holdE(true); f.tick(50) end
+check(f.C.state == "loading", "one long E hold: loading")
+f.role, f.physical.carrying = 0, false
+for i = 1, 16 do f.holdE(true); f.tick(50) end
+check(f.C.state == "carrier" and not f.logged("step=take_down"), "the E that loaded them, held on 0.8 s: still on")
+f.holdE(false); f.tick(50)
+f.hold("E", 400)
+check(f.C.state == "off" and f.logged("step=take_down;key=e"), "released once, a new 0.3 s E hold takes them down")
 f = fixture(); load(f); f.hold("R", 2000)
 check(f.C.state == "off" and f.count(5) == 1 and f.cargo[#f.cargo] == "000", "R held on after the lay-down: one UNLOADED, nothing more here")
 -- On foot by the horse: an unridden census far over the carrier's ground is kept 1.45 m over that ground.
@@ -277,6 +294,24 @@ check(math.abs(f.lastWarp(0).x - 172.3) < 1e-6, "a 2 m jump is no motion: no lea
 f.now = f.now + 400
 f.C.placed(172600, 2400, 310000, 0)
 check(math.abs(f.lastWarp(0).x - 172.6) < 1e-6, "a placement 400 ms after the last: no lead")
+-- Round 2 (run a49c4d76: body 0 on the ground under the moving horse for a second or more at a time on the victim's
+-- screen, right after the mount and at a gallop): body 0's target never drops faster than 1 m/s (a sudden drop of
+-- the placed pose); a rise is immediate.
+local y0 = f.lastWarp(0).y
+f.now = f.now + 50
+f.C.placed(172700, 2000, 310000, 0)
+check(math.abs(f.lastWarp(0).y - (y0 - 0.05)) < 1e-6, "a 0.4 m drop of the placed pose: body 0 down 5 cm in 50 ms")
+f.now = f.now + 50
+f.C.placed(172800, 2600, 310000, 0)
+check(math.abs(f.lastWarp(0).y - (2.6 + f.C.VICTIM_PLACED_MM / 1000)) < 1e-6, "a rise: at once")
+check(f.C.DOWN_MMPS == 1000, "the drop rate is 1 m/s")
+-- The lab lever horse_probe cargo_pose: the placed / census heights, the offset behind the root, the drop rate.
+check(f.C.setVictimPose(1700, 1300, 200, 0) and not f.C.setVictimPose(9000, 1300, 200, 0), "setVictimPose: in range only")
+f.now = f.now + 50
+f.C.placed(172900, 2600, 310000, 0)
+w = f.lastWarp(0)
+check(math.abs(w.y - 4.3) < 1e-6 and math.abs(w.z - 309.8) < 1e-6, "setVictimPose: body 0 1.7 m over the placed pose, 0.2 m behind")
+check(f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS), "setVictimPose back to the defaults")
 check(f.logged("step=victim_pin;want_cm=") and f.logged(";lag_cm=") and f.logged(";src="),
  "the victim_pin line carries the body's lag behind its last target and the target's source")
 f.W.horseShare = {}

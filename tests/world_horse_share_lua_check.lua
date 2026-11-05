@@ -177,12 +177,15 @@ local fast = 0
 for _, t in ipairs(f.tx) do if t[1] == 44 then fast = fast + 1; check(t[3] == 3 and t[4] == HORSE and t[5] == 10000, "RIDE_FAST kind 3, id 6656, the census pose") end end
 check(fast >= 9 and fast <= 11, "20 Hz while riding")
 check(f.S.busy() and f.W.travel.blocked() == 3, "riding: busy")
+-- M2 round 2 (the M1 regression part): the final_sent line carries the ride's path (the census pose read while riding).
+for _ = 1, 10 do f.horse.x = f.horse.x + 100; f.tick(25) end
 f.rides, f.horse.occupied = false, false
 f.horse.x = 12345
 f.tick(25)
 local last = f.tx[#f.tx]
 check(last[1] == 42 and last[3] == 1 and last[4] == HORSE and last[5] == 12345 and last[9] == 0 and last[10] == 65534,
     "the dismount: one final reliable RIDE_BODY kind 1 with the unridden pose")
+check(f.logged("step=final_sent;ok=1;") and f.logged(";path_cm=100;"), "final_sent: the ridden path, 1 m (10 reads 0.1 m apart)")
 local count = #f.tx
 for _ = 1, 10 do f.tick(25) end
 check(#f.tx == count and not f.S.busy(), "once")
