@@ -1,19 +1,37 @@
-# Horse plan M2, the body-0 pose levers and the link drop (part 2 of the lab session after horse-cargo.txt; the lever and
-# worldtrigger are lab only). The host carries the downed guest onto the shared horse again and rides a left loop at a
-# trot and a right turn at the gallop (frames h2p-* on both screens; the lever legs of the BODY0 round 1 / 2 runs are
-# done: 911ce293 bisected 4 / 6 / 14 / 14 lower / 15); the host
-# gets off with the cargo_relie lever at 0 (h2c-stays: the old squat), the lever back to 1 (h2c-relie: lying), then the guest's world link goes off: both copies lay the body beside the horse (why=stream_lost on the
-# host; the guest's copy lays body 0 down when its world goes off). Frames h2c-loaded and h2c-dropped on both screens.
+# M2g attempt 3 (lab 39fff762 (b): the recall after the teleport left the horse where (a) ended, by a rock wall, and
+# the guest's R there never shouldered the downed host): parts 2+ start at the horse where the last part left it (no
+# teleport, no recall), and the rides are shorter (about 100 m) so they end in the open.
+# M2g attempt 2 (play bb7dde83: the carrier's rifle put the host's horse Unconscious before the load, the aim ray on
+# 6656, so the first E did not mount it): the victim stands 8 m behind the carrier at the horse and the carrier 4 m in
+# front of them, facing away from the horse.
+# M2g attempt 2 (lab f7e09c55: a guest capture refused mid-ride, sequence_expiry_or_busy, ended the session): single frames,
+# fewer of them (load, walk, trot, gallop, gallop4, stop, after the dismount, take-down, revive), and a riding leg
+# waits out its 1.5 s hold after its captures.
+# Horse plan M2 (M2g): part 3 of 3 of the lab session (after horse-cargo.txt and horse-cargo-b.txt; worldtrigger is lab
+# only). From the boot spot the host carries the downed guest onto the shared horse again, the first E mounts, a walk and
+# a left trot (frames h2p-* on both screens), the stop, and the dismount with cargo_relie 1 (the default) from the start:
+# the victim stays lying on the horse on both screens (h2c-stays 1 s, h2c-stays2 3.5 s after it; no fall / land loop, no
+# Unconscious horse in either log). Then the guest's world link goes off: both copies lay the body beside the horse
+# (why=stream_lost on the host; the guest's copy lays body 0 down when its world goes off). Frames h2c-loaded and
+# h2c-dropped on both screens.
 logmark both
 both debug godmode 1
-# --- (c) loaded again, then the guest's world link off: both copies lay the body beside the horse.
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run cargo_status
+host require cargo;state=off;key=1
+guest run cargo_status
+guest require cargo;state=off;key=1
+# --- (c) loaded again from the boot spot.
 host run goto_horse
 wait 1000
-placebehind guest host 3 2
+placebehind guest host 8 2
 wait 2000
 stance host stand
 stance guest stand
-placebehind host guest 6 -0.7
+placebehind host guest -4 -0.7
 wait 3000
 guest debug godmode 0
 host hold rmb+lmb 1500
@@ -42,26 +60,37 @@ host run cargo_status
 host require cargo;state=carrier
 guest run cargo_status
 guest require cargo;state=cargo
+# M2g attempt 3 (39fff762: the victim's own frames showed the horse only at the load): the victim's camera looks down a
+# little so their frames show the horse under the body.
+guest mouse 0 200
+wait 400
 both capture h2c-loaded
+guest run cargo_status
+guest expect cargo;state=cargo;.*relie=1
+# M2g attempt 3 (play 624148f9: the carrier stood at the horse's head and this E did not mount): to its flank first.
+host run horse_flank
+wait 1500
 logmark both
 host press e 150
 wait 2500
 host run horse_status
-host expect localMounted=1
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+host hold w 1500 nowait
+wait 300
+guest capture h2p-walk
+host capture h2p-walk-carrier
+wait 600
 host hold w+a 1500 nowait
-guest burst h2p-trot 2 400
+wait 300
+guest capture h2p-trot
 host capture h2p-trot-carrier
-host hold w+shift+d 1500 nowait
-guest burst h2p-gallop 2 400
-host capture h2p-gallop-carrier
+wait 600
 host release
 wait 2500
-guest capture h2p-stopped
-# M2f red / green on one body: with the lever's 0 the victim's copy only logs body 0's stance through the dismount (the
-# BODY0 runs: it squatted on the horse), then 1 asks a squatting body back to CRAWL (step=relie).
+both capture h2p-stopped
+# M2g: the dismount with cargo_relie 1 from the start (M2f ran it with the lever at 0 first): the victim stays lying.
 logmark both
-guest run cargo_relie 0
-guest expect cargo_relie;v=0
 host press e 150
 wait 3000
 host run horse_status
@@ -71,12 +100,9 @@ host expect cargo;state=carrier
 wait 1000
 both capture h2c-stays
 guest run cargo_status
-guest expect stance=SQUAT
-logmark both
-guest run cargo_relie 1
-guest expect cargo_relie;v=1
+guest expect cargo;state=cargo;.*stance=CRAWL
 wait 2500
-both capture h2c-relie
+both capture h2c-stays2
 guest run cargo_status
 guest expect stance=CRAWL
 logmark both

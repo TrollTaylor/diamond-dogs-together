@@ -88,6 +88,23 @@ void TestParse() {
           "hold0: seven numbers, free roam, yaw and reset bounds");
 }
 
+// M2g (run f7e09c55: at the partner's mount the victim's copy unrealized body 1 for a frame, the census refused, hold0
+// refused "body", the fall check ran on body 0 and it squatted on the horse): hold0 of body 0 alone may use body 1's class
+// from the last full census, only while body 0's own T class equals it.
+void TestHoldAlone() {
+    hd::BodyClass b0{}, cached{};
+    b0.t_vt = 0x10; b0.t68 = 0x20; b0.t70 = 0x30; b0.t58 = 0x40; b0.c0_vt = 0x50; b0.c090 = 0x60; b0.a0_vt = 0x70; b0.a080 = 0x80;
+    Check(!hd::CachedBody1Usable(b0, cached), "hold alone: no full census yet, no cached class");
+    cached = b0;
+    Check(hd::CachedBody1Usable(b0, cached), "hold alone: body 0's T class equals the cached body 1 class");
+    cached.t68 = 0x21;
+    Check(!hd::CachedBody1Usable(b0, cached), "hold alone: another T set-pose slot refuses");
+    cached = b0; cached.t_vt = 0x11;
+    Check(!hd::CachedBody1Usable(b0, cached), "hold alone: another T vtable refuses");
+    cached = b0; b0.t58 = 0;
+    Check(!hd::CachedBody1Usable(b0, cached), "hold alone: an unread slot refuses");
+}
+
 void TestHoldRefusal() {
     hd::HoldScope s{};
     Check(std::strcmp(hd::HoldRefusal(s), "off") == 0, "hold0: the keys first");
@@ -483,6 +500,58 @@ void TestShotKey() {
                              "world_horse_shot=1\n");
     Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_shot && playGun.play_refused == 0, "a named 1 runs in play too");
 }
+// M4b (world_horse_shot): the driver sees the passenger's raised gun. While the remote aims, the DM overlay leaves body 1 to
+// its native squat-aim at the rear seat (kAimLingerMs past the last aiming tick, so the gaps between shots keep it); the
+// partner driver notes that seat and the seat1 receipt hands it to Lua, whose hold1 pins body 1 there (admitted by the
+// pillion and shot keys together).
+void TestAimSeat() {
+    hd::SeatAim a{};
+    Check(!hd::AimSeat(a, false, true, 1000), "aim: no shot key or no live seat: never");
+    Check(!hd::AimSeat(a, true, false, 1000), "aim: the remote not aiming: no");
+    Check(hd::AimSeat(a, true, true, 1000), "aim: the remote aims: the overlay leaves body 1 to the native aim");
+    Check(hd::kAimLingerMs == 1500 && hd::AimSeat(a, true, false, 2500) && !hd::AimSeat(a, true, false, 2501),
+          "aim: kAimLingerMs (1.5 s) past the last aiming tick");
+    Check(hd::AimSeat(a, true, true, 3000) && !hd::AimSeat(a, false, true, 3001) && !hd::AimSeat(a, true, false, 3002),
+          "aim: the seat's end (or the key's) clears it");
+    Check(!hd::AimSeat(a, true, false, 1), "aim: a clock that went back is no aim");
+    hd::Reset();
+    std::int32_t mm[3]{}, yaw = 0;
+    Check(!hd::SeatAimTarget(1000, mm, yaw), "aim seat: none noted");
+    const float seat[3] = {1.f, 2.5f, -3.25f};
+    hd::NoteSeatAim(true, seat, 1.5708f, 1000);
+    Check(hd::SeatAimTarget(1000 + hd::kSeatMs, mm, yaw) && mm[0] == 1000 && mm[1] == 2500 && mm[2] == -3250 && yaw == 1571,
+          "aim seat: the noted seat in mm / mrad for kSeatMs");
+    Check(!hd::SeatAimTarget(1001 + hd::kSeatMs, mm, yaw) && !hd::SeatAimTarget(999, mm, yaw), "aim seat: stale or a clock gone back: none");
+    hd::NoteSeatAim(false, seat, 1.5708f, 2000);
+    Check(!hd::SeatAimTarget(2000, mm, yaw), "aim seat: not aiming: none");
+    const float far[3] = {2e6f, 0.f, 0.f};
+    hd::NoteSeatAim(true, far, 0.f, 3000);
+    Check(!hd::SeatAimTarget(3000, mm, yaw), "aim seat: out of the receipt's bounds: none");
+    hd::NoteSeatAim(true, seat, 1.5708f, 4000);
+    hd::Reset();
+    Check(!hd::SeatAimTarget(4000, mm, yaw), "aim seat: reset ends it");
+    char reply[160]{};
+    hd::NoteSeatAim(true, seat, -1.5708f, 5000);
+    Check(hd::SeatReply(5000, reply, sizeof(reply)) &&
+              std::strcmp(reply, "return {ready=true,seat=1,aim=1,sx=1000,sy=2500,sz=-3250,syaw=-1571}") == 0,
+          "seat1's reply carries the aim seat");
+    Check(hd::SeatReply(5000 + hd::kSeatMs + 1, reply, sizeof(reply)) && std::strcmp(reply, "return {ready=true,seat=1,aim=0}") == 0,
+          "seat1's reply without an aim");
+    Check(!hd::SeatReply(5000, reply, 8), "seat1's reply: a short buffer fails");
+    // hold1 (body 1) on the driver's copy: the pillion key admits it only with the shot key (world_horse_cargo as before).
+    hd::HoldScope h{};
+    h.share = h.pillion = h.body1 = true;
+    Check(std::strcmp(hd::HoldRefusal(h), "off") == 0, "hold1: the pillion key alone does not admit body 1");
+    h.shot = true;
+    Check(std::strcmp(hd::HoldRefusal(h), "pins") == 0, "hold1: pillion + shot pass the key step");
+    h.pillion = false;
+    Check(std::strcmp(hd::HoldRefusal(h), "off") == 0, "hold1: the shot key alone does not");
+    h.cargo = true;
+    Check(std::strcmp(hd::HoldRefusal(h), "pins") == 0, "hold1: world_horse_cargo as before");
+    hd::HoldScope h0{};
+    h0.share = h0.pillion = true;
+    Check(std::strcmp(hd::HoldRefusal(h0), "pins") == 0, "hold0: the pillion key as before");
+}
 
 // BODY0 round: the pure part of the hardware write watch on body 0's transform (native/include/mgscoop/horse_body_watch.hpp).
 void TestBodyWatch() {
@@ -531,6 +600,7 @@ int main() {
     TestUnderRider();
     TestParse();
     TestRefusal();
+    TestHoldAlone();
     TestHoldRefusal();
     TestShared();
     TestVisibility();
@@ -541,6 +611,7 @@ int main() {
     TestPillionKey();
     TestShot();
     TestShotKey();
+    TestAimSeat();
     TestSeatErr();
     std::printf("%u horse drive checks passed: call-enter matrix, saddle anchor, receipt grammar, refusals, shared state, "
                 "shared-horse rider visibility, lab key\n",

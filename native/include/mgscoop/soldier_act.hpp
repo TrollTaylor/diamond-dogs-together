@@ -195,6 +195,38 @@ inline constexpr float kPlanMoveM = 1.0f;
 bool RequestChangedFar(const unsigned char (&planned)[0x70], const unsigned char (&now)[0x70]) noexcept;
 bool PlanLiveFor(std::uint16_t ours, std::uint16_t r19c, std::uint64_t slot_hash, std::uint16_t slot_handle, bool check_bad) noexcept;
 bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned gait_now, unsigned gait_want) noexcept;
+// Enemy round 10 track C (act_plan, design 7.29; run 226fc789: 1 of 4 calm walkers taken, the others waited on LegMatch
+// (leg_wait 775) and the 10 m rule (near_wait 53) and stayed 17-45 m off). With act_plan a walker is taken whatever his leg
+// or distance: the plan walks him onto the host copy's path, and beyond 15 m the take opens with the unpack's warp. Without
+// it, LegMatch as round 6. 0 taken, 1 leg_wait, 2 near_wait.
+unsigned TakeWait(bool plan, bool leg_match, bool take_near) noexcept;
+// The plan check (round 10 C; 226fc789 / c0c3d088: 4 and 2 plans with no path yet at 300 ms): kPlanCheckMs after a plan,
+// then every kPlanCheckMs up to kPlanRechecks more times while the path is missing or ends beyond kPlanEndM of R+0x80 (the
+// query may still run); the last check's verdict is the one counted.
+inline constexpr unsigned kPlanRechecks = 4;
+enum class PlanVerdict { again, ok, partial, nopath };
+PlanVerdict PlanCheckVerdict(bool path, bool end_near, unsigned tries) noexcept;
+// A partial path (round 10 C; 77785f31: caution runners stood while re-planned every 1 s on partial paths, then jumped
+// 16 m): its end beyond kPlanEndM of R+0x80 at the last check. The hold keeps it while this copy is more than kPlanPartialM
+// (flat) from that end; nearer, the next due re-apply plans again from where he stands. Only no path at all is "bad".
+inline constexpr float kPlanPartialM = 3.0f;
+bool PartialHolds(bool partial, const float (&self)[3], const float (&end)[3]) noexcept;
+// The release (round 10 C; the release freeze of 77785f31: five released walkers stood 34-48 s in ka 1 / dm 1 with an
+// empty slot, because the release cancelled our plan and left the host copy's walk in R). A released copy whose R holds a
+// walk (dest mode 1) walks it on to R+0x80: our live plan is kept (keep), or with no handle, (R+0x19e & 3) == 2 and a free
+// slot it is planned again (replan). Not a walk: our live handle is cancelled as before (cancel). His brain's type in the
+// slot: left alone (none).
+enum class ReleaseStep { none, cancel, keep, replan };
+ReleaseStep ReleaseChoose(unsigned dest_mode, std::uint16_t r19e, std::uint64_t slot_hash, std::uint16_t slot_handle,
+                          std::uint16_t r19c) noexcept;
+// A kept / re-planned released walk ends with our handle cancelled (finish: R+0x19c 0xffff) once he has stood within
+// kReleaseArriveM (flat) of R+0x80 for kReleaseArriveMs, or after kReleaseWalkMs; it is over with nothing to do once R+0x19c
+// or his slot no longer holds our handle (the engine's start of his brain's next request cancelled it). near_ms: how long
+// he has been within kReleaseArriveM (0: not).
+inline constexpr float kReleaseArriveM = 1.5f;
+inline constexpr std::uint64_t kReleaseArriveMs = 2000, kReleaseWalkMs = 180000;
+enum class ReleaseWalk { walk, finish, over };
+ReleaseWalk ReleaseWalkStep(bool ours_live, std::uint64_t near_ms, std::uint64_t age_ms) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
@@ -253,6 +285,9 @@ struct Counters {
     // plan_none: 0x1413725f0 ran but the planner refused (R+0x19c 0xffff); plan_release: our handle cancelled at a release.
     std::uint32_t plan_cancel, plan_busy, plan_none, plan_release;
     std::uint32_t plan_hold;  // round 9 C: due re-applies held (PlanHold: no restart, no new plan)
+    // Round 10 C: rel_keep / rel_replan = released walks kept / planned again (ReleaseChoose); rel_end = released walks
+    // finished or over; recheck = plan checks run again (PlanCheckVerdict again).
+    std::uint32_t rel_keep, rel_replan, rel_end, recheck;
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the

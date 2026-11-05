@@ -2577,3 +2577,36 @@ No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. N
 - A due snap that waits logs `world_drive=vert_wait; go; slot; gap_cm; rest_ms; span_cm` once per due spell (at most 32
   lines per process); `world_drive=vert` adds `rest_ms` (the owner's rest window when it was taken); `world_drive=stats`
   adds `vert_wait`.
+
+## 45. Enemy round 10 track B: the LRRP crews on the host's travel step (lab key `lrrp_follow`, native only; design 7.28)
+
+New op LRRP_STEP 0x5E (94), host to guest, world queue, reliable, level 3, play too, never a request; 4 fields, 11 bytes:
+a crew member's ent hash (u32, Fox.StrCode32 of its soldier name), its LRRP travel plan hash (u32, as svars
+`solTravelName` holds it; 255 no plan), its travel step (u8, svars `solTravelStepIndex`; 255 no plan) and its truck's id
+(u16, 25600..26111). Sent only with `lrrp_follow`. A partner without 0x5E skips it by its length (`unknown_op`) and its
+crews keep their own clock (as section 42).
+
+- Both roles, once a second while a crew is known: `GameObject.SendCommand({type="TppSoldier2"}, {id="StoreToSVars"})`
+  (the call `TppEnemy.StoreSVars` makes before a checkpoint save; the exe writes each soldier's travel plan T.vt[0x78],
+  step T.vt[0x80] and keep-in-alert T.vt[0x90] there), then the crew's svars rows (row = GameObjectId & 0x1ff, used only
+  when `svars.solName[row]` is that soldier's name hash; else `step=tstep_miss; role; ent; why`, every 10 s).
+- Host: each crew member it has seen seated: LRRP_STEP on a change of plan or step (`step=tstep; role=host; id; ent;
+  plan; st`) and every 5 s. A crew the host never saw seated gets no LRRP_STEP (its guest copy keeps round 9's unseat).
+- Guest: on its own change `step=tstep; role=guest; id; ent; plan; st; host_st`. When its plan or step differs from the
+  host's (the host's not 255), its truck's track is followed within 30 m or waits crewless, the plan name is known
+  (`mvars.ene_travelPlans` keys, the crews' `lrrpTravelPlan`) and 5 s passed for that guard:
+  `StartTravel{travelPlan=name, step=host's, keepInAlert=its own}` (`step=tset; id; ent; plan; from; to; k`); else
+  `step=tstep_hold; id; ent; why (plan|track|wait|tries); st; host_st` every 10 s. `StartTravel{travelPlan=""}` is never sent.
+- Guest: while steps for a truck arrived in the last 15 s, its crew is not unseated (no `UnsetRelativeVehicle`).
+- Lines: the guest's `step=follow` (and its riders line) 1 Hz while followed, 5 s at rest (were 4 Hz / 2 s); the host's
+  `step=host` 4 Hz while its truck moves, 1 Hz manned at rest, 5 s empty.
+
+## 46. Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`; design 7.29)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native only, the puppet side, under `act_plan`.
+
+- `ACT_V1 q` (QueryFresh) no longer waits on `LegMatch` or the 10 m rule with `act_plan` (`leg_wait` / `near_wait` stay 0).
+- `soldier_act_plan` adds `tries` (rechecks, up to 4 at 300 ms); `ms` counts from the plan.
+- New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
+  planned puppet and at the end of a kept walk.
+- `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.

@@ -1197,6 +1197,120 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   test red first) and the no-key run of this batch. Otherwise a `drive_sink` that counts only while the owner copy is at
   rest in y would measure the bug itself, not the climb (a detector change: needs the user's or the reviewer's yes).
 
+#### 7.28 Enemy round 10 track B: the LRRP crews on the host's travel step (lab key `lrrp_follow`, native only; op LRRP_STEP 0x5E)
+
+- **RE** (read-only Ghidra, exe 085c2f82...bb45) [O unless marked]: the TppSoldier2 command dispatcher 0x141356170 (this =
+  S, the soldier subobject the soldier_warp chain reaches; S-0x20 = P). `StartTravel` (0x385d1071) reads `travelPlan`
+  (string -> plan index, 0x141352130), `step` (number; the key string at 0x1423e7bd8) and `keepInAlert`, then calls
+  T.vt[0x88](T, idx, plan, step), T.vt[0x98](T, idx, keep), 0x14136de40 (applies the step's CP and route group) and
+  0x14136bc80, with T = *(S+0x48), the soldier travel / route component (`SetRelativeVehicle` is T.vt[0x110],
+  `UnsetRelativeVehicle` T.vt[0x118]). `SetLrrp` also takes `travelPlanStep` (0x1423e7ca8) into the same T.vt[0x88].
+  `StoreToSVars` (0x1413695a0; site 0x14136a3d9) writes plan = T.vt[0x78](idx) (0xff none) as its name hash
+  *(P+0x6f8)[plan] into `svars.solTravelName[idx]`, step = T.vt[0x80](idx) into `svars.solTravelStepIndex[idx]`, and
+  T.vt[0x90] as `solFlagAndStance` bit 18 (keep travel in alert); `RestoreFromSVars` (0x141367770) puts them back with
+  the same T.vt[0x88] + 0x14136de40. So a checkpoint restore is "set this soldier's travel cursor", and
+  `StartTravel{travelPlan, step, keepInAlert}` is the same call from Lua. 0x14136de40 keeps the last applied plan / step
+  per soldier at *(P+0x6d8) / *(P+0x6e0) (written only there, through 0x141368620), so those bytes go stale during
+  ordinary travel: read T (svars), not them. [I] svars row = GameObjectId & 0x1ff. [U] the hold timer at a stop lives in
+  T; StartTravel restarts the step, so its timer starts at the call.
+- **Route** (no native write, no new contract site): both copies call `StoreToSVars` (TppEnemy.StoreSVars' own call)
+  once a second while a crew is known and read the crew's rows; the host sends LRRP_STEP on a change (5 s refresh); the
+  guest sets a differing step with `StartTravel` while its truck follows the host's (30 m or nearer) or waits crewless, one
+  per guard per 5 s and at most 3 per host step; while steps arrive it no longer sends `UnsetRelativeVehicle`.
+  Protocol section 45. `step=follow` 1 Hz (was 4 Hz) for the guest's log budget.
+- **Built** (red first): 5e2b0f3a / 20ac2166 (Lua), 3dce7916 / f71305ca (LRRP_STEP), d21096be (host lines 4 Hz moving),
+  4cfc2002 / 2f365581 (3 tries per host step); scenario `enemy-lrrp-crew10.txt` (round 9's crew part without the 40 s
+  lever window, which let each copy's own AI run off the host's step).
+- **Sessions**: two jobs refused before the game by the worker's audited CTest (`ddt_core_tests_1` CloseDuringSetup, a
+  launcher timing check; not this change), counted as one session; `ffd0248d` (`lrrp_follow=1`, a8c615a4; join,
+  `enemy-lrrp-crew10.txt`, `enemy-lrrp-alert3.txt`; all parts passed; first frames of both copies in gameplay); the run
+  with no key named at the same code head (below). [O]:
+  - The clock: 24 `StartTravel{travelPlan, step, keepInAlert}`, 23 read back on their target step at the next 1 s read
+    (25606's crew 0 -> 1 -> 2 -> 3 ...; plans `travelArea1_01` / `travelArea1_02`); the guest on the host's step after a
+    host change p50 1.5 / p90 3.6 / max 12.7 s (21 changes). The svars rows matched (0 `tstep_miss`).
+  - Only the 2 trucks the host saw manned (25605, 25606: 4 guards) were on the host's step. The other 4 LRRP trucks
+    (25602/3/4/7) had 0 riders on the host's copy and 2 each on the guest's: the host sends no LRRP_STEP for a crew it
+    has not seen seated, and the guest unseated those 8 guards at the pairing (24 `UnsetRelativeVehicle`); their place
+    error and a boarding after the unseat were not measured (none of the 4 moved) [U]. (Corrected at the landing review.)
+  - Get-outs and boardings within 0.035-0.87 s of the host's (25605 2 -> 1 -> 0; 25606 2 -> 0 -> 1 -> 2; one boarding
+    event), 0 trucks moving with the crews differing, 0 `crew_wait`; crews 20-40 s after the host's get-out p90
+    0.00-1.75 m (round 9: 9-42 m, with a 40 s lever-off window crew10 removes; 25606's two guards stood still).
+  - Truck error while moving p50 0.15 / p90 0.55 m (314). Riders within 8 m while seated: FAIL for 25605 in the first 54 s
+    after the pairing (p90 499 m, 46 of 46 samples): its guest copy was 363 m from the guest's player and 410 m from the
+    host's truck, so the 400 m rule deferred it (27 `defer` lines) until the jump at near_m 400.0; after that every rider
+    p90 0.42-1.00 / max 5.3 m, 0 over 8 m (25606's riders: one 385-386 m sample each at its pairing jump). Allowing
+    host line gaps up to 1.6 s (108 more moving lines), the truck error is p90 1.26 / max 6.13 m (n=423).
+  - 7 of the 24 sets set a guard back: 4 one step back while the guest's copy led the host's by less than the step's
+    latency (WanSim ~180 ms plus the 1 s reads; e.g. k=10 5 -> 4 57 ms after the host reached 5), then kept off the
+    host's step 5.2-6.6 s by the 5 s spacing; 3 were 25605's driver 6 -> 0 while the host's driver stayed on step 0 (two
+    reverted to 6 within 1.4-2.2 s, the third went to 7 by the guest's AI; then `why=tries`). So 3 of the 23 read-backs
+    never held, and on a stays-on-the-step basis the lag p90 is about 6.3 s, not 3.6 s. The get-outs still lined up.
+  - 0 `log_cap` on either copy (guest world log 7.1 lines/s, lrrp 5.4/s); `step=cost` avg <= 0.15 ms per tick with the
+    1 s `StoreToSVars`; 0 latches / faults / game overs / drive_sank; one host `place_sink` of an outpost guard (not a crew).
+  - Frames: no matched crew pair (the host's binoculars on rock in k-5..k-7); the guest's k-6 shows a soldier on foot
+    beside a truck at the stop.
+- **Gate** (Afghanistan): every row passes but "crews within 8 m while seated", which fails for a truck within 400 m of the
+  guest at the pairing (that copy stays the guest's own, as 0.15.2, until the guest is 400 m from it); the rows cover only
+  the 2 trucks the host saw manned, and crew10's frame-time row has no off window (cross-run only). Known key-only
+  defects [I]: the unseat skip holds while any step arrives (the host refreshes every 5 s), even when `StartTravel` is
+  held; no phase / notice gate on `StartTravel`; `StoreToSVars` 1 Hz rewrites svars between checkpoints. `lrrp_follow` stays
+  off unless named; turning it on in 30010 with that limit is the user's decision (docs/STATUS.md, D-B10).
+- **Next**: hold a copy that is one step ahead for up to 20 s instead of setting it back; leave a guard whose host step
+  never changes (the driver) alone; a pairing jump hidden from the guest's camera if the no-jump row allows it; Africa.
+
+#### 7.29 Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`)
+
+- **Why** (round 9, 7.26): 3 of 4 calm walkers were never taken (`leg_wait` 775, `near_wait` 53 in `226fc789`): walking at
+  take time, their copies were on another leg or more than 10 m off, and stayed 17-45 m off; 77785f31's five released
+  walkers stood 34-48 s: the release cancelled our plan and left the host copy's walk in R (guard 18: R+0x80 the host
+  copy's new caution walk 190 m away, R+0x19c 0xffff, slot empty, fh 0); 2-4 plans a run had no path yet at 300 ms.
+  The path step 0x141372b70 (decompiled, read only) acts only with (R+0x19e & 3) in {2, 3} and a follower path
+  (vt[0x90], vt[0xa0]); with no path it issues nothing, so a walk in R with no path never ends; at the path's end it
+  sets R+0x19e bit 2.
+- **Built** (native only, no CFG bit, no wire, no new contract site; under `act_plan`):
+  - `TakeWait(plan, leg, near)`: with `act_plan` a walker is taken whatever his leg or distance (the plan walks him onto
+    the host copy's path; beyond 15 m the take opens with the unpack's warp, `soldier_act_warp15 first=1`); without it
+    `LegMatch` as round 6. `TakeNear` stays for the record.
+  - `PlanCheckVerdict(path, end_near, tries)`: 300 ms after a plan and then every 300 ms up to 4 more times while the path
+    is missing or ends beyond 1 m of R+0x80; the last verdict is counted (`plan_ok` / `plan_far` / `plan_nopath`,
+    `recheck`; the `soldier_act_plan` line prints `tries`, `ms` from the plan). Only no path at all stops the hold.
+  - `PartialHolds(partial, self, end)`: a path whose last check ended beyond 1 m is held while he is more than 3 m (flat)
+    from its end; nearer, the next due re-apply plans again from where he stands.
+  - `ReleaseChoose(dm, r19e, slot, r19c)` at a release: a walk (dest mode 1) with our live plan is kept (`keep`); with no
+    handle, (R+0x19e & 3) == 2 and a free or own slot it is planned again (`replan`, the same shadow plan); not a walk:
+    our live handle cancelled as before (`cancel`); his brain's type in the slot: left alone. `ReleaseWalkStep` ends a
+    kept walk: `over` once R+0x19c or his slot no longer holds our handle (the engine's start of his brain's next request
+    cancelled it; an orphan of ours in his slot is cancelled), `finish` (our handle cancelled, R+0x19c 0xffff) after 2 s
+    stood within 1.5 m of R+0x80 or 180 s. Each step logs `soldier_act_release; step=keep|replan|replan_none|cancel|none|
+    finish|over|over_cancel`.
+  - The frame line adds `rel_keep`, `rel_replan`, `rel_end`, `recheck`; its buffer is 1024 bytes.
+- **Gate** (scaled to what a player can see at 95-300 m: 7.23's p50 1.0 / p90 2.5 m became p50 1.5 / p90 3.0 m, the frame
+  p95 + 0.5 ms became + 1 ms on capture-free seconds against the mirror-off part of the same run; per mirrored calm
+  walker with >= 20 moving samples): place error p50 <= 1.5 / p90 <= 3.0 m; >= 3 of the calm walkers in range mirrored;
+  15 m warps while a puppet <= 1 a run; 0 released guards frozen > 5 s; plans with the path end within 1 m >= 90 %
+  (rechecked); a matched host / guest frame pair of one mirrored guard walking; no ChangePhase started by a puppet; 0
+  faults / latches / game overs.
+- **Seen** (`15aa58cb`; docs/STATUS.md 2026-11-05 enemy round 10 track C): 4 of 4 calm walkers mirrored; 17 and 18 within
+  the gate (p50 0.55 / 1.18 m); plans 97.6 % within 1 m; 28 released walks kept (0 `finish`, 20 taken again within
+  about 1.5 s), 0 with round 9's freeze signature. Not reached: 5 released stands > 5 s (guard 246 29.9 s straight
+  after a keep release and 11.0 s after the mirror off, in calm); guard 15 leads by p50 3 m (the host copy walks the
+  route's line, the plan the straight line to the leg's end), guard 246's guest copy stood at the spot his 27.1 m take
+  warp put him (he walked 15 m and 28 m once released; cause [U]) and drew 2 held warps, frame p95 + 1.52 ms with 12
+  puppets, no matched frame pair. 5 take warps of 18-49 m (round 9: 1): `TakeWait` takes walkers at any distance. `689e654c` (spot A): 17 and 18 within the gate again, 246 walked
+  (1.57 / 3.13 m), 15 1.99 / 6.56 m; held warps 1; frame p95 + 0.20 ms on 20 s off / 20 s on with no capture; a matched
+  frame pair of guard 17 walking (`w17-2`); but 6 released stands of 10.5-26.2 s, 5 with no path: at the end of the
+  kept walk his brain set a new R+0x80 without a new request and planned nothing (guard 15, R+0x1a0 unchanged, R+0x19c
+  and slot cleared); guard 18 stood 20.1 s straight from a release with no walk (`step=none`, dm 0); 5 take warps of
+  18-49 m in calm and 5 at once (15.8-45.2 m) at the caution retake; 27 of 36 kept releases taken again within about
+  1.5 s. Mirrored 42-89 % of the host-moving samples per walker in both runs.
+- **Nits** (not fixed; `act_plan` only): `g_rel[]` / `g_planned[]` are not cleared on a mission or level change (a
+  reused index within 180 s could have a stale handle cancelled); `TakeWait`'s `take_near` is unused.
+- **Next**: plan a released copy's brain re-target that has no path (until his brain's own type shows in his slot); the
+  host copy's path on the wire (or a plan through the owner positions); no take of a copy that cannot walk; no far
+  take that opens with a warp in calm and no retake within 1.5 s of a release; clear the per-guard state on a mission
+  change; then one
+  named run, the flip per D-FM1 (a) and the no-key run.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
