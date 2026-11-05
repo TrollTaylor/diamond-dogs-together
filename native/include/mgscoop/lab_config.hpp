@@ -757,6 +757,10 @@ struct LabConfig {
     // soldier_follow. Lab and play; off unless named until its gate run passes.
     bool soldier_act = false;
     bool soldier_act_given = false;
+    // FM1 round 6 (docs/world-sync-design.md 7.19), the user's decision D-FM1 (a): soldier_act on (1 or calm) mirrors only in
+    // calm / caution (the far rule releases and skips a guard whose CP is in evasion / ALERT); soldier_act=all (research)
+    // keeps every phase. Carried in the ACT_V1 p reply (pl=1), no CFG bit.
+    bool soldier_act_calm = false;
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and

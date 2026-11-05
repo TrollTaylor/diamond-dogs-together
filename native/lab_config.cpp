@@ -508,8 +508,13 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (!ok) result.soldier_perceive = false;
     }
     else if (Equals(key, "soldier_act")) {
-        // Enemy sync M7 FM1 (lab and play); a named value records _given, an invalid one is named and off.
-        ok = ParseBool(value, result.soldier_act);
+        // Enemy sync M7 FM1 (lab and play); a named value records _given, an invalid one is named and off. Round 6, the
+        // user's decision D-FM1 (a): on (1, calm) mirrors only in calm / caution (the ACT_V1 p reply's pl=1, no CFG bit);
+        // all (research) keeps every phase (design 7.16).
+        const bool every = Equals(value, "all");
+        ok = every || Equals(value, "calm") || ParseBool(value, result.soldier_act);
+        if (ok && (every || Equals(value, "calm"))) result.soldier_act = true;
+        result.soldier_act_calm = ok && result.soldier_act && !every;
         result.soldier_act_given = true;
         if (!ok) result.soldier_act = false;
     }
@@ -2052,6 +2057,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
+    // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
+    // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
+    // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.
     // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert stays off unless named. Every vert snap seen (runs
     // 617311eb, 025fbb28, 35d4074f) was of a copy 63-121 m from its receiver, so it needed place_reach's 60-160 m band and
     // the 60 m band live at the defaults was never exercised; "landed" is h=1 with no position read-back, a second snap

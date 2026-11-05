@@ -2296,12 +2296,24 @@ int main() {
                   "enemy gaps: place_lift follows the gun profile; a named 0 opts out");
             // Enemy sync M7 FM1 (far mirror, docs/world-sync-design.md 7.15): soldier_act (CFG r[19] bit 512) parses in lab
             // and play and stays off unless named until its gate run passes; an invalid value is named and off.
+            // Round 6 (design 7.19): the no-key run 0d801772 did not pass the calm gate (walkers' place error p50 1.68 / p90
+            // 9.08 m), so soldier_act stays off unless named.
             Check(!def.soldier_act && !gunDefault.soldier_act && !gunDefault.soldier_act_given &&
                   Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=1\n").soldier_act &&
                   Lab("enabled=1\nrole=guest\nsoldier_act=1\n").soldier_act_given &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=0\n").soldier_act &&
                   Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
                   "FM1: soldier_act parses, off unless named");
+            // Round 6 (docs/world-sync-design.md 7.19): the phase lever rides in soldier_act's own value (no CFG bit). The
+            // user's decision D-FM1 (a), 2026-11-05: the far mirror mirrors only in calm and caution, so 1 (and calm) is on with
+            // the calm / caution limit; all (research) keeps every phase (the behaviour of design 7.16).
+            const auto calm = Lab("enabled=1\nrole=guest\nsoldier_act=calm\n");
+            const auto actOne = Lab("enabled=1\nrole=guest\nsoldier_act=1\n");
+            const auto actAll = Lab("enabled=1\nrole=guest\nsoldier_act=all\n");
+            Check(calm.soldier_act && calm.soldier_act_calm && calm.invalid_values == 0 && actOne.soldier_act && actOne.soldier_act_calm &&
+                  actAll.soldier_act && !actAll.soldier_act_calm && actAll.invalid_values == 0 &&
+                  !Lab("enabled=1\nrole=guest\nsoldier_act=0\n").soldier_act,
+                  "FM1 round 6 (D-FM1 a): soldier_act=1 / calm is on in calm / caution only; all is every phase");
             // Enemy gaps 2 / 3 (docs/world-sync-design.md 7.17, 7.18): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048)
             // parse in lab and play, both off unless named. place_reach's frames matched (runs 617311eb / 025fbb28), but the
             // no-key run after its flip (35d4074f) failed the drive_sink row (a held far copy 5.1 m under its owner), so it

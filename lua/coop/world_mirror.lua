@@ -13,6 +13,10 @@
 -- (ACT_V1 s). The guest queries a candidate (ACT_V1 q: is his stream fresh? nothing armed) and sends m only for a
 -- puppet (the mailbox, the hook's apply and the fire drop). 12 guards are scanned per update (one GetPosition each),
 -- round robin; every puppet is checked every update (near, phase), and one m per update returns the guest's shots.
+-- Round 6 (design 7.19, protocol section 36): nothing runs until the partner's ACT_CAPS (0x5C) says its far mirror is on
+-- (a 0.15.0 partner never sends one; why=peer); riders are skipped (why=vehicle); apart only for a still owner copy;
+-- soldier_act (1 / calm; the user's decision D-FM1 (a): native's p reply pl=1) mirrors only in calm / caution
+-- (why=phase_limit, before the R check); soldier_act=all (research, pl=0) keeps every phase.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -36,7 +40,13 @@ do
         -- copy under 15 m): > 5 m (3D) from the owner copy (the m reply's ox/oy/oz) for 2 s releases him for 30 s. Not in
         -- his first 4 s as a puppet: the engine's catch-up runs a copy that starts apart toward the owner's position first.
         M.APART_MM, M.APART_MS, M.HOLD_MS, M.APART_GRACE = 5000, 2000, 30000, 4000
+        -- Round 6: apart only while the owner copy is still (moved under STILL_MM for STILL_MS; its order part refreshes every
+        -- 1 s): a walker lagging a moving owner copy is the catch-up's (native re-applies his request every 1 s), not apart's.
+        M.STILL_MM, M.STILL_MS = 500, 2000
         M.P_WAIT = 10000  -- ACT_V1 p refused "hook" (the defaults: no hook installed): offered again after 10 s
+        -- Round 6: ACT_CAPS (92 = 0x5C): caps bit 1 the far mirror on this PC, bit 2 its calm phase limit; FM1 revision 6.
+        M.CAPS, M.REV = 92, 6
+        W.OP.ACT_CAPS = M.CAPS
         local function act(op, slot, id)
             local r = W.receipt(fmt("return 'MGS_COOP_WORLD_ACT_V1' -- %s %d %d", op, slot, id))
             if type(r) ~= "table" then return nil end
@@ -85,7 +95,22 @@ do
         -- world_snap.lua's drive mode: a mirror puppet the stream drives (within 60 m) takes DRIVE_V1 mode 2.
         W.mirrorMode = function(h) return M.pp and M.pp[h] and 2 or nil end
         W.startHooks[#W.startHooks + 1] = M.reset
-        W.unpairedHooks[#W.unpairedHooks + 1] = function() M.releaseAll("unpaired") end
+        W.unpairedHooks[#W.unpairedHooks + 1] = function() M.releaseAll("unpaired"); M.peer, M.capsTx, M.capsTry = nil, nil, nil end
+        -- Round 6 version gate: the partner's ACT_CAPS (kept across missions, forgotten when unpaired); ours goes out once
+        -- per pairing and mission start (a reliable world-queue op: a mission change may purge it before it is read).
+        W.handlers[M.CAPS] = function(v)
+            M.peer = {caps = type(v[1]) == "number" and v[1] or 0, rev = type(v[2]) == "number" and v[2] or 0}
+            L("event=mirror_peer;caps=%d;rev=%d", M.peer.caps, M.peer.rev)
+        end
+        W.pairedHooks[#W.pairedHooks + 1] = function() M.capsTx, M.capsTry = nil, nil end
+        W.startHooks[#W.startHooks + 1] = function() M.capsTx, M.capsTry = nil, nil end
+        function M.peerOn() return M.peer ~= nil and M.peer.caps % 2 == 1 end
+        -- Round 6 (2): a rider (run adecad01: two LRRP riders of another CP puppeted at 297 m, apart 283-285 m off) is
+        -- skipped: his vehicle carries him (the stock rider array), not his legs. [U] whether a gun emplacement answers too.
+        function M.rides(en)
+            local ok, v = pcall(W.api.send, en.id, {id = "GetVehicleGameObjectId"})
+            return ok and type(v) == "number" and v ~= W.api.null
+        end
         -- The guest's own shot (native counts the local player's bullets) releases every puppet for SHOT_MS.
         function M.shotCheck(r, now)
             if type(r) ~= "table" or type(r.sh) ~= "number" then return end
@@ -99,10 +124,14 @@ do
             if type(r) ~= "table" or type(r.ox) ~= "number" or type(r.oy) ~= "number" or type(r.oz) ~= "number" or not M.pp[h] then
                 return
             end
+            local o = p.o
+            if not o or math.sqrt((r.ox - o[1]) ^ 2 + (r.oy - o[2]) ^ 2 + (r.oz - o[3]) ^ 2) > M.STILL_MM then
+                p.o, p.oAt = {r.ox, r.oy, r.oz}, now
+            end
             local x, y, z = pos(en.id)
             if not x then return end
             local a = math.sqrt((x - r.ox) ^ 2 + (y - r.oy) ^ 2 + (z - r.oz) ^ 2)
-            if a <= M.APART_MM or now - p.at < M.APART_GRACE then p.apartAt = nil; return end
+            if a <= M.APART_MM or now - p.at < M.APART_GRACE or now - p.oAt < M.STILL_MS then p.apartAt = nil; return end
             p.apartAt = p.apartAt or now
             if now - p.apartAt < M.APART_MS then return end
             M.hold[h] = now + M.HOLD_MS
@@ -126,7 +155,8 @@ do
                     local x, _, z = pos(en.id)
                     local d = x and flat(x, z, px, pz)
                     local R, c = M.rOf(en)
-                    if not d or d < R * 1000 then M.set(h, en, false, "near", d, R)
+                    if M.lim and (c and c.localPhase or 0) >= 2 then M.set(h, en, false, "phase_limit", d, R)
+                    elseif not d or d < R * 1000 then M.set(h, en, false, "near", d, R)
                     elseif c and c.ownAt and c.ownAt >= p.at then M.set(h, en, false, "phase", d, R)
                     elseif not dueAt or (p.mAt or 0) < dueAt then due, dueAt = h, p.mAt or 0 end
                 end
@@ -157,6 +187,8 @@ do
                     elseif P.state(en) ~= 0 then why = "state"
                     elseif not d or d < R * 1000 then why = "near"
                     elseif d > M.RANGE * 1000 then why = "range"
+                    elseif M.lim and (c and c.localPhase or 0) >= 2 then why = "phase_limit"
+                    elseif M.rides(en) then why = "vehicle"
                     elseif not quiet then why = "shot"
                     elseif p and rise and rise >= p.at then why = "phase" end
                     if p then
@@ -197,7 +229,7 @@ do
                     local x, _, z = pos(en.id)
                     local d = x and flat(x, z, gx, gz)
                     local R = M.rOf(en)
-                    if d and d <= M.RANGE * 1000 and d >= (R - M.HOST_MARGIN) * 1000 then
+                    if d and d <= M.RANGE * 1000 and d >= (R - M.HOST_MARGIN) * 1000 and not M.rides(en) then
                         act("t", slot, en.id)
                         M.n.tx = M.n.tx + 1
                     end
@@ -212,9 +244,10 @@ do
             for _ in pairs(M.pp) do n = n + 1 end
             local why = {}
             for w, c in pairs(M.why) do why[#why + 1] = w .. ":" .. c end
-            L("event=mirror_stats;role=%s;puppets=%d;on=%d;off=%d;refused=%d;why=%s;reg=%d;tx=%s;rx=%s;ap=%s;od=%s;fd=%s;fn=%s;sh=%s",
+            L("event=mirror_stats;role=%s;puppets=%d;on=%d;off=%d;refused=%d;why=%s;reg=%d;tx=%s;rx=%s;ap=%s;od=%s;fd=%s;fn=%s;sh=%s;peer=%s;lim=%d",
                 W.host and "host" or "guest", n, M.n.on, M.n.off, M.n.refused, table.concat(why, ","), M.n.tx, tostring(k.tx),
-                tostring(k.rx), tostring(k.ap), tostring(k.od), tostring(k.fd), tostring(k.fn), tostring(k.sh))
+                tostring(k.rx), tostring(k.ap), tostring(k.od), tostring(k.fd), tostring(k.fn), tostring(k.sh),
+                M.peer and tostring(M.peer.caps) or "none", M.lim and 1 or 0)
         end
         local tick = P.tick
         P.tick = function(now)
@@ -227,12 +260,21 @@ do
                     local r = W.receipt(fmt("return 'MGS_COOP_WORLD_ACT_V1' -- p %d %d %d", math.floor(x * 1000 + 0.5),
                         math.floor(y * 1000 + 0.5), math.floor(z * 1000 + 0.5)))
                     if type(r) == "table" and r.refused == "hook" then M.pAt = now + M.P_WAIT end
+                    -- Round 6 (4): soldier_act=calm (pl=1) mirrors only in calm / caution.
+                    if type(r) == "table" and r.p == 1 then M.lim = r.pl == 1 end
                 end
             end
+            -- Round 6 (5): our ACT_CAPS, once per pairing and mission start, only with soldier_act (the defaults send none).
+            if W.actOn and W.followOn == true and W.paired and W.eff >= 2 and not M.capsTx and (not M.capsTry or now - M.capsTry >= 1000) then
+                M.capsTry = now
+                local caps = 1 + (M.lim and 2 or 0)
+                if W.tx(M.CAPS, caps, M.REV) then M.capsTx = now; L("event=mirror_caps;caps=%d;rev=%d", caps, M.REV) end
+            end
+            local peer = M.peerOn()
             local on = W.actOn and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true and
-                M.MISSIONS[W.mission]
+                M.MISSIONS[W.mission] and peer
             if not on then
-                if next(M.pp) then M.releaseAll("key_off") end
+                if next(M.pp) then M.releaseAll(W.actOn and not peer and "peer" or "key_off") end
                 return
             end
             if W.host then M.host(now) else M.guest(now) end

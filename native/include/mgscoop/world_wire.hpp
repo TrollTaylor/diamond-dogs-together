@@ -148,6 +148,11 @@ inline constexpr std::uint8_t horse_seat = 0x50;
 // Lua's queues. Sent only with soldier_act (CFG r[19] bit 512). A partner without the op skips each part by its length.
 // 0x59 HANDOVER, 0x5A CLAIM and 0x5B are reserved for the OB steps (the horse round owns 0x50..0x53).
 inline constexpr std::uint8_t soldier_act = 0x58;
+// FM1 round 6 (docs/world-sync-design.md 7.19, protocol section 36): ACT_CAPS (92), both directions, world queue, reliable,
+// level 2: caps (bit 1 the far mirror runs on this PC, soldier_act; bit 2 its calm / caution phase limit), the FM1
+// revision. Lua sends it once per pairing on a PC with soldier_act; the far mirror runs only after the partner's ACT_CAPS
+// with bit 1 (a 0.15.0 partner has no 0x5C: it skips it by its length and never sends one, so nothing of soldier_act runs).
+inline constexpr std::uint8_t act_caps = 0x5C;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
