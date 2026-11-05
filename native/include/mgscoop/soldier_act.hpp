@@ -152,6 +152,22 @@ SlotStep PlanSlot(std::uint64_t slot_hash, std::uint16_t slot_handle) noexcept;
 // When a puppet is released, the slot is still ours (kMoveHash) and its live handle is the one R+0x19c holds: cancel it,
 // so his brain's next walk is not refused.
 bool ReleaseCancel(std::uint64_t slot_hash, std::uint16_t slot_handle, std::uint16_t r19c) noexcept;
+// Enemy round 9 track C (act_plan, design 7.26): plan once per leg. Run 226fc789 (act_plan=1): 96 % of the plans ended
+// within 1 m of R+0x80, but every moving owner's 1 s re-apply restarted the request (the engine's start cancels R+0x19c)
+// and so planned again (guard 18: 98 plans, one per 1.01 s), and the puppet trailed the host copy by about 1 s (place error
+// p50 1.31 / p90 2.96 m): the catch-up raised the gait only beyond 2 m. Now, with act_plan:
+// - the catch-up starts at kPlanCatchM: the owner copy ahead by 1..5 m: gait + 1 (cap 3); beyond 5 m: 3;
+// - a due re-apply of a walk is held (no unpack, no restart, no new plan) when PlanHold: not a first apply; the request is
+//   the planned one but for a walk destination (wire +0x40, dest mode wire +0x61 == 1) moved at most kPlanMoveM
+//   (RequestChangedFar false); our plan lives (PlanLiveFor: R+0x19c is the handle of our last plan, his planner slot holds
+//   our type with that handle, and its 300 ms check did not find the path end far or missing); the unpack's 15 m warp
+//   would not move him; and the catch-up gait now equals the gait R holds (a gait change needs a restart: each command
+//   copies the gait from R when it is issued).
+inline constexpr float kPlanCatchM = 1.0f;
+inline constexpr float kPlanMoveM = 1.0f;
+bool RequestChangedFar(const unsigned char (&planned)[0x70], const unsigned char (&now)[0x70]) noexcept;
+bool PlanLiveFor(std::uint16_t ours, std::uint16_t r19c, std::uint64_t slot_hash, std::uint16_t slot_handle, bool check_bad) noexcept;
+bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned gait_now, unsigned gait_want) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
@@ -209,6 +225,7 @@ struct Counters {
     // plan_cancel: a slot of another type cancelled before the plan; plan_busy: another type with no handle (not planned);
     // plan_none: 0x1413725f0 ran but the planner refused (R+0x19c 0xffff); plan_release: our handle cancelled at a release.
     std::uint32_t plan_cancel, plan_busy, plan_none, plan_release;
+    std::uint32_t plan_hold;  // round 9 C: due re-applies held (PlanHold: no restart, no new plan)
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the

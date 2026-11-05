@@ -273,6 +273,21 @@ bool ReleaseCancel(std::uint64_t slot_hash, std::uint16_t slot_handle, std::uint
     return (slot_hash & 0xffffffffffffull) == kMoveHash && slot_handle != 0xffff && slot_handle == r19c;
 }
 
+bool RequestChangedFar(const unsigned char (&planned)[0x70], const unsigned char (&now)[0x70]) noexcept {
+    (void)planned; (void)now;
+    return true;  // red
+}
+
+bool PlanLiveFor(std::uint16_t ours, std::uint16_t r19c, std::uint64_t slot_hash, std::uint16_t slot_handle, bool check_bad) noexcept {
+    (void)ours; (void)r19c; (void)slot_hash; (void)slot_handle; (void)check_bad;
+    return false;  // red
+}
+
+bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned gait_now, unsigned gait_want) noexcept {
+    (void)first; (void)changed_far; (void)plan_live; (void)warp; (void)gait_now; (void)gait_want;
+    return false;  // red
+}
+
 bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
     const float dx = end[0] - dest[0], dy = end[1] - dest[1], dz = end[2] - dest[2];
     return dx * dx + dy * dy + dz * dz <= kPlanEndM * kPlanEndM;

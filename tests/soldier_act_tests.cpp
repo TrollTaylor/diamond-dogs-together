@@ -400,6 +400,46 @@ int main() {
                   c::planner_valid == 0x18,
               "the planner layout");
     }
+    // Enemy round 9 track C (act_plan, design 7.26): plan once per leg; the catch-up from 1 m (run 226fc789: 98 plans for
+    // guard 18, one per 1.01 s; the puppet trailed the host copy by about 1 s, p50 1.31 m).
+    {
+        Check(sa::kPlanCatchM == 1.0f && sa::kPlanMoveM == 1.0f, "round 9 C constants: the catch-up from 1 m, a walk's destination held within 1 m");
+        Check(sa::GaitCatchUp(1.5f, 1) == 2 && sa::GaitCatchUp(1.01f, 2) == 3 && sa::GaitCatchUp(0.9f, 1) == 1 && sa::GaitCatchUp(1.0f, 1) == 1,
+              "gait: the catch-up starts beyond 1 m");
+        unsigned char a[0x70]{}, b[0x70]{};
+        a[0x61] = b[0x61] = 1;  // dest mode 1: a walk
+        a[0x63] = b[0x63] = 1;
+        const float d0[3] = {397.66f, 270.22f, 2211.80f}, dn[3] = {397.66f, 270.22f, 2212.50f}, df[3] = {397.66f, 270.22f, 2213.00f};
+        const std::uint64_t v0 = sa::EncodePacked(d0), vn = sa::EncodePacked(dn), vf = sa::EncodePacked(df);
+        std::memcpy(a + 0x40, &v0, 8);
+        std::memcpy(b + 0x40, &v0, 8);
+        Check(!sa::RequestChangedFar(a, b), "far change: the same request is not one");
+        std::memcpy(b + 0x40, &vn, 8);
+        Check(sa::RequestChanged(a, b) && !sa::RequestChangedFar(a, b), "far change: a walk's destination 0.7 m off is held");
+        std::memcpy(b + 0x40, &vf, 8);
+        Check(sa::RequestChangedFar(a, b), "far change: 1.2 m is a change");
+        std::memcpy(b + 0x40, &vn, 8);
+        b[0x05] = 3;
+        Check(sa::RequestChangedFar(a, b), "far change: another payload byte is a change");
+        b[0x05] = 0;
+        a[0x61] = b[0x61] = 0;
+        Check(sa::RequestChangedFar(a, b), "far change: not a walk -> as RequestChanged (0.7 m is a change)");
+        Check(sa::PlanLiveFor(0x0007, 0x0007, 0x2c505bab2efcull, 0x0007, false), "plan live: our handle in R+0x19c and in his slot");
+        Check(!sa::PlanLiveFor(0xffff, 0xffff, 0x2c505bab2efcull, 0xffff, false) && !sa::PlanLiveFor(0x0007, 0x0008, 0x2c505bab2efcull, 0x0007, false) &&
+                  !sa::PlanLiveFor(0x0007, 0x0007, 0x1234567890abull, 0x0007, false) && !sa::PlanLiveFor(0x0007, 0x0007, 0x2c505bab2efcull, 0x0009, false) &&
+                  !sa::PlanLiveFor(0x0007, 0x0007, 0x2c505bab2efcull, 0x0007, true),
+              "plan live: none / R+0x19c another / another type / slot another handle / path end far or missing");
+        Check(sa::PlanHold(false, false, true, false, 1, 1), "hold: an unchanged walk with a live plan and no gait change");
+        Check(!sa::PlanHold(true, false, true, false, 1, 1) && !sa::PlanHold(false, true, true, false, 1, 1) &&
+                  !sa::PlanHold(false, false, false, false, 1, 1) && !sa::PlanHold(false, false, true, true, 1, 1) &&
+                  !sa::PlanHold(false, false, true, false, 1, 2) && !sa::PlanHold(false, false, true, false, 2, 1),
+              "hold: not a first apply, a far change, no live plan, a warp, or a gait change");
+        sa::Counters k{};
+        k.plan_hold = 12;
+        char line[960]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) && std::strstr(line, "; plan_release=0; plan_hold=12\r\n"),
+              "the frame line prints plan_hold");
+    }
     // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the quiet warp 0x136ece0 moves a copy only beyond
     // 15 m of its slot position; a nearer correction biases the slot 20 m along x first (the function overwrites it).
     {
