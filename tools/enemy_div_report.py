@@ -143,8 +143,9 @@ def analyse(host, guest):
                          'step=shared_game_over' in l or 'step=host_game_over' in l or 'step=game_over_applied' in l),
         'roster_mismatch': sum(1 for l in host + guest if 'roster_mismatch' in l),
         'overflow': 0,
-        # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only.
-        'guard_fell': sum(1 for l in guest if 'event=place_div' in l and 'why=fall' in l),
+        # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only. Both copies (run
+        # 35d4074f: the host's copy of 1179373153 10.5 m under; this row counted guest lines only).
+        'guard_fell': sum(1 for l in host + guest if 'event=place_div' in l and 'why=fall' in l),
         # place_sink (enemy gaps): both roles check their placed copies; a copy level with its owner is place_drop.
         'guard_sank': sum(1 for l in host + guest if 'event=place_sink' in l),
         'drive_sank': sum(1 for l in host + guest if 'event=drive_sink' in l),
@@ -230,6 +231,24 @@ def analyse(host, guest):
     r['body_tx_max'] = max(tx.values()) if tx else 0
     r['place_body_refused'] = sum(1 for l in host + guest if 'event=place_body' in l and 'fix=0' in l and 'why=' in l and
                                   'why=none' not in l)
+    # Enemy round 7 track A (design 7.20, lua/coop/world_readback.lua): the y read-backs 0.5 s / 2 s after a vert snap,
+    # a held landing, a far placement or a put-back, per copy and source (held = within 1 m of where he was put); the
+    # guards that fell; the far put-backs; the drive_vert snaps and the no-thrash stops (native world_drive lines).
+    r['readback'], r['readback_fell_guards'], r['readback_fix'], r['vert_snaps'], r['vert_stop'] = {}, {}, {}, {}, {}
+    for side, lines in (('host', host), ('guest', guest)):
+        per, fell = {}, set()
+        for l in lines:
+            if 'event=readback;' in l or 'event=readback; ' in l:
+                f = fields(l)
+                row = per.setdefault(f.get('src', '?'), {'held': 0, 'fell': 0})
+                row['held' if f.get('held') == '1' else 'fell'] += 1
+                if f.get('held') != '1':
+                    fell.add(f.get('ent'))
+        r['readback'][side] = per
+        r['readback_fell_guards'][side] = sorted(fell)
+        r['readback_fix'][side] = sum(1 for l in lines if 'event=readback_fix' in l and 'put=1' in l)
+        r['vert_snaps'][side] = sum(1 for l in lines if 'world_drive=vert;' in l)
+        r['vert_stop'][side] = sum(1 for l in lines if 'world_drive=vert_stop' in l)
     return r
 
 
@@ -306,6 +325,9 @@ def main(argv=None):
           'body_tx %d (max per body %d), body placements refused here %d' % (
               r['relayed_host'], r['backoff_host'], r['unrealized_host'], r['relayed_guest'], r['backoff_guest'],
               r['unrealized_guest'], r['body_tx'], r['body_tx_max'], r['place_body_refused']))
+    print('  read-backs (held / fell per source): host %s guest %s; fell: host %s guest %s; far put-backs %s; vert snaps %s, '
+          'vert stops %s' % (r['readback']['host'], r['readback']['guest'], r['readback_fell_guards']['host'] or 'none',
+                             r['readback_fell_guards']['guest'] or 'none', r['readback_fix'], r['vert_snaps'], r['vert_stop']))
     print('  crossfire: terminal_win %d, REJECT 12 %d, not_attributed %d; host scan avg %s us, max %s us' % (
         r['terminal_win'], r['reject_12'], r['not_attributed'],
         None if r['scan_avg_us'] is None else round(r['scan_avg_us']), r['scan_max_us']))

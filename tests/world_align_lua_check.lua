@@ -1723,7 +1723,7 @@ if arg[7] and arg[8] then
     t.driveReply = {e = 40, s = 1, r = 0, h = 1, v = -20}
     ticks(t, 40)
     check(logged(t, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and
-        logged(t, 'event=readback;ent=3000000001;src=drive;at=500;') and logged(t, ';dy_m=0.20;held=1;'),
+        logged(t, 'event=readback;ent=3000000001;src=drive;at=500;') and logged(t, ';dy_m=-0.20;held=1;'),
         'readback: the landed drive step that ends a hold')
     -- Far copies (place_reach; run 35d4074f: the host's copy of 1179373153 ~150 m off landed, was force-realized and
     -- dropped 3.7-5.4 m): a copy beyond 60 m more than 1.5 m under its target at a read-back is put back once, his

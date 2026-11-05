@@ -197,6 +197,13 @@ DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool act
 // True once |gap_m| (the target's y minus this copy's) has stayed over kDriveVertM for kDriveVertMs (since_ms carries
 // when it began; a smaller gap clears it).
 bool DriveVertDue(float gap_m, std::uint64_t now_ms, std::uint64_t& since_ms) noexcept;
+// Enemy round 7 track A (design 7.20): no thrash. A copy is snapped at most kDriveVertMax times in kDriveVertWindowMs
+// from the first snap of the window (round 6: copies popped up and dropped again 1.4-1.7 s after a snap). Allow: may
+// this due snap be taken (an expired window starts over: window 0, count 0); Count: a snap was taken.
+inline constexpr unsigned kDriveVertMax = 2;
+inline constexpr std::uint64_t kDriveVertWindowMs = 10000;
+bool DriveVertAllow(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept;
+void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept;
 // The receipts' refusal reply: return {refused="<why>"}, with ,b=<back_ms> (the ms left of that guard's relay backoff,
 // so Lua's realize hold retries when it ends) when back_ms > 0. False when it does not fit.
 bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept;

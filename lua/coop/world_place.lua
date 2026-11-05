@@ -100,6 +100,7 @@ do
             L("event=realize_hold;ent=%.0f;on=0;why=%s;ms=%d;src=%s;st=%d;rs=%d;rf=%d;rq=%d;landed=%d;timeout=%d", h, why,
                 floor(W.now() - r.at), r.src, r.st, r.rs, r.rf, r.rq, N.landed, N.timeout)
         end
+        P.unhold = unhold
         function P.doneHook(c, why)
             local S = c.body and W.deadOn and W.snap
             local b = S and S.bd and S.bd[c.h]

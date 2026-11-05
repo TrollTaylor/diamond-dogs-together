@@ -3038,10 +3038,10 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
 // Reply: {e=<error_cm>,s=<0 rest|1 step|2 hard>,r=<out>,h=<0|1>,v=<cm>} or {refused="<reason>"}; v (enemy gaps, the
 // Lua drive_sink check) = this copy's y minus the rendered target's y, in cm.
 namespace drive {
-struct SlotState { bool active; std::uint64_t last_ms; std::uint64_t vert_ms; };
+struct SlotState { bool active; std::uint64_t last_ms; std::uint64_t vert_ms; std::uint64_t vert_win; unsigned vert_n; bool vert_stopped; };
 SlotState slots[mgscoop::world::kSnapSlots]{};
 std::uint64_t stats_at = 0;
-unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0;
+unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0, vert_stops = 0;
 }
 const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -3071,9 +3071,9 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const bool have = mgscoop::world_link::SnapPair(slot, now, cur, prev);
     if (!drive::stats_at || now - drive::stats_at >= 10000) {
         drive::stats_at = now;
-        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u\r\n",
+        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u; vert_stop=%u\r\n",
                   drive::calls, drive::steps, drive::hard, drive::rest, drive::stale, drive::refused, soldier_warp_gate.anomalies,
-                  drive::vert);
+                  drive::vert, drive::vert_stops);
     }
     if (!have) { ++drive::stale; return refuse("stale"); }
     sw::DriveSample a{}, b{};
@@ -3092,7 +3092,18 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const bool mirror = mode == 2;
     // Enemy gaps 3 (drive_vert, design 7.18): the soft follow also moves a copy at rest in x/z that stood more than 1.5 m
     // above or below the target for 1 s onto the target's spot (s=3; drive_sink at the defaults).
-    const bool vert = labc.drive_vert && !mirror && !puppet && sw::DriveVertDue(target[1] - here[1], now, st.vert_ms);
+    bool vert = labc.drive_vert && !mirror && !puppet && sw::DriveVertDue(target[1] - here[1], now, st.vert_ms);
+    // Enemy round 7 track A (design 7.20): at most 2 snaps of a copy in 10 s (no thrash); the third due is logged once.
+    if (vert && !sw::DriveVertAllow(now, st.vert_win, st.vert_n)) {
+        vert = false;
+        if (!st.vert_stopped) {
+            st.vert_stopped = true;
+            ++drive::vert_stops;
+            LogFormat("world_drive=vert_stop; go=%u; slot=%u; n=%u; gap_cm=%d; left_ms=%llu\r\n", request.go_id, unsigned(slot),
+                      st.vert_n, static_cast<int>((target[1] - here[1]) * 100.0f),
+                      static_cast<unsigned long long>(sw::kDriveVertWindowMs - (now - st.vert_win)));
+        }
+    }
     const auto step = mirror ? sw::DriveStep(here, target, false, sw::kMirrorSnapM, sw::kMirrorSnapM, 0.0f, sw::kMirrorSnapM, lift, feet)
                       : puppet ? sw::DriveStep(here, target, true, 0.05f, 0.02f, 0.2f + speed * 0.05f, 8.0f, lift, feet)
                                : sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, lift, feet,
@@ -3135,6 +3146,8 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     if (step.vert) {
         ++drive::vert;
         st.vert_ms = 0;
+        if (!st.vert_win || now - st.vert_win >= sw::kDriveVertWindowMs) st.vert_stopped = false;
+        sw::DriveVertCount(now, st.vert_win, st.vert_n);
         if (drive::vert <= 64)
             LogFormat("world_drive=vert; go=%u; slot=%u; gap_cm=%d; e_cm=%d; r=%d; h=%u; n=%u\r\n", request.go_id, unsigned(slot),
                       static_cast<int>((target[1] - here[1]) * 100.0f), static_cast<int>(step.error * 100.0f), result.out,
