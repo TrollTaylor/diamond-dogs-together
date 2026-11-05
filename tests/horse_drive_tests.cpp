@@ -462,14 +462,17 @@ void TestShotKey() {
     Check(on.world_horse_shot && on.world_horse_shot_given && on.unknown_keys == 0 && on.invalid_values == 0, "a named 1 turns it on");
     Check(!off.world_horse_shot && off.world_horse_shot_given, "a named 0 is the off switch");
     Check(!bad.world_horse_shot && bad.invalid_values == 1, "an invalid value stays off");
-    // M4: on with the gun profile in lab and play (the proof runs do not name it); a named 0 is the off switch.
+    // M4 gate not passed (runs d935beae / 28015a91 / 48d31500 / 1a7c5d0e: no shot from the rear seat put a guard down, and the
+    // driver's screen shows no raised gun, the M7 seat gun's known limit): off unless named with the gun profile too; a
+    // named 1 runs in play as well.
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    Check(gun.world_horse_shot && !gun.world_horse_shot_given && gun.world_horse_pillion, "M4: on with the gun profile");
-    const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_shot=0\n");
-    Check(!gunOff.world_horse_shot && gunOff.world_horse_shot_given, "with the gun profile a named 0 is the off switch");
+    Check(!gun.world_horse_shot && !gun.world_horse_shot_given && gun.world_horse_pillion, "M4: off unless named with the gun profile");
+    const auto gunOn = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_shot=1\n");
+    Check(gunOn.world_horse_shot && gunOn.world_horse_shot_given, "with the gun profile a named 1 turns it on");
     const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
-                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
-    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_shot && playGun.play_refused == 0, "on in play with the gun profile");
+                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
+                             "world_horse_shot=1\n");
+    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_shot && playGun.play_refused == 0, "a named 1 runs in play too");
 }
 
 // BODY0 round: the pure part of the hardware write watch on body 0's transform (native/include/mgscoop/horse_body_watch.hpp).
