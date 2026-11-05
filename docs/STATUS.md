@@ -1,4 +1,4 @@
-## November 5, 2026: enemy round 10 track A - the wall guard at the same height on both screens with `drive_vert` named (3 of 3 moves held, frames on both screens), but while he climbs his copy still waits below about 3 s, so the `drive_sink` row fails and `drive_vert` stays off unless named; user decision D-A10 (`wp/enemy-m7`, not pushed)
+## November 5, 2026: enemy round 10 track A - the wall guard's copy at his height with `drive_vert` named (3 of 3 moves held; the guest saw him on the wall top, the host his outline through the wall), but while he climbs his copy still waits below about 3 s, so the `drive_sink` row fails and `drive_vert` stays off unless named; user decision D-A10 (`wp/enemy-m7`, not pushed)
 
 Design 7.27, protocol section 44. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
 sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge (join, latch-quiet, integ-carry,
@@ -10,8 +10,11 @@ the track's three. Archives under
 `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
 
 - **What players get**: nothing new at the defaults (`drive_vert` stays off unless named; at the defaults only the
-  `world_drive=stats` line gains `vert_wait=0`). Named, the guard on the wall top stands at the same height on both
-  screens once he stops: 3 of 3 moves of his copy held within 0.02 m at 0.5 s and 2 s, 3-49 m from the player.
+  `world_drive=stats` line gains `vert_wait=0`). Named, the copy of a guard a storey above or below him is moved to his
+  height once his height has stayed level for 1 s (y only: a guard walking on level ground counts): 3 of 3 moves held
+  within 0.02 m at 0.5 s and 2 s, 3-49 m from the player (two up onto the wall top, one down to the wall's foot after
+  he climbed down). Each move is a visible jump of the copy, 4.2-5.8 m up or down (in `c59ae699` 3 m in front of the
+  guest).
 - **Built** (red first): a vert snap only while the owner copy is at rest in y (the rendered target within 0.2 m for 1
   s; `sw::OwnerYAtRest`; a call gap over 600 ms or a NaN starts over); a waiting due snap logs `world_drive=vert_wait`;
   the vert line adds `rest_ms`. 629f0a42 red (`soldier_warp_tests` FAIL "the owner copy level within 0.2 m for 1 s is at
@@ -19,20 +22,31 @@ the track's three. Archives under
 - **drive_vert gate (named runs)**:
   - PASS [O] a vert snap within 60 m whose read-backs at 0.5 s and 2 s are within 1 m: 3 of 3 (2929558510: `c59ae699`
     guest copy far 3 m, gap +4.24 m, 0.00 / 0.00 m; host copy far 31 m, gap -5.79 m, -0.02 / -0.02 m; `948c978a` guest
-    copy far 49 m, gap +4.44 m, 0.01 / 0.01 m). Owner rest at the snap 1058-1178 ms. 0 `vert_stop`.
+    copy far 49 m, gap +4.44 m, 0.01 / 0.01 m). Owner rest at the snap 1058-1178 ms. 0 `vert_stop`. The `c59ae699`
+    host move was not a guard on a wall top: it took the host's copy, left on the wall top, down to the guard, who had
+    climbed down to the wall's foot on the guest's screen.
   - FAIL [O] 0 `drive_sink`: 1 on the guest in each run, 2929558510 (-3.30 m, low 2.1 s; -3.48 m, low 2.3 s), in the
-    alert's first block while the host owned him. `vert_wait` first (the owner's rest window just restarted, gap 2.50 /
-    3.48 m), the host's copy rose 1.0-1.7 m more at 1.06-1.07 m planar [I: a ladder] and came to rest within 25 ms of
-    `drive_sink` firing; the snap came 1.1 s later. His copy was under 3.2-3.4 s, then on him. No rest-gated snap can
-    beat the 2 s detector when the climb alone keeps the gap over 1.5 m for 2 s.
+    alert's first block while the host owned him. On the guest a `vert_wait` came first each time (gap 2.50 / 3.48 m,
+    `rest_ms` 0: the owner was still climbing); the host's copy rose 1.0-1.7 m more at 1.06-1.07 m planar [I: a ladder]
+    and came to rest within 25 ms of `drive_sink` firing; the snap came 1.1 s later. His copy was under 3.2-3.4 s, then
+    on him. `vert_wait` lines: `c59ae699` two (also the host's, before its down move: gap -2.42 m, `rest_ms` 197, span 17
+    cm; stats `vert_wait=1` on each copy), `948c978a` one. No rest-gated snap can beat the 2 s detector when the climb
+    alone keeps the gap over 1.5 m for 2 s.
   - PASS [O] 0 `place_sink`, `guard_fell`, latches, faults, game overs, roster mismatches, overflow (both runs, both
     copies; `enemy_div_report.py`).
   - PASS [O] frame pair (`948c978a` v-a..v-c, looked at): the guest on the wall top sees him standing on it about 11 m
-    ahead (aim 10.9 m, 6.1 deg down); the host's binoculars at 31 m (12.9 deg up) show his silhouette at the wall top
-    under his marker, behind the parapet [I: both about the same height from the two aim readouts]. `c59ae699` FAIL: the
-    guest's goto left the guest at the wall's foot and its frames show only the wall.
-  - reported: guest place error p90 1.81 / 1.66 m; host M3 p90 15.09 m (6.55 m before the guest's down at 367062820) /
-    7.68 m.
+    ahead (aim 10.9 m, 6.1 deg down, about 0.76 m below the guest's spot); the host's binoculars at 31 m (12.9 deg up)
+    show only his X-ray outline through the wall, at its top under his marker [I: both about the same height from the
+    two aim readouts; the copies 0.1 m apart in plane]. The snap seen is the guest's copy, 4 s before the guest took him
+    over; the host's copy (the climbing owner) was never snapped in this run. `c59ae699` FAIL: the guest's goto left
+    the guest at the wall's foot and its frames show only the wall.
+  - reported: guest place error p90 1.81 / 1.66 m (max 131.2 / 86.4 m: far reinforcements 3970963356, 2305481811
+    arriving, not `drive_vert`; 2.5 m in the no-key run); host M3 p90 15.09 m (6.55 m before the guest's down at
+    367062820) / 7.68 m. `c59ae699` host: 4 place read-backs did not hold (3970963356 under by 1.32-1.46 m x3 at
+    129-154 m; 667680985 +1.44 m at 103 m; M3 / far placements, not vert).
+  - not counted as void: `c59ae699` the host process exited 0xC0000005 during the owned shutdown (logs end with the
+    session; the same close-time exit is in 40+ archived runs across worktrees since 10-14); `948c978a` the job was
+    force-terminated at the end (host exit 1223, a common pattern).
 - **The no-key run `ef9584e4`** (`drive_vert` off; the shipped defaults plus the log line) [O]:
   - the bug at the defaults, within 60 m: in block 1 the guest's copy of 2929558510 was under the host's (owner) copy,
     `drive_sink` -4.54 m (low 3.5 s), as in the named runs, and nothing moved it (0 vert lines); 1.0 s later the guest
@@ -50,9 +64,10 @@ the track's three. Archives under
   `948c978a` host M3 (2.07, 7.68) m, drive_sank 1;
   `ef9584e4` host M3 (2.15, 6.94) m, drive_sank 1, guard_sank 1 (the place_sink above), the integ-carry part's placebehind.
 - **User decision D-A10**: turn `drive_vert` on with the gun profile, reading the `drive_sink` row as "left under after
-  the guard has stopped" (players: a guard on a wall top stands on the wall on both screens about 1 s after he stops; while
-  he climbs, his copy waits at the foot for about 3 s, as today), or keep it off. The flip is one line plus its test, then
-  one no-key run.
+  his height has stayed level for 1 s" (players: the copy of a guard on a wall top jumps 4-6 m onto the wall about 1 s
+  after his height levels off; while he climbs, his copy waits at the foot for about 3 s; at the defaults nothing moves
+  it: in `ef9584e4` it stayed 4.54 m under for at least 4.5 s until the guest's PC took him over), or keep it off. The
+  flip is one line plus its test, then one no-key run.
 - **Next**: on a yes, flip (lab_config red / green) and run this batch with no key. Otherwise a `drive_sink` counted only
   while the owner copy is at rest in y measures the bug, not the climb (a detector change: needs a yes too).
 - **Checks**: full `tools/build.ps1 -Jobs 4` at fbd3def4: CTest 355/355; every `generate_*_contract.py --check` known

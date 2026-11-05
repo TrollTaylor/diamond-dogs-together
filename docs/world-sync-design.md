@@ -1153,7 +1153,9 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   than 1.5 m above or below the rendered target for 1 s) is taken only once the rendered target's y (the owner copy,
   rendered 100 ms behind) has stayed within 0.2 m (max - min) for 1 s; a wider span, more than 600 ms between drive
   calls of that copy or a non-finite y starts the window over. A due snap that waits logs `world_drive=vert_wait` once per
-  due spell; the vert line adds `rest_ms`. The no-thrash cap and the read-backs (7.20) are unchanged. 629f0a42 red /
+  due spell; the vert line adds `rest_ms`. The rule tests y only: a guard walking on level ground counts as at rest.
+  The snap is a visible jump of the copy (4.2-5.8 m in the runs below, once 3 m in front of the guest). The no-thrash
+  cap and the read-backs (7.20) are unchanged. 629f0a42 red /
   fbd3def4 green (`soldier_warp_tests`).
 - **Scenario** `enemy-vert-near.txt`: `enemy-vert-alert.txt` with the host at 415.80 269.0 2106.92 (a logged teleport
   landing, 7c174346; 31 m from the guard by the aim readout) before the alert and through block 2; in block 2 the guest
@@ -1169,16 +1171,18 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     copy, then the owner, had gone down to the wall's foot; `rest_ms` 1058; -0.02 m at 0.5 s and 2.07 s); `948c978a` the
     guest's copy (far 49 m, gap +4.44 m, `rest_ms` 1178; 0.01 m at 0.52 s and 2.24 s). 0 `vert_stop`.
   - [O] FAIL `drive_sink` 0: the guest logged one in each named run (2929558510 -3.30 m / -3.48 m, low 2.1 / 2.3 s), in
-    block 1 while the host owned him: each time `vert_wait` came first (gap 2.50 / 3.48 m, the owner's rest window just
-    started), the host's copy then rose 1.0-1.7 m more and came to rest at the top about when `drive_sink` fired, and the
-    snap followed 1.1 / 1.2 s later. The planar error stayed 1.06-1.07 m throughout [I: a ladder: the owner climbed
+    block 1 while the host owned him: each time a `vert_wait` came first on the guest (gap 2.50 / 3.48 m, `rest_ms` 0:
+    the owner still climbing; `c59ae699` logged a second one, on the host before its down move: gap -2.42 m, `rest_ms`
+    197, span 17 cm), the host's copy then rose 1.0-1.7 m more and came to rest at the top about when `drive_sink`
+    fired, and the snap followed 1.1 / 1.2 s later. The planar error stayed 1.06-1.07 m throughout [I: a ladder: the owner climbed
     with x / z still]. So the copy was under for about 3.2-3.4 s and then on him. With the rest rule no snap can come
     sooner: the climb alone kept the gap over 1.5 m for more than 2 s, which is `drive_sink`'s own threshold.
   - [O] PASS 0 `place_sink`, `guard_fell`, latches, faults, game overs, roster mismatches, overflow (both runs).
   - [O] frames: `948c978a` v-a..v-c: the guest on the wall top sees him standing on the wall top about 11 m ahead (aim
-    10.9 m, 6.1 deg down); the host's binoculars (31 m, 12.9 deg up, about 6.9 m over the host's camera) show his
-    silhouette at the wall top under his marker, behind the parapet. Both at the wall top [I: from the two aim readouts,
-    his aim point about 277 m on both]. `c59ae699`: the guest at the wall's foot saw only the wall (aim 2.8 m, 57 deg up);
+    10.9 m, 6.1 deg down); the host's binoculars (31 m, 12.9 deg up, about 6.9 m over the host's camera) show only his
+    X-ray outline through the wall, at its top under his marker. The snap seen is the guest's copy, 4 s before the guest
+    took him over (the host's copy was the climbing owner, not snapped). Both at the wall top [I: from the two aim
+    readouts, his aim point about 277 m on both]. `c59ae699`: the guest at the wall's foot saw only the wall (aim 2.8 m, 57 deg up);
     the host's binoculars showed the silhouette at the top.
   - reported: guest place error p90 1.81 / 1.66 m; host M3 p90 15.09 m (6.55 m before the guest's down) / 7.68 m.
   - [O] no key (`ef9584e4`): the guest's copy under the host's (owner) copy in block 1 again (`drive_sink` -4.54 m, low
@@ -1187,7 +1191,8 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     (3268415846 with his owner 4.89 m lower too: down a ladder on both [I]); host M3 p90 6.94 m.
 - **Defaults**: `drive_vert` stays off unless named: the `drive_sink` row failed in both named runs (above), and a flip
   needs its named run to pass. User decision D-A10 (docs/STATUS.md): turn it on with that row read as "left under after
-  the guard stops" (the copy waits below about 3 s while he climbs, then stands on his spot), or keep it off.
+  his height has stayed level for 1 s" (the copy waits below about 3 s while he climbs, then jumps to his height; at the
+  defaults nothing moves it until the other PC takes him over), or keep it off.
 - **Next**: if the user says on, the flip is one line (`if (!c.drive_vert_given) c.drive_vert = gun;`, the lab_config
   test red first) and the no-key run of this batch. Otherwise a `drive_sink` that counts only while the owner copy is at
   rest in y would measure the bug itself, not the climb (a detector change: needs the user's or the reviewer's yes).
