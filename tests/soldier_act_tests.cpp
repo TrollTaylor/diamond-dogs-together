@@ -437,8 +437,51 @@ int main() {
         sa::Counters k{};
         k.plan_hold = 12;
         char line[960]{};
-        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) && std::strstr(line, "; plan_release=0; plan_hold=12\r\n"),
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) && std::strstr(line, "; plan_release=0; plan_hold=12"),
               "the frame line prints plan_hold");
+    }
+    // Enemy round 10 track C (act_plan, design 7.29): the take of walkers, the plan recheck, the partial hold, the release
+    // walk (runs 226fc789 / 77785f31 / c0c3d088).
+    {
+        Check(sa::TakeWait(true, false, false) == 0 && sa::TakeWait(true, true, false) == 0 && sa::TakeWait(true, false, true) == 0,
+              "take: with act_plan a walker on another leg or beyond 10 m is taken (the plan walks him onto the path)");
+        Check(sa::TakeWait(false, false, true) == 1 && sa::TakeWait(false, true, false) == 0 && sa::TakeWait(false, true, true) == 0,
+              "take: without act_plan LegMatch as round 6, no 10 m rule");
+        Check(sa::kPlanRechecks == 4 && sa::PlanCheckVerdict(true, true, 0) == sa::PlanVerdict::ok &&
+                  sa::PlanCheckVerdict(false, false, 0) == sa::PlanVerdict::again && sa::PlanCheckVerdict(true, false, 3) == sa::PlanVerdict::again,
+              "plan check: a missing or far path is checked again");
+        Check(sa::PlanCheckVerdict(false, false, 4) == sa::PlanVerdict::nopath && sa::PlanCheckVerdict(true, false, 4) == sa::PlanVerdict::partial &&
+                  sa::PlanCheckVerdict(true, true, 4) == sa::PlanVerdict::ok,
+              "plan check: the last check's verdict");
+        const float self[3] = {0.0f, 0.0f, 0.0f}, end5[3] = {3.0f, 9.0f, 4.0f}, end2[3] = {2.0f, -9.0f, 2.0f};
+        Check(sa::PartialHolds(false, self, end2) && sa::PartialHolds(true, self, end5) && !sa::PartialHolds(true, self, end2),
+              "partial: held while more than 3 m (flat) from its end");
+        // A released walker (dest mode 1): our live plan kept, no handle with a free slot planned again, his brain's left alone.
+        Check(sa::ReleaseChoose(1, 0x006e, 0x2c505bab2efcull, 0x0005, 0x0005) == sa::ReleaseStep::keep,
+              "release: a walk with our live plan walks on");
+        Check(sa::ReleaseChoose(1, 0x0062, 0, 0xffff, 0xffff) == sa::ReleaseStep::replan &&
+                  sa::ReleaseChoose(1, 0x0062, 0x2c505bab2efcull, 0xffff, 0xffff) == sa::ReleaseStep::replan,
+              "release: a walk with no path is planned again (77785f31's freeze)");
+        Check(sa::ReleaseChoose(1, 0x0062, 0x1234567890abull, 0x0003, 0xffff) == sa::ReleaseStep::none &&
+                  sa::ReleaseChoose(1, 0x0061, 0, 0xffff, 0xffff) == sa::ReleaseStep::none,
+              "release: his brain's slot, or the start not run offline: left alone");
+        Check(sa::ReleaseChoose(0, 0x0062, 0x2c505bab2efcull, 0x0005, 0x0005) == sa::ReleaseStep::cancel &&
+                  sa::ReleaseChoose(2, 0x0062, 0, 0xffff, 0xffff) == sa::ReleaseStep::none,
+              "release: not a walk -> our live handle cancelled as before");
+        Check(sa::ReleaseWalkStep(true, 0, 1000) == sa::ReleaseWalk::walk && sa::ReleaseWalkStep(true, 1999, 5000) == sa::ReleaseWalk::walk,
+              "release walk: walks on to R+0x80");
+        Check(sa::ReleaseWalkStep(true, 2000, 5000) == sa::ReleaseWalk::finish && sa::ReleaseWalkStep(true, 0, 180000) == sa::ReleaseWalk::finish &&
+                  sa::ReleaseWalkStep(false, 0, 1000) == sa::ReleaseWalk::over && sa::ReleaseWalkStep(false, 5000, 999999) == sa::ReleaseWalk::over,
+              "release walk: finished once he stood at R+0x80 2 s or after 180 s; over once our handle is gone");
+        Check(sa::kReleaseArriveM == 1.5f && sa::kReleaseArriveMs == 2000 && sa::kReleaseWalkMs == 180000 && sa::kPlanPartialM == 3.0f,
+              "round 10 C constants");
+        sa::Counters k{};
+        k.plan_hold = 12; k.rel_keep = 3; k.rel_replan = 2; k.rel_end = 4; k.recheck = 6;
+        k.tx_parts = k.staged = k.rx = k.applied = k.orders = 4000000000u;  // 10-digit counters: the line still fits 1024
+        char line[1024]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) &&
+                  std::strstr(line, "; plan_hold=12; rel_keep=3; rel_replan=2; rel_end=4; recheck=6\r\n"),
+              "the frame line prints rel_keep / rel_replan / rel_end / recheck");
     }
     // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the quiet warp 0x136ece0 moves a copy only beyond
     // 15 m of its slot position; a nearer correction biases the slot 20 m along x first (the function overwrites it).

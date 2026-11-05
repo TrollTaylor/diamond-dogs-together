@@ -291,6 +291,36 @@ bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned 
     return !first && !changed_far && plan_live && !warp && gait_now == gait_want;
 }
 
+unsigned TakeWait(bool plan, bool leg_match, bool take_near) noexcept {
+    if (!leg_match) return 1u;
+    return plan && !take_near ? 2u : 0u;  // red: the round 8 rules
+}
+
+PlanVerdict PlanCheckVerdict(bool path, bool end_near, unsigned tries) noexcept {
+    (void)tries;
+    return path ? (end_near ? PlanVerdict::ok : PlanVerdict::partial) : PlanVerdict::nopath;  // red: one check
+}
+
+bool PartialHolds(bool partial, const float (&self)[3], const float (&end)[3]) noexcept {
+    (void)self;
+    (void)end;
+    return !partial;  // red: a partial path is never held
+}
+
+ReleaseStep ReleaseChoose(unsigned dest_mode, std::uint16_t r19e, std::uint64_t slot_hash, std::uint16_t slot_handle,
+                          std::uint16_t r19c) noexcept {
+    (void)dest_mode;
+    (void)r19e;
+    return ReleaseCancel(slot_hash, slot_handle, r19c) ? ReleaseStep::cancel : ReleaseStep::none;  // red: the round 8 release
+}
+
+ReleaseWalk ReleaseWalkStep(bool ours_live, std::uint64_t near_ms, std::uint64_t age_ms) noexcept {
+    (void)ours_live;
+    (void)near_ms;
+    (void)age_ms;
+    return ReleaseWalk::finish;  // red
+}
+
 bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
     const float dx = end[0] - dest[0], dy = end[1] - dest[1], dz = end[2] - dest[2];
     return dx * dx + dy * dy + dz * dz <= kPlanEndM * kPlanEndM;
