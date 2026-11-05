@@ -1,3 +1,82 @@
+## November 5, 2026: enemy sync M7 FM1 retry - the far mirror's first puppets, in calm; the gate not reached; `soldier_act` stays off (`wp/enemy-m7`, not merged, not pushed)
+
+The enemy5 FM1 retry (plan: owner-brains, the far-mirror form first; design 7.16). Markers: [O] seen in a log line or a
+frame, [I] inferred, [U] unknown. Four hidden play sessions over `-WanSim bad`, the gun profile, research build,
+afgh-ledge: `94a7bf2a`, `adecad01` and `80cc0176` (enemy-act-1-quiet + enemy-act-2-alert, `soldier_act=1`) and
+`46c0da9e` (enemy-prove-1-join + enemy-latch-alert, `soldier_act=1`). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new. `soldier_act` (CFG r[19] bit 512) stays off unless named; at the defaults nothing
+  of this step runs. With the key on, the guest's copies of the host's guards 95-300 m away now do become mirror
+  puppets in calm and stand and walk where the host's copies do (logs), but no frame shows one walking on both screens,
+  and none exists in ALERT (below), so the gate is not met.
+- **The first puppets** [O]: 15 in calm in `94a7bf2a` (12 guards, 95.4-215.7 m from the guest), 30 / 31 takes of 14
+  guards in `adecad01` / `80cc0176` (95-299 m). No puppet came nearer the guest than 94.9 m (3D) in any session (R(calm)
+  80 m).
+- **U2, does a puppet's body run the posted request**: yes for standing and walking, from the logs [O]; not shown in
+  frames. `94a7bf2a`: while the host copy moved (783 paired census steps), the puppet moved in 563, at a speed ratio p50
+  0.98 (p10 0.0, p90 1.15), with 11 jumps over 10 m/s in 2961 steps; gait agreed in 2716 and the action kind in 2894 of
+  2961. Puppet place error against the host copy p50 0.23 m, p90 7.0 m (`adecad01` / `80cc0176`: p50 0.0, p90 1.81 /
+  1.71 m). The 7.0 m: guard 19's host copy climbed a tower (y 270.4 -> 276.5); his puppet stood at the ladder's foot for
+  ~100 s with the "stand up there" request (gait 3, the catch-up gait): a climb is not replayed, and nothing warps a copy
+  under 15 m. While their host copies walked, the later puppets moved less (ratio p50 0.19 / 0.78; error p50 2.6 / 1.9 m,
+  p90 10.5 / 12.1 m): the apart release (below) took the lagging walkers.
+- **Frames** [O, looked at]: `80cc0176` q-0 and q-30 (both copies at the same moment, both cameras on guard 13 through
+  binoculars, `aim_ent`): the host sees him standing at a low wall by an anti-tank hedgehog; the guest's screen shows a
+  dark figure at the same wall and hedgehog while he was a puppet there. Standing, not walking. The host's other frames
+  show the rock it crouches at (its spot 50 m south of the outpost blocks every bearing from -30 to -1 degrees; its walk
+  north is blocked too), the guest's often a building or a tree. In ALERT no puppet of the alerted CP existed (below). So gate part 1
+  (matched frames of a mirrored guard walking, and in ALERT aiming with muzzle flashes) is not met.
+- **R, set from the engagement distances again** (census engage bins, plan rule R = 1.5 x the farthest) [O]: in ALERT the
+  guest's own copies (all brains then) hit it from up to 173.9 m (`94a7bf2a`, guard 16; guard 13 from 150.6 m, 22
+  hits a second), 152.0 m (`adecad01`) and 152.6 m (`80cc0176`); the host was hit from up to 121.5 m. So R(ALERT) =
+  1.5 x 173.9 = 261 m (was 184 m). R(calm / caution) stays the 80 m floor: no first notice of the guest happened in calm
+  in any run [U]. The far rule's range is 300 m (was 250 m), so an ALERT puppet exists only 276-300 m out.
+- **Releases** [O]: at the ALERT rise 7 puppets released 18 ms after the phase change (`94a7bf2a`, R 80 -> 184 m then);
+  `mirror off` released 10 in one burst of 146 ms (`adecad01`) and 31 ms (`80cc0176`), `mirror on` took 11 / 12 back at
+  once; the guest's shot released 7 / 6 in one update (in `adecad01` it fell after a 1 Hz frame line 150 ms before the
+  release; the exact shot time is not logged). A guest-local phase rise never happened (the guest's phase changes were the host's), so that release is
+  unproven [U]. The new apart release fired 12 / 13 times: guard 19 every ~36 s (7.0 m below the tower top), guard 18
+  walking 5.5-12.7 m behind, 4 copies 10.6-14.7 m off 6 s after `mirror on` (their own brains had run for 20 s), and two
+  vehicle riders of another CP 283-285 m from their host copies (`adecad01`; the far rule does not skip riders yet).
+- **Counts** [O]: 0 unpack faults and 0 pack faults on both copies in all four sessions; requests applied 410 / 240 / 245
+  of 1622 / 1114 / 1098 taken (25 / 22 / 22 %; with the unchanged requests deliberately not re-applied within 5 s, 96 / 95
+  / 95 %); orders re-posted 61-88 thousand times; no puppet fired (0 puppet shot-counter steps, 0 bullets dropped; only
+  calm puppets existed); 4-8 noises of puppets dropped. The shooters of the Defend hits on the guest checked in
+  `94a7bf2a` (guards 16, 13, 18, 246, 17) had puppet=0 when they hit [O]; in the other runs no puppet of the alerted CP
+  existed in ALERT [I]. Frame p95 19.04 ms during
+  `mirror off` against 19.03 ms with puppets (`80cc0176`).
+- **Accuracy and stability** [O]: 0 latches, faults, game overs, roster mismatches or overflow in all four sessions.
+  Guards within 60 m of the guest (not mirrored): place error p50 1.37 / p90 2.37 m (`80cc0176`, 39 samples), 2.03 /
+  2.86 m (`adecad01`, 31): above the gate's 2.0 m p90 (798b51dd at the defaults 1.56 m) [I: these guards were brains,
+  in a firefight the guest walked into]. Regression `46c0da9e`: 8 puppets while the guest was 97-216 m out, all released
+  `near` as it went in, none inside; place error p50 0.64 / p90 2.25 m; M3 host error 1.28 / 6.8 m and one `drive_sank`
+  (the divergence report's FAIL rows, as in `3bc7280b`); the host's frame `al-4` shows it wounded (godmode only autoheals;
+  not compared with a run without the key).
+- **U3 settled** [O static + census]: the request's payload B (wire +0x20, kind wire +0x64) kind 1 is the aim
+  (0x1413816e0); its target mode (wire +0x35) 2 / 4 names the target by a big-endian GameObjectId at wire +0x20. 1552 of
+  the 1669 host aims in `3bc7280b` / `963ab276` were mode 4, every one with id 0, the host's own player: unswapped, a puppet would have
+  aimed at the guest. The "u16 0x0400 at +0x34" is B+0x14 (0) and the mode byte 4, not an id. Fixed: `RemapAimTarget`
+  swaps players 0 / 1 there before the unpack (untested in a game: no aiming puppet existed) [U in a game].
+- **Version gate**: the link handshake checks only `kLinkVersion` (2), so co-op does not refuse mismatched builds; but
+  CFG r[19] is each PC's own (the CFG reply is local), and a 0.15.0 partner skips SOLDIER_ACT by its length. A default
+  flip of bit 512 would still need a gate: not added, as nothing is flipped.
+- **What blocks the gate and what to try next** (design 7.16): (1) the ALERT half: by the plan's own rule R(ALERT) is
+  261 m, so an ALERT puppet exists only beyond 276 m, where no known watch point has a view of the fight (from 255 m
+  the guest's view was the ground) and a guard is a few pixels: this is the user's decision D-FM1 (mirror only in calm
+  and caution, as the plan allows for phases that cannot pass, and judge the gate on calm frames; or keep the ALERT
+  half and look for a watch point beyond 276 m). (2) Frames: a host spot with a clear view of a walking puppet's route
+  (not the rock 50 m south), or both cameras on a guard while he walks. (3) Walkers: re-apply a moving puppet's request
+  every 1 s instead of 5 s so the engine's catch-up keeps him within 2-5 m, and take `apart` only for a still owner copy
+  (the tower case). (4) Skip riders and emplacements in the far rule. (5) Log the aim-target swaps (`payload_ids`).
+- **Built** (red first each time): `RemapAimTarget` (6e0a6e07 red, 7d95354a green), R(ALERT) 261 m, the 300 m range and
+  320 m census range, the apart release and its 30 s hold with the m reply's owner position `ox/oy/oz` (7585794b red,
+  f1ff7dcd green), research commands `aim_partner` (peer-position fallback) and `aim_ent <hash>`; the scenarios
+  (e073e2fa, e7e0d517, e3982732: the walk-end watch point, `enemy goto` takes 0.5-10 m, the earlier "40" never ran).
+- **Checks** at f1ff7dcd: full `tools/build.ps1 -Jobs 4` 354/354; `generate_*_contract.py --check` as on dev (soldier_act
+  17 sites / 6 slots; the known failures carry_info, sleep_plugin, native_ui, teammate_targeting, master_server's
+  argument quirk and camera_mode_window; horse_drive and vehicle_controller pass with `--executable`).
+
 ## November 4, 2026: enemy sync M7 FM1, the far mirror - built, the gate not reached; `soldier_act` stays off (`wp/enemy-m7`, merged into `dev/oct7-continue`, not pushed)
 
 The enemy4 FM1 step (plan: owner-brains with the act layer as its act mirror, the far form first). Markers: [O] seen in

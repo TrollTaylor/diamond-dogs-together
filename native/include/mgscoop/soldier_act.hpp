@@ -51,8 +51,8 @@ inline constexpr unsigned kActPartsPer100Ms = 24;
 std::uint16_t RemapPlayer(std::uint16_t id) noexcept;
 // U3 (0x1413816e0, the action B kind 1 serialiser = the aim): its target mode is the byte at wire +0x35 (R+0x4c & 7);
 // modes 2 (u16 id + u16 part) and 4 (u16 id) carry the target's GameObjectId big-endian at wire +0x20 (B+0x00), mode 1 a
-// packed position, mode 3 a u32. Census runs 3bc7280b / 963ab276: 1552 of 1556 host aims are mode 4 id 0 (the host's own
-// player), so the puppet would aim at the guest without the swap. Swaps a player id there (RemapPlayer); true when changed.
+// packed position, mode 3 a u32. Census runs 3bc7280b / 963ab276: 1552 of 1669 host aims are mode 4, every one id 0 (the
+// host's own player), so the puppet would aim at the guest without the swap. Swaps a player id there (RemapPlayer); true when changed.
 // The u16 0x0400 the census scan found at wire +0x34 is B+0x14 = R+0x5c (0) and B+0x15 = this mode (4): not an id.
 bool RemapAimTarget(unsigned char (&wire)[0x70]) noexcept;
 // Whether two packed requests differ beyond jitter: the destination (+0x40) moved >= 5 cm, a facing position (face mode

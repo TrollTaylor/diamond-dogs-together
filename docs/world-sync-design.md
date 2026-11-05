@@ -349,7 +349,7 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
 - **The far rule**: a guard is a mirror puppet on the guest only while the guest's player is beyond R of him. R per phase
   is 1.5 x the farthest first notice or engagement distance measured at the defaults (floors 80 m calm / caution, 120 m
   ALERT), capped at the realize radius minus 10 m. He is taken beyond R + 15 m and released within R, so nobody is made
-  unseen who could be seen without the key. Any guest shot releases every puppet for 15 s. In the code now: 80 m calm /
+  unseen who could be seen without the key. Any guest shot releases every puppet for 15 s. Superseded by 7.16 (R(ALERT) 261 m since run 94a7bf2a). At the landing of this section: 80 m calm /
   caution (the floor; no first-notice distance measured yet) and 184 m evasion / ALERT (1.5 x the farthest ALERT hit,
   122.4 m, one hit on the host in `3bc7280b`). No realize cap applies: the same 12 copies stayed realized out to 212 m
   from the host and 400 m from the guest, so the realize radius was not measured (an earlier 138 m cap rested on it).
@@ -392,6 +392,38 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   [U] U3: payloads of kinds 1 and 0x12 often hold the u16 0x0400 (the 0x400|i soldier-id form) at +0x34, kind 25 0x0564
   at +0x14 and kind 20 hash-like words; whether these are ids, and so the remap or refuse rule, is open. [U] U2, the
   frames and counts of the gate.
+
+#### 7.16 Enemy sync M7 FM1 retry: puppets in calm, R(ALERT) 261 m, the apart release (lab key `soldier_act`, off)
+
+- **R from the gate runs** (plan rule, R = 1.5 x the farthest first notice or engagement distance per phase): in ALERT
+  the guest's own copies hit it from up to 173.9 m (`94a7bf2a`; 152.0 / 152.6 m in `adecad01` / `80cc0176`), the host
+  was hit from up to 121.5 m, so R(evasion / ALERT) is 261 m; R(calm / caution) stays the 80 m floor (no first notice in
+  calm was seen). The far rule's range is 300 m (was 250 m: the host registers its guards within 300 m of the guest), so an ALERT
+  puppet exists only 276-300 m from the guest; the census logs out to 320 m.
+- **U3** (0x1413816e0, the action B kind 1 serializer): payload B (wire +0x20) of kind 1 (wire +0x64) is the aim; its
+  target mode is wire +0x35 (R+0x4c & 7): 1 a packed position at B+0, 2 a big-endian u16 GameObjectId and u16 part, 3 a
+  u32, 4 a u16 id. The host's aims are mode 4 at id 0 (its own player); `soldier_act::RemapAimTarget` swaps players 0 and
+  1 there before the unpack, as facing ids and order target ids already were. Action A kind 1 carries 0xffff at A+4 (no
+  id); kinds 0x14 / 0x16 hold 0x0402 / 0x0401 at A+0x19 [U, rare].
+- **Apart**: a climb is not replayed (`94a7bf2a`: guard 19's puppet stood at a tower's foot 7 m below his host copy for
+  ~100 s, gait 3), and nothing warps a copy under 15 m (the engine's FOB rule) or beyond the 60 m stream. The m reply
+  now carries the owner copy's position from the newest order part (`ox/oy/oz` mm, `soldier_act::MailOwner`); a puppet
+  more than 5 m (3D) from it for 2 s, after his first 4 s as a puppet, is released (`why=apart`, `event=mirror_apart`)
+  and not taken again for 30 s: his own brain and the follow corrections take him back, as without the key. In the runs
+  it also took walkers that lagged 5.5-12.7 m (the request is re-applied only on a change or every 5 s, so the engine's
+  catch-up runs only then), copies 10-15 m off right after `mirror on`, and two vehicle riders 283-285 m off.
+- **Watch tools** (research): `aim_ent <hash> [up]` turns this copy's camera to a roster guard (both copies on the same
+  guard), `aim_partner [up]` to the partner's character (world sync's peer position when the command has no pose: native
+  attaches the pose only to goto_partner / spawn_sync). The quiet watch point is the end of the walk south from
+  (423, 269.5, 2081) (z ~2018-2026, four runs); the host's spot 50 m south of the outpost sits at a rock that hides
+  bearings -30..-1 degrees.
+- **Runs** (`94a7bf2a`, `adecad01`, `80cc0176` the gate scenarios; `46c0da9e` the latch regression; STATUS has the
+  numbers): puppets form in calm and run the posted requests (standing, walking at the host copy's speed: ratio p50
+  0.98 in `94a7bf2a`); 0 unpack faults; releases at the ALERT rise, `mirror off`, the guest's shot within one update;
+  matched frames of a mirrored guard standing at the same spot on both screens (`80cc0176` q-0, q-30), none walking; no
+  ALERT puppet. The gate is not reached; `soldier_act` stays off.
+- **Next**: decision D-FM1 (calm / caution only, or a watch point beyond 276 m for the ALERT half); a host spot with a
+  clear view of a walking puppet; moving puppets re-applied every 1 s; apart only for a still owner copy; skip riders.
 
 ### 8. Soldier transforms (W6)
 
