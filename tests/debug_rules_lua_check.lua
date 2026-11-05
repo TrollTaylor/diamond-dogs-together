@@ -136,4 +136,15 @@ for _,role in ipairs({true,false})do
  else check(not ok and msg=="host_only" and #c.tx==0,"play: the guest's press is still host only") end
  ok,msg=c:run("rules");check(ok and msg:find("^rules;wormhole=off"),"play: status answers")
 end
+-- Horse plan M2f: the lab lever cargo_relie 0|1 reaches world_horse_cargo's setRelie (lab only; nothing else).
+do
+ local c=F();local got={};c.W.horseCargo={setRelie=function(n)if n~=0 and n~=1 then return false end;got[#got+1]=n;return true end}
+ check(c.P.handles.cargo_relie==true,"handles cargo_relie")
+ local ok,msg=c:run("cargo_relie","0");check(ok and msg=="cargo_relie;v=0" and got[1]==0,"cargo_relie 0: the stance is logged only")
+ ok,msg=c:run("cargo_relie","1");check(ok and msg=="cargo_relie;v=1" and got[2]==1,"cargo_relie 1: asked back to CRAWL again")
+ ok,msg=c:run("cargo_relie","2");check(not ok and msg=="cargo_relie;refused=args" and #got==2,"cargo_relie 2: refused")
+ c=F({mode=2});c.W.horseCargo={setRelie=function()return true end}
+ ok,msg=c:run("cargo_relie","0");check(not ok and msg=="cargo_relie;refused=args","play: refused (a lab lever)")
+ c=F();ok,msg=c:run("cargo_relie","0");check(not ok and msg=="cargo_unavailable","no world_horse_cargo: unavailable")
+end
 print("debug_rules_lua_check: "..checks.." checks passed")

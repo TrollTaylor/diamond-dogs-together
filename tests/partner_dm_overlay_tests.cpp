@@ -624,6 +624,44 @@ void TestPillionMap() {
     g.in.pillion = false;
     g.Run(400);
     Check(g.Saw("stop:map_exit") || g.Saw("stop:setting_off"), "the lease's end stops the seat");
+    // M4 (run d935beae): the lease came back after a lapse, but finish() had kept the seat as the remote episode's done
+    // entry, so the overlay never seated body 1 again (body 1 1.9 m under the rear seat for the rest of the ride; the seat
+    // gun's hook then refused body_act). The pillion seat is a held lease, not a remote episode: it seats again.
+    Game r;
+    r.in.mode = PartnerNativeOverlay::off;
+    r.in.pillion = true;
+    r.in.pillion_reseat = true;  // world_horse_shot named
+    r.in.remote_valid = true;
+    r.in.remote_act = 3;
+    r.in.body_valid = true;
+    r.in.body_act = 3;
+    r.Run(1000);
+    Check(r.s.phase == pdo::Phase::playing && r.plays == 1, "lapse: seated first");
+    r.stops = false;  // the stop is still in flight when the lease comes back
+    r.in.pillion = false;
+    r.Run(400);
+    Check(r.Saw("stop:map_exit") || r.Saw("stop:setting_off"), "lapse: the lease's end stops the seat");
+    r.in.pillion = true;
+    r.stops = true;
+    r.Run(3000);
+    Check(pdo::Active(r.s) && r.s.index == ride && r.plays == 2, "pillion: the lease back seats body 1 again");
+    // The review of M4: the re-entry is part of world_horse_shot (off unless named); at the defaults the 0.15.2 rule holds
+    // (the stopped seat stays the done entry until the remote's act changes).
+    Game q;
+    q.in.mode = PartnerNativeOverlay::off;
+    q.in.pillion = true;
+    q.in.remote_valid = true;
+    q.in.remote_act = 3;
+    q.in.body_valid = true;
+    q.in.body_act = 3;
+    q.Run(1000);
+    q.stops = false;
+    q.in.pillion = false;
+    q.Run(400);
+    q.in.pillion = true;
+    q.stops = true;
+    q.Run(3000);
+    Check(q.plays == 1, "pillion, reseat off (the defaults): the lapsed seat is not re-entered");
     Game n;
     n.in.mode = PartnerNativeOverlay::off;
     n.in.pillion = true;

@@ -64,6 +64,14 @@ int main() {
         g = Ready(); g.block = "carry"; Check(Is(sg::Gate(g), "carry"), "gate: a block names itself");
         g = Ready(); g.other_gesture = true; Check(Is(sg::Gate(g), "busy"), "gate: another gesture runs");
         g = Ready(); g.enabled = false; g.seated = false; Check(Is(sg::Gate(g), "key_off"), "gate: the key first");
+        // Horse plan M4 (world_horse_shot): the rear seat of the shared horse (the seat1 lease with the overlay seat) is a
+        // seated passenger seat; its DM overlay is the seat, not a block (carry and downed still block).
+        g = Ready(); g.seated = false; g.passenger = false; g.pillion = true; Check(sg::Gate(g) == nullptr, "gate: the pillion seat");
+        g = Ready(); g.pillion = true; g.enabled = false; Check(Is(sg::Gate(g), "key_off"), "gate: the pillion seat still needs the key");
+        Check(sg::Block(false, true, false, true) == nullptr && Is(sg::Block(false, true, false, false), "overlay") &&
+                  Is(sg::Block(true, true, false, true), "carry") && Is(sg::Block(false, false, true, true), "downed") &&
+                  sg::Block(false, false, false, false) == nullptr,
+              "block: the overlay blocks unless it seats the pillion; carry, then overlay, then downed");
     }
     // The remote's seat the gate takes as a passenger (review of wp/seat-shoot): 1..3 of a live vehicle ride; never
     // the driver's seat 0, a seat the wire leaves unknown (255) or one past a light vehicle's four.

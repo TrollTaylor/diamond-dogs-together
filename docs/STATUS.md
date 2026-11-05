@@ -1,3 +1,93 @@
+## November 5, 2026: horse M4, shoot from the back of the horse (`wp/horse`; `world_horse_shot` off unless named; `world_horse_pillion` still on with the gun profile)
+
+**Players get:** nothing new at the defaults: riding behind your partner works as in 0.15.2. Shooting from the back of
+the horse is NOT turned on, and the rear seat's three holds built this round (the seat kept through a short game
+hitch, the overlay seat re-entered after a lapse, a connection gap of up to 2 s held) now come only with that lab key
+(review correction, 1397fe22 red / 706edae8 green): both play `-WanSim bad` runs with them in (`1a7c5d0e`, `53af6597`)
+stopped because the driver's E did not get them off after the passenger hopped off, so no play run passed the
+get-off with the holds. With the lab key named you can aim and fire from the seat on your own screen, and your shots
+start past the horse and your partner, but your partner does not see your gun raised and no test shot put a guard
+down. Details: `docs/mounts.md` section 13. Markers [O]/[I]/[U].
+
+- **Built** (red first each time): the rear seat's horse box for the seated-shot hook (`pbox`, `partner_seat_shot`
+  class `horse`), the seat gun's pillion gate on the driver's copy, the lab key `world_horse_shot` (2620c451 /
+  fe81384a); the seat lease held 2 ticks through a stall and the overlay seat re-entering after a lapse (613e8e19,
+  6b62eea0 / 018ccc45); a stream loss held 2 s (`step=track_wait`, 2254b9cd / 018ccc45); the key off unless named
+  (d9f36d26 / 230ef073).
+- **Proven** [O, both copies' logs]: each cross-neck shot from the seat (straight ahead along the horse) started 1.57 m
+  ahead of the muzzle, past the driver and the horse's head; the passenger's copy's horse kept 12000 / 12000 through the
+  shots; the drivers' life read the same before and during the ride (`28015a91`). The driver's dismount with the guest
+  driving put both off (`48d31500`, logs and the both-off frames on both screens). No seat lease ended inside a seating
+  after the fix in the lab (`48d31500`, `88b7b621`); before it the driver's screen showed body 1 on the ground under
+  the horse after a stall (`d935beae`, stats `dy_cm=-190`).
+- **Not proven, so the holds are off at the defaults:** the driver's get-off after the passenger hops off in play. The
+  pre-fix play run `28015a91` and both post-fix lab runs got off about 1.3-1.8 s after the hop-off; in `1a7c5d0e` (play,
+  sleeping guards) the host's E was consumed by the game (worker `input_consumed` seq 62) 1.6 s after the overlay
+  stop, yet the host's action stayed `a=79` (no `a=7a`) and `horse_status` read `localMounted=1` [O host log]. The
+  host's lines from the hop-off to the E (overlay stop, release, native re-entry, `partner_pillion=end`) match
+  `28015a91`'s line for line, and none of the three holds acts on the driver's own E [I code]; the cause is [U]. In
+  `53af6597` the awake guards had the driver in a downed cycle (lethal intercepts, `event=downed step=abandoned` 2 s
+  after the hop-off), which may explain that one [I].
+- **Not reached (the M4 gate):** no rear-seat shot put a guard down (five runs, sleeping and awake guards; the aim
+  lever's eye height is wrong from a horse, and the warped guard did not stay put); the driver's screen shows the
+  passenger with the arms forward and the rifle on the back (the M7 seat gun's known limit: the gun-hold node runs, no
+  weapon in the hands) [O frames]. Never seen live: the 2.5-2.8 m E band, the play-mode link drop (the worker's drop is
+  lab only), `step=track_wait` (in no log), the tie's get-off (not built: `0x141230B30` is a motion-node set, not a
+  ride-state id; 19 call sites in 14 functions plus one data reference). The guards' hits: the 'commit actor=guest'
+  check failed in all 6 runs; with awake guards the passenger's copy's horse fell from 12000 to 10163 at the lowest in
+  lab (`88b7b621`) and to 6489 in play (`53af6597`); that the guards' rounds did it is [I] (in `88b7b621` the first two
+  drops, 12000 -> 11627 -> 10885, came in the windows right after the passenger's own cross-neck shots). In `88b7b621`
+  the host's horse fell Unconscious (life 4828) while the passenger's copy read 10163 or more: horse damage is not
+  shared. Process: during the round `world_horse_shot` (fe81384a..d9f36d26) and, in M2f, `world_horse_cargo`
+  (a9420cdb..25e94d69) were on by default before any proof run; both went back off before the head and were never
+  released. Under the shot key the seat gun's gesture runs on body 1 while the DM overlay seats it (two systems on
+  body 1; lab key only).
+- **Next:** the plan's first route for the driver's screen (body 1's native squat-aim at the rear seat while the remote
+  aims, held by `hold1`) or seat-gun design B (D18); an aim lever from the camera's own position, a target that stays
+  put, then an A/B with `seatshot off` on a cross-neck line; D-H6 after that.
+- Builds: full 355/355 at 018ccc45 and at the off flip; every generator `--check` as base (carry_info, sleep_plugin,
+  native_ui, teammate_targeting). Archives `%USERPROFILE%\mgs-coop-run-archive\horse\` d935beae, 28015a91, 48d31500,
+  1a7c5d0e, 88b7b621, 53af6597 (attempt 3: the awake guards fought back and the outpost downed the driver; the
+  passenger's copy's horse went to 6489 / 12000 in play [I the guards' rounds]; nothing about the seat itself).
+
+## November 5, 2026: horse M2f, a downed partner on the horse after you get off (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new by default: putting a downed partner on the horse stays off unless the lab key is named.
+With the key named, a downed partner who ended up squatting on the horse on their own screen after you got off is now
+laid back down across it (seen in hidden two-copy lab tests, the host carrying the guest); the full test (both carrier
+orders, the take-down and revive, the play rehearsal) did not get through this round. Details: `docs/mounts.md` section
+11 ("Hidden runs, M2f round"). Markers [O]/[I]/[U].
+
+- **Cause found** [O, the victim's own logs in `5a92c73f`, `131f88c6` and the BODY0 run `4585cc5a`]: body 0 lies in
+  prone_idle through the ride; at the carrier's dismount (M1's final placement) it goes into fall / land every frame and
+  ends in crouch_idle when the carrier's body is shown on foot again. In the same tick the victim's copy put its horse
+  back on the carrier's last KEEP pose, sent up to 1 s before: 10-11 m back along the ride, then three more jumps at 1 Hz;
+  in `131f88c6` that horse fell Unconscious 0.25 s later. That this jump starts the fall is [I].
+- **Built** (red first each time): the stance watch and the CRAWL request (`step=stance` / `step=relie`, lab lever
+  `cargo_relie`; 12041530 / a9420cdb); the final placement handed to the cargo (34d66a2c / 8e33e2d5; it did not stop the
+  fall); no KEEP re-place for 2 s after M1's track ends, then only on a KEEP sent after that (cacc4179 / cad4da2f; never
+  reached a dismount live [U]); on the carrier's screen body 1 0.1 m lower and the ground window's low edge at 0.8 m (it
+  drew the body 0.38 m high after a dismount in `5a92c73f`); bursts at most 2 frames, 400 ms apart.
+- **Proven on one body** [O logs + frames, the drop part of `5a92c73f`]: with the lever at 0 the victim's own screen
+  shows them squatting on the horse after the dismount; one CRAWL request after the lever went to 1 put them lying
+  prone across it (frames `guest-h2c-stays` / `guest-h2c-relie`); ride 86 m; the link drop laid them down on both
+  copies. `131f88c6` logs the same squat-then-CRAWL pair, but its guest frames face a rock wall with no horse in view
+  (that copy's horse had gone Unconscious 4 s earlier), so it is logs only [O logs, frames do not show it].
+- **Correction (review):** at the load the carrier's screen shows body 1 lying ALONG the horse's length, above the
+  saddle with the legs in the air (`d4aec0a2` / `770368d0` `host-h2-loaded`), not across it; across the rump behind
+  the rider only from the walk on. The victim_pin stance was CRAWL in every window (`d4aec0a2` 17/17, `770368d0` 15/15).
+- **Gate not passed** (three attempts): no session got the lab (a) / (b) or the play rehearsal through: one missed pickup
+  (`5a92c73f`), three refused captures (`sequence_expiry_or_busy`: `d4aec0a2`, `05758736`, `770368d0`) and two landing
+  refusals (`131f88c6`, `016ec854`) [O]; how many of the queue's refusal results are this round's was not checked [U].
+  world_horse_cargo went back to off unless named (25e94d69 / 06ba9917). Never seen live this round: the guest-carrier
+  order, the take-down and revive, the play rehearsal with the cargo, `cargo_relie 1` through a whole dismount, the settle.
+- **Next:** rerun the three scenarios on this tree once the worker refusals are understood; check that the 2 s settle
+  keeps body 0 in prone_idle through the dismount (no `step=relie`), else hold body 0 with its own pose through M1's
+  final or use the cargo slot (DECISIONS cargo_slot: yes).
+- Builds: full 355/355 at cad4da2f; every generator `--check` as base (carry_info, sleep_plugin, native_ui,
+  teammate_targeting). Archives `%USERPROFILE%\mgs-coop-run-archive\horse\` 5a92c73f, d4aec0a2, 131f88c6, 05758736,
+  770368d0, 016ec854.
+
 ## November 5, 2026: enemy round 8 track C - the far mirror's walkers plan their own path: built, the gate not reached (the act_plan session was void); `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.23, protocol section 40. Markers: [O] seen in a log line, a frame or code (Ghidra / capstone, read-only), [I]
