@@ -3,7 +3,8 @@
 # 1870d1bf (same seed, no key) the truck with the riders 3970963356 / 2305481811 was still driving in on the host's
 # screen for ~150 s after the pairing while the guest's copy of it ran ~72 s behind (432.9 m apart at the join); its
 # stop is ~36 m north of the players (417, 2120). Both cameras on rider 3970963356 (aim_ent: in the truck, so on the
-# truck) every 18 s for ~110 s, then the same after it stops (the crew gets out on the host's screen).
+# truck) every 15 s for ~80 s. Guard 2961503 is put to sleep here (enemy-latch-quiet.txt's sleep, which
+# enemy-integ-carry.txt needs: run c90ab046 left him awake and its carry failed), as the session has no room for the quiet part.
 # Session (key named, then the last session with no key):
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy-lrrp -ScenarioPath
 #     tools/worker/scenarios/enemy-prove-1-join.txt,tools/worker/scenarios/enemy-lrrp-truck.txt,
@@ -22,45 +23,44 @@ host run aim_ent 3970963356 1.1
 guest run aim_ent 3970963356 1.1
 wait 800
 both capture t-0
-wait 17000
+host run enemy sleep 2961503
+host expect ^enemy_sleep;ent=2961503;
+waitlog guest 'world_lua=event=apply; ent=2961503; state=2; ver=[0-9]+; src=outcome;' 10
+wait 11000
 logmark both
 host run aim_ent 3970963356 1.1
 guest run aim_ent 3970963356 1.1
 wait 800
 both capture t-1
-wait 17000
+wait 14000
 logmark both
 host run aim_ent 3970963356 1.1
 guest run aim_ent 3970963356 1.1
 wait 800
 both capture t-2
-wait 17000
+wait 14000
 logmark both
 host run aim_ent 3970963356 1.1
 guest run aim_ent 3970963356 1.1
 wait 800
 both capture t-3
-wait 17000
+wait 14000
 logmark both
 host run aim_ent 3970963356 1.1
 guest run aim_ent 3970963356 1.1
 wait 800
 both capture t-4
-wait 17000
+wait 14000
 logmark both
 host run aim_ent 3970963356 1.1
 guest run aim_ent 3970963356 1.1
 wait 800
 both capture t-5
-wait 17000
-logmark both
-host run aim_ent 3970963356 1.1
-guest run aim_ent 3970963356 1.1
-wait 800
-both capture t-6
 host run world_status
 guest run world_status
 host run enemy info 3970963356
 guest run enemy info 3970963356
 host run enemy info 2305481811
 guest run enemy info 2305481811
+host run enemy info 2961503
+guest run enemy info 2961503
