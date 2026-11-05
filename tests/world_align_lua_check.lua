@@ -1629,6 +1629,17 @@ if arg[7] and arg[8] then
     mh.positions[2] = {0, 1.8, 30.0}
     ticks(mh, 4)
     check(acted(mh, 't 1 1') and not acted(mh, 't 2 2') and acted(mh, 's 0 0'), 'FM1 host: a guard beyond R - 10 m of the guest is sent')
+    -- FM1 retry: the ALERT watch point is ~255 m from the fight (beyond R(ALERT) + 15 = 199 m), so the range is 300 m.
+    check(mh.W.mirror.RANGE == 300, 'FM1: the mirror range is 300 m')
+    check((function()  -- its own function: the main chunk is at Lua's 200-local limit
+        local mr = followFixture(true)
+        mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
+        mr.positions[900] = {0, 0, 0}
+        mr.positions[1] = {0, 1.8, 280.0}
+        mr.positions[2] = {0, 1.8, 320.0}
+        ticks(mr, 4)
+        return acted(mr, 't 1 1') and not acted(mr, 't 2 2')
+    end)(), 'FM1 host: a guard 280 m from the guest is sent, one at 320 m not')
     -- Skeptic of FM1 (7b709720): a guest shot and a guest-local phase rise release the puppets within one update, not when
     -- the 12-per-update round robin reaches them (~0.8 s with ~280 roster entries); every way a puppet is dropped tells
     -- native (ACT_V1 r), so the fire-drop mask never outlives him; the local player's ACT_V1 p backs off 10 s while the

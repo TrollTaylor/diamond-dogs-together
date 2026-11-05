@@ -95,6 +95,11 @@ std::uint16_t RemapPlayer(std::uint16_t id) noexcept {
     return index == 0 ? 1 : index == 1 ? 0 : id;
 }
 
+bool RemapAimTarget(unsigned char (&w)[0x70]) noexcept {
+    (void)w;
+    return false;
+}
+
 namespace {
 bool PackedNear(const unsigned char* a, const unsigned char* b) noexcept {
     std::uint64_t va = 0, vb = 0;
