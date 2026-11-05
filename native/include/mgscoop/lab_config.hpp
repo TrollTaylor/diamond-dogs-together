@@ -789,7 +789,8 @@ struct LabConfig {
     // action kind 3 within 0.5 s, and run 0d801772's guard 246 then radioed a possible intruder and the outpost went to
     // caution on the guest). range_flat: the host's M3 placement and drive range from the nearer player is measured on the
     // ground plane (x/z), as the owner rule (runs ddcdec94 / 90d9b4d1: the guest fell 178 m below the outpost, stayed the
-    // owner, and the host refused 110 placements `range`, near=host). Lab and play; off unless named.
+    // owner, and the host refused 110 placements `range`, near=host). Lab and play; quiet_place follows the gun profile
+    // (lab_config.cpp, run bcd95b14); range_flat off unless named.
     bool quiet_place = false;
     bool quiet_place_given = false;
     bool range_flat = false;

@@ -3,9 +3,10 @@
 # and they fell 178 m (to x/z 436.1, 2181.7, y 92) and were downed by the fall; they stayed the owner of the outpost
 # guards (the M3 owner rule is x/z) while the host's 3D range rule found the host nearer (70 m) and refused every
 # placement `range` (near=host): the host's copies drifted 14-65 m for 12-25 s. After enemy8-quiet-calm.txt (or any
-# join): the host to the quiet spot 50 m south, the guest among the guards, ALERT, then the guest at ddcdec94's goto
-# point on that cliff edge (434.047, 269.924, 2182.728: the point the engine put them, read back 0.13 m off; they fell
-# from it) and about 45 s down at the cliff foot under the guards.
+# join): the host to the quiet spot 50 m south, the guest among the guards, ALERT, then the guest in the air on
+# ddcdec94's fall line beside that cliff (436.105, 240.0, 2181.736: the host saw the guest fall through it; they came
+# to rest at y 92.1 on the cliff foot below; run bcd95b14 put them on ddcdec94's goto point 434.047, 269.924, 2182.728
+# instead and they stood there, 1.5 m up on the ledge) and about 45 s down at the cliff foot under the guards.
 # Gate (range_flat): host place error (event=place_div div_m of the guest-owned guards) p90 <= 5 m while the guest is
 # down, its host_warp placements applied (near=guest), 0 latches, faults, game overs.
 logmark both
@@ -29,7 +30,7 @@ guest run world_status
 host run position
 guest run position
 logmark both
-guest run teleport 434.047 269.924 2182.728 0
+guest run teleport 436.105 240.000 2181.736 0
 wait 9000
 guest run downed_status
 guest run position
