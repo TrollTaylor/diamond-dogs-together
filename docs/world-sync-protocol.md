@@ -2626,7 +2626,7 @@ quiet (` 1` on `WORLD_WARP_V1`, section 39).
 - Hook thread, after the original manager update (`QuietPlanStep`): a quiet-moved walker whose request is a started walk
   (dest mode 1, `R+0x19c` = 0xffff, `R+0x19e & 3` = 2) is planned with the shadow gate object through 0x1413725f0
   (section 40) from his slot position to R+0x80; a live planner slot of another type is cancelled first (planner
-  vt[0x10]). One line per move: `world_place=quiet_plan; go; seq; idx; mode; r19c; r19e; slot; slot_h; fol; step=<none|busy|plan|cancel_plan>;
+  vt[0x10]); a planner slot that could not be read gives `step=none` (no plan, no cancel). One line per move: `world_place=quiet_plan; go; seq; idx; mode; r19c; r19e; slot; slot_h; fol; step=<none|busy|plan|cancel_plan>;
   started; handle; p; dest`; kPlanCheckMs later one `soldier_act_plan` line (section 40) for a plan that started.
 - Lua `event=readback; src=quiet`: a fourth read-back at 10 s (`at=10000`); every quiet read-back adds `dho_m` (x/z from
   the owner copy: the host's last sample of the guard moved on by its speed for at most 400 ms) and `oage_ms` (that

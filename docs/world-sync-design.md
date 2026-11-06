@@ -1418,32 +1418,41 @@ only); [I] inferred; [U] unknown.
     player carry code (0x10557f3) puts the carrying player's there; the mod leaves it 0, this PC's own player. Stance
     3-4: the pose is rotated, no post. Then T->vt[0x68](pos, quat), T->vt[0x70](quat) for all.
   - [O code] The quiet warp 0x136ece0 makes the same controller calls (S vt[0x100] -> the same component table ->
-    vt[0x388]; vt+0x70, vt+0x68, y + T+0x160) and posts no action.
-  - [O census] Stance 1 is the normal one: in 0d801772's guest census `st=1` 6841 samples, `st=0` 1081, `st=2` 423;
-    guard 246 read `st=1` right after his warp in 0d801772, fbf3522a and f11fe8a1. In 0f020398 the message corrections
-    of stance 1-2 guards were followed by action kind 3 -> 15 within 0.5-2 s (2929558510: 1, 3, 15, 12, 27; 3970963356
-    and 2305481811: 18/1, 3, 15, 1, 27), the stance 4 guard's not (kind 4 only).
+    vt[0x388]; vt+0x70, vt+0x68, y + T+0x160) and posts no action. It differs in two more ways (the review): it moves
+    only past its 15 m slot gate (225.0 at 0x2329c00, hence QuietBias) and writes the slot's network position.
+  - [O census] Stance 1 is the normal one: in 0d801772's guest census `st=1` 3621 of 4044 samples, `st=2` 423; no
+    census in 0d801772, fbf3522a, f11fe8a1 or 0f020398, on either copy, has a `st=0` (the first figures, `st=1` 6841 /
+    `st=0` 1081, were substring counts that took `post=1` / `post=0` too; corrected as the review checked it). Guard
+    246 read `st=1` right after his warp in 0d801772, fbf3522a and f11fe8a1. In 0f020398 all 15 message corrections of
+    stance 1 guards were followed by action kind 3 -> 15 within 0.5-2 s (the kind before was 1, 18 or 31; 2929558510:
+    1, 3, 15, 12, 27; 3970963356 and 2305481811: 18/1, 3, 15, 1, 27), the stance 4 guard's (guard 15) by kind 4 only.
   - [O code] 0xa6 is also one of the event ids the soldier's reaction classifier around 0x141455e60 sorts (it reads
     the same S+0x98 records; `[event+0x28] == 0xa6` gives class 0x1d, next to other ids such as 0x3f/0x40 and 0x54);
     what the classes mean is [U].
-  - So the one part of the default place warp the quiet warp lacks is the action 0xa6 post naming this PC's player for
-    every stance 1-2 guard [O]. [I] it is the startle (the post reads as a player handling him, as at a release from
+  - So the one part of the default place warp's handler the quiet warp lacks is the action 0xa6 post naming this PC's
+    player for every stance 1-2 guard [O]. [I] it is the startle (the post reads as a player handling him, as at a release from
     a hold or a carry; he then reports "a possible intruder ... attacked me"). What 0xa6 does inside the action
     component (this+0x80) is [U]. Not a flag on the message: the post depends only on the guard's stance nibble.
 - **Built** (`quiet_place`, native only, no CFG bit, no wire change):
   - `QuietChoose`: the quiet warp for every off-screen correction of a realized, listed guard with stance 0-2,
     walkers too (`quiet=walk`: speed over 0.5 m/s, unknown, or a path ending away from him and the target); stance 3-4
-    or an unread stance keeps the message (`quiet=stance`). The rest view reads the stance nibble.
+    or an unread stance keeps the message (`quiet=stance`). The rest view reads the stance nibble. (Stance 0 is never
+    seen in a census.)
   - `QuietPlanOne` (hook thread, after the original manager update): a moved walker whose request is a started walk
     (dest mode 1, `R+0x19c` 0xffff, `R+0x19e & 3` = 2) is re-planned from where he now stands to his own brain's
     destination R+0x80 with act_plan's shadow plan 0x1413725f0; his brain's live planner slot of another type is
-    cancelled first (vt[0x10]). `world_place=quiet_plan; go; seq; idx; mode; r19c; r19e; slot; slot_h; fol; step;
+    cancelled first (vt[0x10]); a planner slot that could not be read gives `step=none` (no plan, no cancel; the
+    review: it was taken for an empty slot). `world_place=quiet_plan; go; seq; idx; mode; r19c; r19e; slot; slot_h; fol; step;
     started; handle; p; dest`, then the plan check (`soldier_act_plan`, kPlanCheckMs later).
   - `world_readback.lua`: src=quiet at 0.5 / 2 / 5 / 10 s, with `dho_m` (x/z to the owner copy: the host's last
     sample moved on by its speed for at most 400 ms) and `oage_ms`.
 - **Gate** (named `quiet_place=1`): over >= 10 quiet moves including >= 3 of walkers, 0 radio / intruder reports and 0
   caution / alert phase changes caused by a mod move (each phase change attributed); moved walkers within 3 m of their
-  owner copy at 2 s and 10 s (body read-backs); 0 latches / faults / game overs; guest p90 <= 2 m.
+  owner copy at 2 s and 10 s (body read-backs, by the move's own `quiet=walk` warp line, >= 3 walkers read at each);
+  `plans_lost` 0 (a cancelled slot whose plan did not start, so his brain's walk is gone and he may stand: the review's
+  risk, which the cancel cannot undo); 0 latches / faults / game overs; guest p90 <= 2 m. Not covered: a re-arm of the
+  same guard within 10 s drops his 10 s read-back; with `act_plan=1` too the quiet plans share act_plan's plan check
+  and counters.
 - **Runs**: none in the time box: session 1 (job 20261106-032106-729-9dbd7d, `quiet_place=1, act_census=1`;
   enemy8-quiet-calm + enemy11-quiet-walk) waited in the queue from 21:21 behind three jobs while the runner waited for
   its floors (C: free 0.0-5.6 GB, then commit memory). Nothing is turned on. `quiet_place` stays off unless named.
