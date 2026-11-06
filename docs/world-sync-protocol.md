@@ -2612,3 +2612,24 @@ No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. N
 - New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
   planned puppet and at the end of a kept walk.
 - `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.
+
+## 48. Enemy round 11 track B: the lrrp lines cut, the crew hold, the clock offset (no new op, CFG bit or contract site; design 7.32)
+
+No wire change. Inside `lrrp_follow` (on in 30010 at the defaults, named 1 any map), Lua only (world_lrrp.lua):
+
+- Lines (the log flood: horse run `2a41c416`'s host lost 1788 Lua lines to `world=log_cap`): the host's `step=host` 2 Hz
+  while its truck moves (was 4 Hz), every 5 s manned at rest (was 1 s), every 30 s empty (was 5 s), and at once when its
+  rider count changes; `step=riders` (both roles) when the rider set changes, else every 2 s while the truck moves and
+  every 10 s otherwise (was with every host / follow line); `step=crew` one line per truck, up to 4 members a line,
+  `step=crew; id; rl; c=ent:x:z:in,...` (in 1 seated; was one line per member), every 2 s for 60 s after a rider-count
+  change (was 1 s; on the guest every 10 s for a truck the host never had manned); the guest's `step=follow` once a second
+  while the host's truck moves, else every 10 s (was 1 s manned, 5 s empty), and at once when its mode or a rider count
+  changes.
+- New lines: `step=origin; role; id` once per id when a pose read at x = 0, z = 0 is dropped; the host's
+  `step=crew_out; id; ent` at each get-out it sees; `step=crew_hold; ent; after_ms; dh_m; dq_m` once per get-out when the
+  hold answers the owner decision.
+- The crew hold (host, M3 `W.ownerOn`): for 10 s after a crew member's get-out on the host (`W.crewOutAt[ent]`), while the
+  host owns him, `P.ownerOf` answers 0 (no OWNER 73 hand-over to the guest); one the guest already owns is left to the
+  owner decision; after 10 s the owner decision as before.
+- The guest's clock offset per truck (LRRP_FAST 93's sender tick): the lowest of the last second's samples, a lower one at
+  once (was the lowest ever, rising 2 % a sample).
