@@ -1401,6 +1401,43 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   ForceStop (a stop that holds, or a get-out that works: none of the commands did, the crews leave together 18-29 s after
   the start); the M3 crew hold above.
 
+#### 7.32 Enemy round 11 track B: the lrrp log flood, the crew hold, the clock offset, Africa asked (inside `lrrp_follow`; no CFG bit, no wire change)
+
+- **Why**: (1) with `lrrp_follow` on at the defaults in 30010 a crew10 session's host wrote ~1640-1800 `step=host` lines
+  (4 Hz moving, 1 Hz manned) each with a riders line, the guest ~1000 follow lines; horse run `2a41c416`'s host hit
+  `world=log_cap` 1468 times and dropped 1788 Lua lines (its lrrp lines: host 2389, riders 1071, crew 450), a horse
+  `step=unloaded` among them. `86d6045f`: host lrrp 2320 of 2606 Lua lines (host 1097, riders 861, crew 316), guest 2045
+  of 2794 (crew 860, follow 604, riders 374). (2) design 7.30 item 4 (`fc141dc1`). (3) design 7.30 "Seen besides".
+  (4) `86d6045f`'s 25606: the guest's copy led the host's by 1.1-2.4 m along its track for 29 s.
+- **Item 4 cause** [I]: the guest extrapolates the newest sample by `ahead = now - (tick + off) + 100 ms` (cap 400 ms),
+  where `off` was the lowest clock offset ever seen, rising only 2 % a sample. After the offset steps up (a longer
+  one-way delay on the link, or the two world clocks drifting apart), `off` stays low for seconds (a 5 s time constant at
+  10 Hz, 50 s at 1 Hz at rest, longer with the host's 1.3-1.5 s sample gaps) and `ahead` sits at its 400 ms cap: at 8 m/s
+  the copy leads by 2-2.4 m, as seen. No line logs `off` or the delay, so the step itself is not seen [U]; the guest's
+  `raw_clock` held episode (385295930-385299552) came 2 s before the stretch but its `held_ms` exceeds the wall time by
+  only ~85 ms [I] (every run has one at the join). Earlier runs had 0.53-0.63 m p90.
+  Fix: `off` is the lowest of the last second's samples (a lower one at once), so a step up is followed within 2 s.
+- **Built** (red c788d65c: 19 new checks failed; green 20509a91: world_vehicle_state_lua_check 201):
+  - The lines (protocol 48): host 2 Hz moving / 5 s manned / 30 s empty / at once on a count change; riders on a set
+    change else 2 s moving / 10 s; crew one line per truck (packed `c=ent:x:z:in,...`) every 2 s (guest 10 s for a truck
+    the host never manned); guest follow 1 Hz moving else 10 s, at once on a mode or count change. The fixture's 3-truck
+    minute: 802 host lrrp lines -> 260 (the crews' first 60 s included).
+  - The crew hold: the host's get-outs (`step=crew_out`) go to `W.crewOutAt[ent]`; world_lrrp.lua wraps `P.ownerOf` (world_place.lua has
+    no room): within 10 s of his get-out a crew member the host owns stays the host's (`step=crew_hold` once).
+  - `step=origin; role; id` once per id when `pose()` drops an origin read.
+  - The clock offset above.
+- **Item 5** (read-only RE, exe 085c2f82...bb45) [O unless marked]: Fox StrCode32 reproduced (tools in the round's notes:
+  ForceStop 0x8a2177b1, StartTravel 0x385d1071, GetPosition 0x1241ca2d, GetRiderId 0x1596a3f5 match the dispatcher).
+  `TppVehicle2_InstanceCommands` 0x140b2b710: `ForceStop{enabled}` calls the vehicle type's controller vt[0x1f8] / vt[0x200]
+  on the record; the game's own scripts send it only to the player's ridden vehicle (s10050, s10260), so the AI driver is
+  not reached [I] (the runs: ForceStop and `restop` did not stop a crew-driven truck). Two unnamed commands go to the
+  component at *(this+0x1c8): 0x84692f8d reads `speed` into vt[0x78], 0xe51e5c9b (no argument) calls vt[0x80] - a drive
+  speed set / reset is a guess [U]; neither name is among the 190 command ids of the game's own Lua nor ~10^5 generated
+  names, so Lua cannot send them. Soldier side: `UnsetRelativeVehicle` (0x778af7be) and `StartTravel` are the commands
+  known; neither got a seated far crew out before its own moment (7.30). **No stop that holds and no working get-out
+  command is known.** Next: decompile *(this+0x1c8) vt[0x78] to learn whether speed 0 holds a crew-driven truck, then find
+  its name (or reach it natively, a new contract site).
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
