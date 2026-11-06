@@ -1,13 +1,31 @@
-## November 5, 2026: enemy round 11 track C - the far mirror: the hook keeps a puppet through one late resend, a walker it takes far off glides instead of jumping, a released guard whose brain re-targets with no path is planned again, and the host sends its copy's next path point; built and unit-tested, the named run pending; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
+## November 5, 2026: enemy round 11 track C - the far mirror: the hook keeps a puppet through one late resend, a walker it takes far off glides instead of jumping, a released guard whose brain re-targets with no path is planned again, and the host sends its copy's next path point; built and unit-tested, no hidden run (the queue waited on the machine's floors); `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.33, protocol section 49. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
 
-- **What players get**: nothing new at the defaults (`act_plan` and `soldier_act` stay off unless named).
+- **What players get**: nothing new at the defaults (`act_plan` and `soldier_act` stay off unless named; no default
+  changed, no README change).
+- **Found** (round 10's `689e654c`, re-read) [O]: the "flapping" was the hook, not Lua: `SetMirror` ended the hook's lease
+  on one stale m (a late 1 s resend), so guard 18 was released and taken again by the hook 10 times while Lua held him a
+  puppet throughout; outside the commanded mirror-off window and the 15 s after the shot Lua's coverage was 100 / 99 /
+  100 % (15 / 17 / 18) and 67 % (246). The census shows 10 jumps of 10 m+ within 300 m of the guest (5 in calm), all of
+  them take warps (puppet 0 -> 1). The unpack (0x14136f810, read only) uses a walk's entry only for the 15 m warp [O].
 - **Built** (red c37c3066, green 8e2c41a8; native only, under `act_plan`; no CFG bit, no wire format change, no new
-  contract site): `MirrorLease`, `GlideEntry`, `TakeWarps`, the release watch, `CornerTarget` (design 7.33). Full build
-  355/355 at 8e2c41a8; every contract check as before (known base only).
-- **Run**: the first job (20261106-031551) waited 64 min on the queue's floors (C: 5.0 GB free falling to 0, commit free
-  4-15 GB; machine-wide) and was closed as interrupted when its runner ended; no game ran (void). Resubmitted at 22:21.
+  contract site; design 7.33): `MirrorLease` (a stale m keeps the lease), `GlideEntry` (a walk's entry at most 14 m from
+  the copy: no warp; the catch-up gait runs him), `TakeWarps` (a non-walk 15 m+ off is not taken), the release watch (60 s:
+  a brain re-target with no path for 0.5 s is planned), `CornerTarget` (the host sends its copy's next follower path point
+  as a walk's destination). New lines `soldier_act_glide`, `soldier_act_corner`, release steps `watch` / `watch_none`;
+  frame counters `glide`, `rel_watch`, `corner`. soldier_act_tests 195 checks (red observed at the frame line); full build
+  and CTest 355/355 at 8e2c41a8; every contract `--check` as before (known base only: camera_mode_window, carry_info,
+  master_server, native_ui, sleep_plugin, targeting env, teammate_targeting).
+- **Run**: none. Job 20261106-031551-031-adff22 waited 21:16-22:20 on the queue's floors (C: free 5.0 GB falling to 0,
+  commit free 4.3-14.7 GB; machine-wide, not this track) and was closed as interrupted when its runner ended (no game ran:
+  void). Job 20261106-042106-533-103110 (same keys `soldier_act=1, act_plan=1, act_census=1`, `enemy-mirror10b-calm.txt`,
+  afgh-ledge, `-WanSim bad`) was still queued behind track B's jobs at 22:55; it builds whatever this worktree holds when it
+  starts and is not analysed here.
+- **Gate rows**: none observed this round (no run). The gate is 7.29's (design 7.33).
+- **Next**: slice the queued run (or run it) with the round 11 gate script; if the gate passes, the flip per D-FM1 (a)
+  and the run with no key named; open: 246's guest copy that stands with a path [U], a non-walk re-apply beyond 15 m still
+  warps, a release stand with no walk (dm 0), the per-guard state on a mission change.
 
 ## November 5, 2026: enemy harden - inside the keys already on (`drive_vert`, `lrrp_follow` in 30010): the soft follow leaves a guard seated in a vehicle alone, a truck read at the map origin is no sample, a parked far truck that its own crew drives is put back at most once a second, and a seated crew is unseated at most 3 times; no default changed, no wire change, no README change (players see no difference)
 

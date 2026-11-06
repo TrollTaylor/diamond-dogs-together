@@ -1432,12 +1432,23 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   - The frame line adds `glide`, `rel_watch`, `corner` after `recheck`.
 - **Gate** (as 7.29, scaled to what a player can see at 95-300 m; per mirrored calm walker with >= 20 moving samples):
   place error p50 <= 1.5 / p90 <= 3.0 m; >= 3 of the calm walkers in range mirrored >= 80 % of their walking time (the
-  commanded mirror-off window and the 15 s after the guest's shot left out, and reported with them); jumps of 10 m+
-  within 300 m of the guest (census, consecutive samples <= 0.7 s apart; all counted) <= 1 a run; 0 released guards
-  standing > 5 s; plans with the path end within 1 m >= 90 % (rechecked); a matched frame pair of one mirrored guard
-  walking; no ChangePhase started by a puppet; 0 faults / latches / game overs; capture-free frame p95 within + 1 ms of
-  the mirror-off part.
-- **Seen**: the named run is pending (docs/STATUS.md).
+  commanded mirror-off window and the 15 s after the guest's shot left out, and reported with them: in `689e654c` that
+  gives 15 / 17 / 18 100 / 99 / 100 %, 246 67 %); jumps of 10 m+ within 300 m of the guest (census, consecutive samples
+  <= 0.7 s apart, all counted; `689e654c`: 5 in calm, 5 after, all take warps) <= 1 a run; 0 released guards standing
+  > 5 s; plans with the path end within 1 m >= 90 % (rechecked); a matched frame pair of one mirrored guard walking; no
+  ChangePhase started by a puppet; 0 faults / latches / game overs; capture-free frame p95 within + 1 ms of the
+  mirror-off part.
+- **Seen**: no hidden run this round. The first job waited 64 min on the queue's floors (C: free 5.0 GB falling to 0,
+  commit free 4-15 GB, machine-wide) and was closed as interrupted (void, no game ran); the second
+  (20261106-042106-533-103110, the same keys and scenario `enemy-mirror10b-calm.txt`) was still queued behind track B's
+  jobs at the end of the box. The unpack (0x14136f810, read only) uses a dest mode 1 request's entry only for the 15 m
+  warp (0x14136ece0) and sets R+0x80 from the packed destination, so the glide changes nothing but the warp [O decompile].
+- **Not addressed**: guard 246's guest copy that stood with a path (cause [U]); a non-walk re-apply while a puppet is
+  beyond 15 m still warps (the take of one waits); guard 18's stand straight from a release with no walk (dm 0); the nits
+  of 7.29 (`g_rel[]` / `g_planned[]` / now `g_watch[]` not cleared on a mission change).
+- **Next**: the named run (queued; if it ran, slice it and run the round 11 gate script); with the gate passed, the flip
+  per D-FM1 (a) (`soldier_act` calm / caution and `act_plan` following the gun profile, a named 0 the off switch, the
+  ACT_CAPS version gate unchanged) and the run with no key named.
 
 ### 8. Soldier transforms (W6)
 
