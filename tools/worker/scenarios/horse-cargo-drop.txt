@@ -65,6 +65,11 @@ wait 1500
 host hold r 900
 host release
 wait 3500
+# M2j (play 403e46a2 (b): the flank warp during the pickup act 27 ended the carry, no load): 2 s more for the
+# pickup to settle, then the carry act again.
+wait 2000
+host run coop_carry_bodies
+host expect carrybodies;b0=1,a(1|3),ps140000c
 # M2h (play 72e6269a: goto_horse put the carrier on the horse's census root, the carrier fell / landed and E 900 ms
 # gave no step=loading): the load E from the flank (horse_flank: 1.6 m beside the root, facing it).
 host run horse_flank
