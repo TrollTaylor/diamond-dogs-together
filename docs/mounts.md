@@ -1078,7 +1078,7 @@ Round `wp/horse` step S2 (no horse key named in any run: `pillion_status` `key=1
   behind) now also logs body 1's act / stance / speed / q28 / qd8 and upper act, the overlay phase, body 1's DM record as
   the overlay last read it (q18, ps2d8, rec10 / 11 / 18 / 1a0 / 248), the seat grace ticks used and the pose flag
   (`c8209630`, `228d598c`). Frames looked at, the driver's screen: body 1 STANDING on the rump behind the seated driver
-  - order (b) (the guest drives) from the seating on, on open ground before any ride, in all three (b) runs:
+  - order (b) (the guest drives) from the seating on, on open ground before any ride, in all four (b) runs:
     lab `41ae2b4c` / `c1982534` and play `b228d163` `guest-h3b-idle-side-guest` (79287a27's (b) idle frame had it seated);
   - order (a) (the host drives) seated at idle and after the gallops (`host-h3-idle-side-host`,
     `host-h3-stopped-side-host`), standing from the rock push on (lab `41ae2b4c` `host-s2a-rock1-host-01`, 2.7 s after the

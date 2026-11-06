@@ -21,7 +21,7 @@ docs/mounts.md section 16.
   starts on the boot spot's open ground (`horse_here` placed=1 on both copies, all four runs); at the final head, both
   orders, lab and play: every first E at an unridden horse mounted, the driver's E after the hop-off got them off
   (2.6-3.4 s after the seat ended), the passenger's own seat windows 0/0 after the seating second but one 52 cm window in
-  each (a); on the driver's screen body 1 STANDS on the horse's back in (b) from the seating (all three (b) runs this
+  each (a); on the driver's screen body 1 STANDS on the horse's back in (b) from the seating (all four (b) runs this
   round) and in (a) once the horse is pushed into rock (frames looked at; mounts 16), while every logged state of body 1
   stays the same. The guard part never reached a mount (attempt 1: the nearest guard 354 m off was routed, and the host's
   mount fell after `horse_here`; attempt 2: both players fell from a cliff next to the guard). Archives
