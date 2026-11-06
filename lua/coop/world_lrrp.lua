@@ -249,7 +249,6 @@ function LF.frame(t)
         wait = true
       else
         force(id, tr, true, follow and (b.n > 0 and "riders" or "moving") or "rest")
-        if not follow and d > LF.SETTLE_MM then L("event=lrrp;step=settle;id=%d;d_m=%.1f", id, d / 1000) end
         local rp = W.ridePose
         local catch = d > LF.JUMP_MM and near < LF.NEAR_MM
         local px, pz = tx, tz
@@ -266,6 +265,7 @@ function LF.frame(t)
             L("event=lrrp;step=restop;id=%d;d_m=%.1f;near_m=%.0f;k=%d;n=%d", id, d / 1000, near / 1000, tr.restops, tr.n)
           end
         end
+        if not follow and not hold and d > LF.SETTLE_MM then L("event=lrrp;step=settle;id=%d;d_m=%.1f", id, d / 1000) end
         if catch then
           px, pz = x + (tx - x) * LF.STEP_MM / d, z + (tz - z) * LF.STEP_MM / d
           if not tr.catching then tr.catching = true; L("event=lrrp;step=catch;id=%d;d_m=%.1f;near_m=%.1f", id, d / 1000, near / 1000) end
