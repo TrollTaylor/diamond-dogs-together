@@ -1,3 +1,21 @@
+## November 5, 2026: 0.15.3 package
+
+**Package (2026-11-05):** `dist/DiamondDogsTogether-0.15.3-20261106T015726Z-2bf21f1b/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `0e5eb68` with Release receipt `20261106-015411-6a5bf966e101442bb3735d0c7d291dd2` (passed, 342 audited tests, 0 failures; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.3+0e5eb68` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.15.3.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,360,496 | `23C7E343295D0B8F8C81F2BB4F094A45F8897C3B2FDD4EF5D200320992892FC1` |
+| `DDT-source-0.15.3.zip` (1,699 source files plus `source-files.json`) | 10,085,365 | `D11EBDDE0AAE2F6B2CEDBFB23F46747EEA8470FAB60B5CF76674746EE09CECB9` |
+| `DiamondDogsTogether.exe` | 2,387,456 | `564A76521911616556E3DEE6C2D165FE8676EDA98730A7A041EE918486A9264C` |
+| `dinput8.dll` | 7,848,448 | `A2264346895AB6A9B9E2FFF87BFB9A66F1F46AB299507A1CE723BAE2666ED169` |
+
+- **Package checks:** the checks of `tools/package.ps1 -Friend` itself (a passing Release receipt with the Release flags; the staged exe and dll are the receipt's; each zip holds exactly its staged files with their hashes; only tracked source files). `package.json`: version 0.15.3, `source_commit` `0e5eb68`, `source_dirty` false. No separate zip audit.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.147.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** the tracked files at `4613911` and every file in both zips: no Windows profile path (both slash styles), persona name or the user's e-mail. History was not rewritten.
+- **Version.** 0.15.3 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.15.3 and still 0.15.2; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.15.4", "0.15.3")`.
+- **Checks at the bump commit `0e5eb68`:** the Release receipt above is the only test run (342 audited tests); no other CTest run, hidden-game run, smoke run or review panel.
+- **To release:** upload **both** zips to the GitHub release `v0.15.3`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.15.3 -PackageDir dist/DiamondDogsTogether-0.15.3-20261106T015726Z-2bf21f1b` before publishing. Nothing was pushed, tagged or released by the packaging.
+
 ## November 5, 2026: enemy flip B - in Afghanistan free roam the patrol trucks and their crews now drive and stop where the host's do: `lrrp_follow` is on with the gun profile in 30010 only (user decision D-B10, with its accepted limits); Africa and Mother Base stay off unless named, and a named 0 is the off switch (`wp/enemy-lrrp`, not pushed)
 
 Design 7.28 (flip note), protocol section 38 (the receipt-2 wording). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
