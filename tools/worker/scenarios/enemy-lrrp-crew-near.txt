@@ -1,0 +1,116 @@
+# Enemy round 13 track B (lrrp_follow, D-B11 the crew hold; docs/world-sync-design.md 7.32 round 13 block), after
+# enemy-b13-join.txt (25605's crew NOT under 'enemy ignore'; host 69 m, guest 76 m south of 25605's stop). Cameras on
+# rider 3970963356 while 25605 drives in; at the host's first get-out line of 25605 (event=lrrp; step=crew_out; id=25605,
+# ~220-230 s after the pairing) the guest goes to a logged teleport landing 13.6 m north of the stop, in the crew's walk
+# (415.80, 269.0, 2106.92: enemy-vert-near.txt, 7c174346), and stands; the host stays 69 m off. world_place.lua's owner rule
+# then hands each crew member to the guest at once (host over 20 m, guest 55 m nearer) unless the crew hold keeps him the
+# host's for 10 s after his get-out (lrrp_follow=1 = cfg 1 only). Frames on both screens at about +2, +5, +11, +16, +25,
+# +35, +45 s. Post: event=owner / step=crew_hold / phase / req_phase / phase_discovery on both copies, the crews 20-40 s
+# after the get-out (step=crew), frames. Run once with -LabSetting lrrp_follow=1 (the hold) and once with no key (the
+# defaults: lrrp_follow on in 30010, no hold).
+logmark both
+host run world_status
+guest run world_status
+stance host crouch
+stance guest crouch
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 800
+both capture n-0
+wait 14000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 800
+both capture n-1
+wait 14000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture n-2
+wait 13500
+logmark both
+waitlog host 'world_lua=event=lrrp; step=crew_out; id=25605; ent=' 150
+guest run teleport 415.80 269.0 2106.92 180
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+wait 500
+both capture c-2s
+wait 2500
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+wait 500
+both capture c-5s
+wait 5200
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+wait 500
+both capture c-11s
+wait 4200
+host run aim_ent 2305481811 1.1
+guest run aim_ent 2305481811 1.1
+wait 300
+host hold f 1500 nowait
+wait 500
+both capture c-16s
+wait 8200
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+wait 500
+both capture c-25s
+wait 9200
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+wait 500
+both capture c-35s
+wait 9200
+host run aim_ent 2305481811 1.1
+guest run aim_ent 2305481811 1.1
+wait 300
+host hold f 1500 nowait
+wait 500
+both capture c-45s
+host run world_status
+guest run world_status
+host run position
+guest run position
+host run enemy info 3970963356
+guest run enemy info 3970963356
+host run enemy info 2305481811
+guest run enemy info 2305481811
