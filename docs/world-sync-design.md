@@ -1478,6 +1478,10 @@ only); [I] inferred; [U] unknown.
   - Run 257cd87d (no key, the defaults): [O] the false caution reproduced (246's 39.4 m off-screen message
     correction; 47 s later the guest's outpost went to caution, "Soviet CP: Entering alert status" on the guest's
     screen only, the host applied the guest's request); far message corrections 12/17 within 3 m at 2 s.
+  - Run f87fc7b3 (named again, the same head): [O] the radio-spot correction (the baseline's seq 8, 39.4 m) by the
+    quiet warp: 246 within 0.32 m of his owner copy to 10 s, census kinds 1 only, no guest phase change in 81 s, calm
+    frames 44 s / 81 s after on both. 60 quiet moves (49 walkers), no kind 13; walker rows FAIL again (2 s 13/31, 10 s
+    2/3). A user decision (D-A12) is asked: the off-screen scope on with the far-walker limit.
   - Blocks: a walker whose two copies walk different routes does not stay with the owner copy after a quiet move (the
     message's startle stopped him instead). Next: plan a moved walker toward the owner copy (sample position plus speed)
     and re-plan over our own earlier plan; a run where the radio-spot correction applies, plus an on-screen and an M3
