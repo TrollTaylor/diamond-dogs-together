@@ -454,6 +454,18 @@ const char* QuietPlanName(QuietPlan step) noexcept {
     return "?";
 }
 
+bool QuietAsk(bool quiet_place, bool off_screen, bool host, bool correction, std::uint32_t go) noexcept {
+    // Round 12 (design 7.31): on this player's screen too, and the host's M3 placements: the message's handler posts action
+    // 0xa6 naming this PC's player for a stance 1-2 guard wherever he stands and whoever moves him.
+    (void)off_screen;
+    (void)host;
+    return quiet_place && correction && (go >> 9) == 2u;
+}
+
+bool QuietHook(bool quiet_place, bool soldier_follow, bool soldier_owner, bool host) noexcept {
+    return quiet_place && soldier_follow && (!host || soldier_owner);
+}
+
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept {
     if (!list) return false;
     for (std::uint32_t k = 0; k < count; ++k)

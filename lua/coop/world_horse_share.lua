@@ -115,6 +115,18 @@ end
 local function place(x, y, z, yaw, anchor)
  return receipt(fmt("place %d %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z), round(yaw), anchor and 1 or 0))
 end
+-- Step S2 (scenarios: debug horse_here): this copy's unridden horse to x,y,z mm / yaw mrad. The seat runs' order (b)
+-- began by a rock wall: the recall did not move a horse M1's final had placed (79287a27 / 1c2a6b0a). Refused while
+-- either player rides it (the partner's track here; native: ridden / pending).
+function S.here(x, y, z, yaw)
+ if not S.on() then return false, "off" end
+ if S.track or S.localRides() then return false, "ridden" end
+ local r = place(x, y, z, yaw, false)
+ local ok = r and r.ready == true
+ local why = ok and "ok" or tostring(r and r.reason or "receipt")
+ log(fmt("step=here;placed=%d;reason=%s;x=%d;y=%d;z=%d", ok and 1 or 0, why, round(x / 10), round(y / 10), round(z / 10)))
+ return ok == true, why
+end
 -- Rider side: 20 Hz while this copy's player rides record 0, one final reliable pose after the dismount.
 function S.send(t)
  local rides = S.localRides()

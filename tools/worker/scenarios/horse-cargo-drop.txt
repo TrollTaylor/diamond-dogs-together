@@ -24,6 +24,20 @@ host run cargo_status
 host require cargo;state=off;key=1
 guest run cargo_status
 guest require cargo;state=off;key=1
+# M2i (rides of 37-44 m in (a) in 990d2530 / 107977cb / 2a41c416: the horse stopped at rock walls; the recall left the
+# horse elsewhere in 3 of 6 (b) runs): both players at the boot spot facing -60 on open ground and each copy's horse 4 m
+# right of its player (horse_here, step S2: (b) rode 129-140 m from here in four runs).
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 -60
+wait 4000
+guest run horse_here
+guest require horse_here;ok
+host run horse_here
+host require horse_here;ok
+waitlog guest 'world_lua=event=horse_share; step=here; placed=1; reason=ok;' 5
+waitlog host 'world_lua=event=horse_share; step=here; placed=1; reason=ok;' 5
+wait 3000
+logmark both
 # --- (c) loaded again from the boot spot.
 host run goto_horse
 wait 1000
@@ -66,7 +80,7 @@ guest require cargo;state=cargo
 # little so their frames show the horse under the body.
 # M2h (a53a243a / 39fff762: the victim's frames showed the horse at the load only; c62e2ce6 with mouse 400 300 looked
 # straight down on the body; 990d2530 with 600 -200 level with it, the horse below the frame): turned, a little down.
-guest mouse 600 80
+guest mouse 600 150
 wait 400
 both capture h2c-loaded
 guest run cargo_status
@@ -113,6 +127,20 @@ logmark both
 guest worldtrigger world=0
 wait 6000
 waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=stream_lost; side=carrier;' 10
+# M2i: the victim's own copy lays body 0 down too (its KEEP stream ends: why=stream_lost on the cargo side), beside the
+# horse on both screens, still down.
+waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=stream_lost; side=cargo;' 10
 host run cargo_status
 host expect cargo;state=off
+guest run cargo_status
+guest expect cargo;state=off
+guest run downed_status
+guest expect down=1
+host run position
+guest run position
 both capture h2c-dropped
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+both capture h2c-dropped-side
+logmark both

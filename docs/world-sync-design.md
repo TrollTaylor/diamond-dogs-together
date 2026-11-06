@@ -1460,6 +1460,135 @@ only); [I] inferred; [U] unknown.
   c.quiet_place = gun;`) and the no-key run of the same parts. Still on the message (and its post): the guest's
   on-screen corrections, the host's M3 placements of guest-owned guards. The walkers' re-plan cancels the brain's live
   planner slot; whether his brain then plans again by itself (and what 0xa6 does) is [U] until that run.
+- **Round 12** (enemy round 12 track A, 2026-11-06; corrected at the land step by the review, marked "review"):
+  - Built (only with `quiet_place=1`): `soldier_act::QuietAsk` asks for the quiet move for every correction of a soldier,
+    on the guest's screen too (`view=on|off` on the warp line), and for the host's M3 placements (`HostWarpReceipt`:
+    the same QuietCheck, StageQuiet, walker re-plan, grant, gate, range and budget; `leaf=quiet`, `quiet=<why>` on
+    `world_place=host_warp`); `QuietHook` runs the hook and its rest views on a host with `soldier_owner` too. No Lua
+    change (the native ignores the Lua's off-screen flag with the key). Log only, at the defaults too: a far message
+    correction's read-backs (`src=place`) carry `dho_m` / `oage_ms` as a quiet move's (`place_owner_2s`).
+  - Run c66b10b6 (named; enemy8-quiet-calm + enemy11-quiet-walk): [O] 42 quiet moves (40 walkers, 5 guards, all off
+    screen, 0 messages), [O census] no kind 13 / 3 / 15 after any; one ALERT on the host's own copies with no mod move
+    there ([I] the host's player seen by 246 / 15 at 5.5-11 m). Gate FAIL: walkers at 2 s 16/27 within 3 m of the owner
+    copy (enemy_div_report; to 10.4 m, a truck rider 12.4 m; 14/23 before the host's ALERT, 2/4 after), 10 s 1 read;
+    `guard_sank` 1, a real sink (review: `owner_dy_m` = copy y minus owner sample y, so -2.48 is 2.48 m under the owner
+    copy; [O] 2929558510's host copy stood still on a ledge at y 275.97 while each quiet move re-planned his guest copy
+    toward his brain's destination (365.77, 2132.34) and he walked off the ledge, 5.8 m under at 5 s, until the next
+    correction moved him back up). [O] the re-plan goes to the guard's own brain destination (246: 444, 2137; his host
+    copy walked south); review: a guard is re-planned again each time his brain has dropped our plan's handle (`mode 0`,
+    `r19c=0xffff`; 246 at seq 53 / 143, 15 at seq 57 / 146), not only on his first move. Not exercised: the radio-spot
+    correction (refused `far`), `view=on`, the host's M3 placements.
+  - Run 257cd87d (no key, the defaults): [O] the false caution reproduced (246's 39.4 m off-screen message
+    correction; 47 s later the guest's outpost went to caution, "Soviet CP: Entering alert status" in the guest's frame,
+    the host applied the guest's request; [I] his startle, the obs line says `att=none`). Review: the host's frame was
+    taken 1.5 s before the host applied it, so the host's screen is [U]. Far message corrections 12/17 within 3 m at
+    2 s; 3 of those 6 guards were f87fc7b3's walkers too, and after the ALERT the message kept the truck crew
+    2305481811 / 3970963356 within 3 m at 2 s in 5/7 checks where the quiet move did in 0/12.
+  - Run f87fc7b3 (named again, the same head): [O] the radio-spot correction (the baseline's seq 8, 39.4 m) by the
+    quiet warp: 246 within 0.32 m of his owner copy to 10 s, census kinds 1 only, no guest phase change in 81 s, calm
+    frames 44 s / 81 s after on both. 60 quiet moves (49 walkers), no kind 13; walker rows FAIL again (2 s 13/31, 7/10
+    before the ALERT and 6/21 after, worst 17.0 m; 10 s 2/3, worst 36.8 m); the ledge guard walked off again after his
+    10 quiet moves (5.8 m under at 5 s, `held=0`). A user decision (D-A12) is asked: the off-screen scope on, with the
+    evidence against it (far walkers worse than the defaults, the ledge walk-off, the within-60 m band not run).
+  - Blocks: a walker whose two copies walk different routes does not stay with the owner copy after a quiet move (the
+    message's startle stopped him instead), and a guard standing still on the owner is sent walking on the guest by
+    the re-plan. Every quiet move so far was 62-119 m from the guest: the off-screen band within 60 m, `view=on` and
+    the M3 placements were never run with the key. Next: plan a moved walker toward the owner copy (sample position
+    plus speed), and no re-plan while the owner copy stands still; a run where the radio-spot correction applies, plus a
+    guard within 60 m of the guest, an on-screen and an M3 case. `quiet_place` stays off unless named. Open [U]: M4's
+    soft-follow steps (DriveReceipt) send the same set-transform message through the same handler, so they post 0xa6
+    for a stance 1-2 guard too; no census has been read for a startle after drive steps (c66b10b6 had none: no guard
+    within 60 m of the guest). A walking patrol truck's crew seated on the host is corrected on the guest as walkers
+    (`mode=2`, no re-plan; 9.5-12.4 m off 2 s later as the truck drove on): such a correction could wait while the
+    owner copy is seated.
+
+#### 7.32 Enemy round 11 track B: the lrrp log flood, the crew hold, the clock offset, Africa asked (inside `lrrp_follow`; no CFG bit, no wire change)
+
+- **Why**: (1) with `lrrp_follow` on at the defaults in 30010 a crew10 session's host wrote ~1640-1800 `step=host` lines
+  (4 Hz moving, 1 Hz manned) each with a riders line, the guest ~1000 follow lines; horse run `2a41c416`'s host hit
+  `world=log_cap` 1468 times and dropped 1788 Lua lines (its lrrp lines: host 2389, riders 1071, crew 450), a horse
+  `step=unloaded` among them. `86d6045f`: host lrrp 2320 of 2606 Lua lines (host 1097, riders 861, crew 316), guest 2045
+  of 2794 (crew 860, follow 604, riders 374). (2) design 7.30 item 4 (`fc141dc1`). (3) design 7.30 "Seen besides".
+  (4) `86d6045f`'s 25606: the guest's copy led the host's by 1.1-2.4 m along its track for 29 s.
+- **Item 4 cause** [I]: the guest extrapolates the newest sample by `ahead = now - (tick + off) + 100 ms` (cap 400 ms),
+  where `off` was the lowest clock offset ever seen, rising only 2 % a sample. After the offset steps up (a longer
+  one-way delay on the link, or the two world clocks drifting apart), `off` stays low for seconds (a 5 s time constant at
+  10 Hz, 50 s at 1 Hz at rest, longer with the host's 1.3-1.5 s sample gaps) and `ahead` sits at its 400 ms cap: at 8 m/s
+  the copy leads by 2-2.4 m, as seen. No line logs `off` or the delay, so the step itself is not seen [U]; the guest's
+  `raw_clock` held episode (385295930-385299552) came 2 s before the stretch but its `held_ms` exceeds the wall time by
+  only ~85 ms [I] (every run has one at the join). Earlier runs had 0.53-0.63 m p90.
+  Fix: `off` is the lowest of the last second's samples (a lower one at once), so a step up is followed within 2 s.
+  Named only (`lrrp_follow=1`; the land fix): at the defaults the 0.15.3 filter. Only a clean 10 Hz step is tested; with
+  one sample per window `off` follows each sample's delay (about 0.3 m at 13 m/s under 25 ms jitter) [I].
+- **Built** (red c788d65c: 19 of 23 new checks failed, four controls passed; green 20509a91: 201, its 60 s total bound
+  loosened 180 -> 280 and the count-change pattern named in full; land fix red fdbfa39f / green 72e883e0: 203):
+  - The lines (protocol 48): host 2 Hz moving / 5 s manned / 30 s empty / at once on a count change; riders on a set
+    change else 2 s moving / 10 s; crew one line per truck (packed `c=ent:x:z:in,...`) every 2 s (guest 10 s for a truck
+    the host never manned); guest follow 1 Hz moving else 10 s, at once on a mode or count change. The fixture's 3-truck
+    minute: 802 host lrrp lines -> 260 (the crews' first 60 s included).
+  - The crew hold: the host's get-outs (`step=crew_out`) go to `W.crewOutAt[ent]`; world_lrrp.lua wraps `P.ownerOf` (world_place.lua has
+    no room): within 10 s of his get-out a crew member the host owns stays the host's (`step=crew_hold` once). Named only
+    (cfg 1; the land fix): the host's copy stays the brain and host copies do not perceive the guest (`soldier_perceive`
+    off), with no phase or combat exemption, so at the defaults it could leave the guest less seen than 0.15.3 [I]
+    (`fc141dc1`: 25605's crew got out 25-27 m from the guest, 3.2 s after a guest-requested phase rise; 0.15.3 handed
+    them over at +3.4 s). The user's decision (STATUS D-B11). Tested against a mock P only; the splice order
+    (bootstrap_patch.cpp: world_place before world_lrrp), the call site (world_place.lua `P.ownerOf`) and the clock
+    (`W.now`) agree by reading.
+  - `step=origin; role; id` once per id when `pose()` drops an origin read.
+  - The clock offset above.
+- **Item 5** (read-only RE, exe 085c2f82...bb45) [O unless marked]: Fox StrCode32 reproduced (tools in the round's notes:
+  ForceStop 0x8a2177b1, StartTravel 0x385d1071, GetPosition 0x1241ca2d, GetRiderId 0x1596a3f5 match the dispatcher).
+  `TppVehicle2_InstanceCommands` 0x140b2b710: `ForceStop{enabled}` calls the vehicle type's controller vt[0x1f8] / vt[0x200]
+  on the record; the game's own scripts send it only to the player's ridden vehicle (s10050, s10260), so the AI driver is
+  not reached [I] (the runs: ForceStop and `restop` did not stop a crew-driven truck). Two unnamed commands go to the
+  component at *(this+0x1c8): 0x84692f8d reads `speed` into vt[0x78], 0xe51e5c9b (no argument) calls vt[0x80] - a drive
+  speed set / reset is a guess [U]; that component is the one of type id 0x9fcfc16ce0ce the TppVehicle2 init (0x140b2e840)
+  takes from its factory (QueryInterface 0x1416f9550, in the vtables at 0x142440fe0 / 0x1424410e8 beside the vehicle
+  controller code that `partner_vehicle` reads), its own vtable not found statically [U]; neither name is among the 190 command ids of the game's own Lua nor ~10^5 generated
+  names, so Lua cannot send them. Soldier side: `UnsetRelativeVehicle` (0x778af7be) and `StartTravel` are the commands
+  known; neither got a seated far crew out before its own moment (7.30). **No stop that holds and no working get-out
+  command is known.** Next: decompile *(this+0x1c8) vt[0x78] to learn whether speed 0 holds a crew-driven truck, then find
+  its name (or reach it natively, a new contract site).
+
+- **Sessions**: none counted. Session 1 (join + crew10 at 20509a91, no key) waited on the floors (C: 0.0-5.9 GB free,
+  commit free 4.3-14.7 GB) and was void at 22:35 (the audited CTest flake); session 2 (Africa, `lrrp_follow=1`) still
+  waits on the floors. At the defaults only log lines change; the hold and the offset window are named only.
+- **Next**: a named run (`lrrp_follow=1`): the hold near a crew's get-out (only `fc141dc1` of four crew10 runs had a
+  hand-over inside 10 s) and the offset under `-WanSim bad` with an `off` / delay line; horse `2a41c416`'s scenario for the
+  log cut (crew10 runs had 0 `log_cap` at the old code). The hold at the defaults is the user's decision (D-B11). Africa
+  stays off unless named. Item 5: decompile the 0x9fcfc16ce0ce component's vt[0x78] and find the speed command's name.
+
+- **Round 12 B** (enemy round 12 track B; red c3eba73e / green 5a0ffb36, world_vehicle_state_lua_check 208; no CFG bit,
+  no wire change, no native change):
+  - The lead fix ON with `lrrp_follow` (30010 by the gun profile; named any map): the offset window as above at cfg 1 and
+    2 (the land fix had it named-only). The crew hold stays named-only (cfg 1; D-B11).
+  - Lines so a run can show the lead's cause: the guest's `step=off; id; rise_ms; lag0_ms` when a window raises the
+    offset by 100 ms+ (at most once per 2 s per truck; `lag0_ms` against a shadow of the 0.15.3 filter), and `ah; ah0` at
+    the end of `step=follow` (the lead used, the 0.15.3 filter's; ms, capped 400). A lead stretch with `ah0` at 400 and
+    `ah` below it after a `step=off` would show the cause. `step=off` also fires for trucks at rest (one sample per
+    window), so it marks a step only for a moving truck.
+  - Test honesty (review): the 60 s total (<= 280) and the count-change line fail at the old world_lrrp.lua (261432af:
+    802) and pass now; a cut-kinds check `cut <= 235` (the design rates sum to 230, the 30 s empty line 2-3 a minute;
+    the message says 230; old 772). The red step checks said rise 1000; the
+    fixture's step sample first dips the offset 200 ms, so 1200 (said in the green commit).
+  - Runs [O] (all at code 5a0ffb36, `-WanSim bad`, gun profile, research build): `da5ecb1d` (join + crew10, no key):
+    moving truck p90 0.75 m (25605 0.95, 25606 0.57; 187), crews 20-40 s p90 2.55 / 2.48 m, get-outs matched, 0 origin
+    jumps (the host's one `step=origin` line for 25606 at (-1687.5, 976.3), the spot where `86d6045f`'s host stopped
+    streaming it; that that stop was an origin read is [I]), 0 latches / faults / game overs, host lrrp 114 / min
+    (`86d6045f` 331: about a third), guest 149 / min (293: about half), 0 `log_cap` (`86d6045f` 0 too: not proof of the
+    cut); not gate rows, the D-B10 limits as in 0.15.3: 25605's pairing defer 61-64 s (jump at exactly `near_m=400.0`;
+    seated crews p90 465 m apart), 25602/3/4/7's far rest crews 2 against 0 for about 22 s (24 unseats); its max 18.76 m is the gate's interpolation across the host's own 25605 moving ~25 m off and
+    back within 1.6 s (643-757 m from the guest's player) [U cause]. `67f2b138` (`lrrp_follow=1`): p90 0.64 m, crews p90
+    2.56-4.76 m, 2 `crew_hold` lines and no hand-over due (the hold changed nothing [I]); notice toward the guest is
+    untested (the join scenario's `enemy ignore` restricts 25605's crew's notice on both copies, 25606's crew got out
+    ~2.4 km away: 0 against 0 by construction). `8be4db27` (Africa,
+    `lrrp_follow=1`): p90 0.52 m, crews p90 1.77 / 0.14 m, the run in ALERT from before the pairing, `guard_fell` 3 (Masa
+    guards, no crew) [I] not from the trucks. No `step=off` (a rise of 100 ms+) fell on a moving truck; three moving
+    follow lines had ah0 - ah of 50 ms+ (`da5ecb1d` 25605 191 / 125 and 180 / 125, `67f2b138` 25606 177 / 115: rises
+    under the threshold), the rest under 50 ms: the lead fix is on without a regression and without a shown benefit
+    (p90 0.75 m against 0.53-1.13 m in earlier no-key runs), its effect and cause [I].
+  - Next: an offset step on a moving truck (the cause); a calm Africa run and a `lrrp_follow=0` control for `guard_fell`
+    (D-B12); the host-side truck excursion of `da5ecb1d`; item 5.
 
 #### 7.33 Enemy round 11 track C: the hook's lease, the glide, the release watch, the host copy's next path point (lab key `act_plan`, native only; with `soldier_act`)
 

@@ -2632,6 +2632,37 @@ quiet (` 1` on `WORLD_WARP_V1`, section 39).
   the owner copy: the host's last sample of the guard moved on by its speed for at most 400 ms) and `oage_ms` (that
   sample's age).
 - Contract: no new site (the stance nibble is the census's `rec_stance`, the plan calls are act_plan's sites).
+- Round 12 (design 7.31): with `quiet_place` the native asks for the quiet move for every correction (` 1` or not); the
+  guest's `world_place=warp` line adds `; view=on|off` after `quiet=` (the Lua's flag). Native `HostWarpReceipt` does the
+  same for the host's M3 placements: reply `leaf="quiet"`; `world_place=host_warp` prints `leaf=quiet` and ends with
+  `; quiet=<why>` when asked; the hook logs `soldier_act_quiet=on; rest=on; role=<host|guest>`. Lua: a `src=place`
+  read-back carries `dho_m` / `oage_ms` as `src=quiet` does (log only; at the defaults too). No new op, note or site.
+
+## 48. Enemy round 11 track B: the lrrp lines cut, the crew hold, the clock offset (no new op, CFG bit or contract site; design 7.32)
+
+No wire change. Inside `lrrp_follow` (on in 30010 at the defaults, named 1 any map), Lua only (world_lrrp.lua):
+
+- Lines (the log flood: horse run `2a41c416`'s host lost 1788 Lua lines to `world=log_cap`): the host's `step=host` 2 Hz
+  while its truck moves (was 4 Hz), every 5 s manned at rest (was 1 s), every 30 s empty (was 5 s), and at once when its
+  rider count changes; `step=riders` (both roles) when the rider set changes, else every 2 s while the truck moves and
+  every 10 s otherwise (was with every host / follow line); `step=crew` one line per truck, up to 4 members a line,
+  `step=crew; id; rl; c=ent:x:z:in,...` (in 1 seated; was one line per member), every 2 s for 60 s after a rider-count
+  change (was 1 s; on the guest every 10 s for a truck the host never had manned); the guest's `step=follow` once a second
+  while the host's truck moves, else every 10 s (was 1 s manned, 5 s empty), and at once when its mode or a rider count
+  changes.
+- New lines: `step=origin; role; id` once per id when a pose read at x = 0, z = 0 is dropped; the host's
+  `step=crew_out; id; ent` at each get-out it sees; `step=crew_hold; ent; after_ms; dh_m; dq_m` once per get-out when the
+  hold answers the owner decision.
+- The crew hold (host, M3 `W.ownerOn`; only with `lrrp_follow` named, cfg 1): for 10 s after a crew member's get-out on the host (`W.crewOutAt[ent]`), while the
+  host owns him, `P.ownerOf` answers 0 (no OWNER 73 hand-over to the guest); one the guest already owns is left to the
+  owner decision; after 10 s the owner decision as before.
+- The guest's clock offset per truck (LRRP_FAST 93's sender tick): the lowest of the last second's samples, a lower one at
+  once (was the lowest ever, rising 2 % a sample). Round 11's land fix had it named-only; enemy round 12 B: whenever
+  `lrrp_follow` is on, the defaults too (30010 by the gun profile). The crew hold stays named-only.
+- Enemy round 12 B lines (guest, so a run can show the lead's cause): `step=off; id; rise_ms; lag0_ms` when a window
+  raises the offset by 100 ms or more (at most once per 2 s per truck; `lag0_ms` = how far the 0.15.3 filter, kept as a
+  shadow for the lines, lags the new offset); `step=follow` carries `ah; ah0` at its end (the lead used and the 0.15.3
+  filter's, ms, each capped at 400).
 
 ## 49. Enemy round 11 track C: the hook's lease, the glide, the release watch, the host copy's next path point (lab key `act_plan`, native only; with `soldier_act`; design 7.33)
 

@@ -94,13 +94,27 @@ local function resetHold()
 end
 -- MGO's down rules drain an interrupted revive instead of restarting it: the
 -- same reviver resuming on the same downed generation keeps what is left.
+-- M2i (lab 107977cb (a): a held revive about 3 s in was reset when the victim's status came 517 ms late under -WanSim
+-- bad): a late status is no release by the player. While a record is past FRESH, or the actor's own view of the
+-- target was (target generation 0), the hold drains as after a brief release, and that drain is kept through the late
+-- spell and LATE_MS after it (the reviver's E gate re-arms); other releases keep it for one tick as before.
+local LATE_MS=1000
 local function releaseHold(now)
   local decay
   if D.holdAt and D.progress > 0 and D.target ~= 0 then
     decay={target=D.target,generation=D.holdGeneration,actor=D.holdActor,progress=D.progress,at=now}
-  end
+  elseif D.decay and D.lateAt and now >= D.lateAt and now - D.lateAt <= LATE_MS then decay=D.decay end
   resetHold()
   D.decay=decay
+end
+local function late(r,now) return r and r.ready and now >= r.at and now - r.at > FRESH end
+-- fixland3 (review): no game ran the drain, so it is on only with world_horse_cargo named (lab); at the defaults
+-- every revive keeps the reset on a late status as before.
+local function lateDrain()
+  local HC=W.horseCargo
+  if type(HC) ~= "table" or type(HC.keyOn) ~= "function" then return false end
+  local ok,yes=pcall(HC.keyOn)
+  return ok and yes == true
 end
 local function resumedProgress(now,targetRole,target,actor)
   local d=D.decay
@@ -390,7 +404,15 @@ end
 local function hostTick(now)
   local a,b=D.records[1],D.records[2]
   local pairedClock=D.sleepClock and D.sleepClock.Tick(now) or false
-  if not fresh(a, now) or not fresh(b, now) then resetHold(); return end
+  if not fresh(a, now) or not fresh(b, now) then
+    if (fresh(a, now) or late(a, now)) and (fresh(b, now) or late(b, now)) and lateDrain() then
+      if D.holdAt and D.progress > 0 then
+        log(fmt("step=revive_late;target=%d;progress=%d;age_ms=%.0f", D.target, D.progress, math.max(now - a.at, now - b.at)))
+      end
+      D.lateAt=now; releaseHold(now)
+    else resetHold() end
+    return
+  end
   if D.pendingGrant then
     local p=D.pendingGrant
     local target=D.records[p.role]
@@ -420,6 +442,7 @@ local function hostTick(now)
   if targetRole == 0 then resetHold(); return end
   local target,actor=D.records[targetRole],D.records[3 - targetRole]
   if actor.down or not actor.held or actor.targetGeneration ~= target.generation or not distance(actor, target) then
+    if not actor.down and actor.targetGeneration == 0 and lateDrain() then D.lateAt=now end
     -- M2h: a held revive the host does not count (the actor's target generation or the 3 m reach), once a second.
     if actor.held and not actor.down and now >= (D.waitHostAt or 0) then
       D.waitHostAt=now + 1000
@@ -430,6 +453,9 @@ local function hostTick(now)
   end
   if D.target ~= targetRole or D.holdGeneration ~= target.generation or D.holdActor ~= actor.generation then
     local resumed=resumedProgress(now,targetRole,target,actor)
+    if resumed > 0 and D.lateAt and now - D.lateAt <= LATE_MS + 100 then
+      log(fmt("step=revive_resume;target=%d;progress=%d", targetRole, floor(resumed)))
+    end
     D.decay=nil
     D.holdAt,D.holdGeneration,D.holdActor=now - resumed,target.generation,actor.generation
   end

@@ -53,5 +53,9 @@ struct Take {
     std::uint32_t report_dropped;   // > 0: log the summary with this count before the line
 };
 Take TakeToken(Bucket& bucket, std::uint32_t capacity, std::uint32_t refill_per_s, std::uint64_t now_ms) noexcept;
+// Horse step S2 (play b228d163: 441 world=log_cap lines on the host under the default lrrp_follow flood took the horse's
+// first_move / stall lines): a formatted world line of the horse modules ("world_lua=event=horse_..." or
+// "world_lua=horse_..."), which the world LOG receipt admits from a bucket of its own.
+bool HorseLine(const char* line) noexcept;
 
 } // namespace mgscoop::log_budget
