@@ -1,6 +1,6 @@
 ## November 5, 2026: enemy flip B - in Afghanistan free roam the patrol trucks and their crews now drive and stop where the host's do: `lrrp_follow` is on with the gun profile in 30010 only (user decision D-B10, with its accepted limits); Africa and Mother Base stay off unless named, and a named 0 is the off switch (`wp/enemy-lrrp`, not pushed)
 
-Design 7.28 (flip note), protocol section 45. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+Design 7.28 (flip note), protocol section 38 (the receipt-2 wording). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
 After merging dev 9c82692d (912f900e): red 1db52182 (`lab_config_tests` check 2000 and `world_vehicle_state_lua_check`
 "defaults (receipt 2): on in 30010" fail) / green e1bf27af. One hidden play session with no key named at e1bf27af (build
 0.15.2+e1bf27a): `139a1440` (`-WanSim bad`, the gun profile, research build, afgh-ledge; the parts join,
@@ -17,33 +17,42 @@ Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\139a14400a00447bb
 - **Gate rows** (`139a1440`, no key named) [O]:
   - PASS `event=lrrp; step=on` on both roles (host and guest).
   - PASS moving truck place error p50 0.14 / p90 0.53 / max 2.12 m (317 samples; 25605 p90 0.54, 25606 p90 0.51 m).
+    These count only the guest's `mode=follow` samples. Counting every sample while the host's truck moved gives 348,
+    p90 1.33 m, max 452.9 m, all of the extra from 25605 during its 60 s pairing deferral (the accepted limit below).
   - PASS crews 20-40 s after the host's get-out (18 samples per guard): p90 1.79 / 2.05 m (25605's two), 4.83 / 4.76 m
     (25606's two; both copies stood still at a constant offset).
   - PASS get-outs and boardings matched for the 2 manned trucks: 25605 2 -> 1 -> 0 and 25606 2 -> 0 -> 1 -> 2 on both
     copies; the guest's 25605 get-outs came 0.86 / 4.96 s before the host's (the guest's driver ran on to step 7 on its
     own AI, was set back to 0, then to 7 [I]), 25606's get-out 0.31 s after; 0 trucks moving with the crews differing.
-  - PASS 0 latches / faults / game overs (`enemy_div_report`: soldier_warp disabled 0, latched 0, fault 0, game_over 0).
-    Its combined row fails on one host `drive_sink` (guard 1926520947, -3.52 m, in the ALERT part: an outpost guard, not
-    a crew member).
-  - PASS guest place error p50 0.72 / p90 1.95 m (465 samples).
+  - PASS 0 latches / faults / game overs (soldier_warp disabled 0, latched 0, fault 0, overflow 0, game_over 0).
+    `enemy_div_report`'s combined row ("0 latches, faults, game overs ... under the ground") is FAIL (drive_sank 1): one
+    host `drive_sink` (guard 1926520947, -3.52 m for 2035 ms, logged after the ALERT submit: an outpost guard, not a
+    crew member). The earlier `lrrp_follow` runs had 0 `drive_sink`; other no-key dev runs have had one (`ef9584e4`).
+  - PASS guest place error p50 0.72 / p90 1.95 m, max 40.1 m (465 samples; from the report, not recomputed).
 - **Known-limit rows** (information; accepted in D-B10) [O]:
   - The pairing deferral: 25605's guest copy was 364 m from the guest's player at the pairing, so it stayed the guest's
     own for 60.2 s (30 `defer` lines) until the jump at near_m 400.0; its two riders were 400-450 m off the host's then
-    (41 samples each over 8 m). After it every seated rider p90 0.56-0.86 m, max 7.36 m, 0 over 8 m.
+    (41 samples each over 8 m). After it every seated rider p90 0.56-0.86 m (a second method: 0.78-0.87 m), max 7.36 m,
+    0 over 8 m.
   - Unseated crews of unmanned trucks: 25602/3/4/7 had 0 riders on the host's copy and 2 each on the guest's; the guest
     unseated those 8 guards at the pairing (24 `UnsetRelativeVehicle`, 3 tries each); none of the 4 trucks moved.
   - Re-boarding: 25606's crew boarded again on both copies (host 0 -> 1 -> 2 59.5 / 63.0 s after its get-out), the guest's
     4.40 / 6.17 s later. 26 `StartTravel` sets, 6 held (`why=track|wait`); the guest on the host's step after a host change
-    p50 2.0 / p90 5.4 s (24 changes; the max, 200 s, is a driver's host step the guest never read back).
+    p50 2.0 / p90 5.4 s (24 changes; a second count gives p50 2.0 / p90 6.4 s over 20). The max, 200 s, is a measurement
+    artifact: guard 2305481811's host step 0 at t=375333213 was a step the guest was already on.
   - Not a gate part: `enemy-integ-carry.txt` failed at its first `placebehind` (step 6 of 40, "[host] viewer landing has
-    no new position sample", the harness step `c784a5a7`'s carry part failed at too); no carry ran.
+    no new position sample"); no carry ran. `c784a5a7`'s carry part failed with the same message later, at step 29 of
+    40 (its second `placebehind`, after its carry had run).
   - Report rows that fail as in the earlier no-key runs (not LRRP guards): corrections 15/20 applied (4 unrealized /
     relayed, 1 backoff); M3 107/123 host placements applied (16 unrealized refusals of outpost guards in the ALERT part);
     M3 host place error p50 1.49 / p90 7.97 m (`a30a0b07`: 19/47, 106/112, 1.96 / 7.17 m).
   - 0 `log_cap`; `step=cost` avg <= 0.144 ms per tick; partner_tick median 38 / 38 Hz, frame p95 30.3 / 29.4 ms
     (host / guest; `a30a0b07` 30.3 / 29.4 ms).
-  - Frames: the first frames of both copies in gameplay (no modal); no matched crew pair (the host's binoculars face
-    rock in k-6..k-8, as in `ffd0248d`); the guest's k-6 shows two soldiers on foot at the stop.
+  - Frames: the first frames of both copies in gameplay (no modal). A matched truck pair: host-k-5 and guest-k-5 show
+    the same truck, headlights on, at the same spot by the barricades. No matched crew pair (the host's binoculars face
+    rock in k-6..k-8, as in `ffd0248d`); the guest's k-6 shows two soldiers on foot at a signpost, no truck in frame. In
+    the ALERT part host-al-3 is gameplay with enemy markers; guest-al-3 is gameplay with the camera against a wooden
+    surface (no world in view).
 - **Checks**: `lab_config_tests` 2148 pass, `world_vehicle_state_lua_check` 169 pass; full build and CTest 355/355 at
   e1bf27af; every contract `--check` as round 10 (known base failures only; horse_drive and vehicle_controller pass with
   `--executable`).
