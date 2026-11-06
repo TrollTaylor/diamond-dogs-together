@@ -519,6 +519,7 @@ int main() {
         Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unknown, "rest: no view yet");
         r.at = 9000;
         r.realized = r.listed = true;
+        r.stance = 1;  // round 11: the normal stance (census st=1)
         r.speed_mps = 0.1f;
         r.pos[0] = 400.0f; r.pos[1] = 270.0f; r.pos[2] = 2130.0f;
         Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: standing, listed, no path: quiet");
@@ -530,15 +531,49 @@ int main() {
         Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unrealized, "rest: unrealized");
         r.realized = true;
         r.speed_mps = 1.4f;
-        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::moving, "rest: walking: the message");
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::walk, "rest: walking: quiet, then re-planned (round 11)");
         r.speed_mps = 0.1f;
         r.has = true;
         r.end[0] = 400.5f; r.end[1] = 270.0f; r.end[2] = 2130.5f;
         Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: at the end of his path: quiet");
         r.end[0] = 420.0f; r.end[2] = 2140.0f;
-        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::path, "rest: a path ahead of him: the message");
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::walk, "rest: a path ahead of him: quiet, then re-planned");
         r.end[0] = 411.0f; r.end[2] = 2130.5f;
         Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: a path that ends at the target: quiet");
+        // Enemy round 11 track A (design 7.31): the handler 0x1360f90 posts action 0xa6 naming this PC's player for a
+        // stance 1-2 guard (the normal one) and rotates a stance 3-4 pose; the quiet warp does neither, so a stance 3-4
+        // guard keeps the message, an unknown stance too.
+        r.has = false;
+        r.stance = 3;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::stance, "rest: stance 3: the message (its rotated pose)");
+        r.stance = 4;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::stance, "rest: stance 4: the message");
+        r.stance = 0xff;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::stance, "rest: stance unread: the message");
+        r.stance = 2;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: stance 2 at rest: quiet");
+        r.stance = 0;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: stance 0 at rest: quiet");
+        r.stance = 1;
+        Check(std::strcmp(sa::QuietWhyName(sa::QuietWhy::walk), "walk") == 0 &&
+                  std::strcmp(sa::QuietWhyName(sa::QuietWhy::stance), "stance") == 0,
+              "rest: the round 11 reason names");
+        // The re-plan after a quiet move of a walker: only his own brain's walk (dest mode 1, the request started, no
+        // request-manager handle), his brain's live planner slot cancelled first; a slot busy with another request: none.
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0xdf31ba77279eull, 0x0001) == sa::QuietPlan::cancel_then_plan,
+              "quiet plan: a walker whose brain holds a live plan: cancel it, then plan from the new spot");
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0, 0xffff) == sa::QuietPlan::plan, "quiet plan: an empty slot: plan");
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, sa::kMoveHash, 0x0003) == sa::QuietPlan::plan,
+              "quiet plan: our own move type in the slot: plan (the planner replaces it)");
+        Check(sa::QuietPlanChoose(0, 0xffff, 0x006c, 0, 0xffff) == sa::QuietPlan::none, "quiet plan: standing (dest mode 0): none");
+        Check(sa::QuietPlanChoose(2, 0xffff, 0x006e, 0, 0xffff) == sa::QuietPlan::none, "quiet plan: a route node walk: none");
+        Check(sa::QuietPlanChoose(1, 0x0004, 0x006e, 0, 0xffff) == sa::QuietPlan::none, "quiet plan: a request-manager handle: none");
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006c, 0, 0xffff) == sa::QuietPlan::none, "quiet plan: the walk not started: none");
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0x1234ull, 0xffff) == sa::QuietPlan::busy,
+              "quiet plan: another request type with no handle: busy");
+        Check(std::strcmp(sa::QuietPlanName(sa::QuietPlan::cancel_then_plan), "cancel_plan") == 0 &&
+                  std::strcmp(sa::QuietPlanName(sa::QuietPlan::none), "none") == 0,
+              "quiet plan: the step names");
         Check(std::strcmp(sa::QuietWhyName(sa::QuietWhy::moving), "moving") == 0 &&
                   std::strcmp(sa::QuietWhyName(sa::QuietWhy::unlisted), "unlisted") == 0 &&
                   std::strcmp(sa::QuietWhyName(sa::QuietWhy::ok), "ok") == 0,

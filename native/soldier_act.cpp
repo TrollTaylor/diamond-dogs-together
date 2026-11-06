@@ -369,7 +369,20 @@ const char* QuietWhyName(QuietWhy why) noexcept {
     case QuietWhy::unlisted: return "unlisted";
     case QuietWhy::moving: return "moving";
     case QuietWhy::path: return "path";
+    case QuietWhy::walk: return "?";
+    case QuietWhy::stance: return "?";
     }
+    return "?";
+}
+
+QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle) noexcept {
+    (void)dest_mode; (void)r19c; (void)r19e; (void)slot_hash; (void)slot_handle;
+    return QuietPlan::none;  // red stub
+}
+
+const char* QuietPlanName(QuietPlan step) noexcept {
+    (void)step;
     return "?";
 }
 
@@ -1724,7 +1737,8 @@ QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept {
 }
 void SetQuietRest(bool on) noexcept { g_restOn.store(on); }
 
-bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept {
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan) noexcept {
+    (void)replan;
     if (!g_installed.load() || idx >= kMaxSoldiers) return false;
     AcquireSRWLockExclusive(&g_quietLock);
     g_quiet[idx] = QuietMove{true, go, seq, {pos[0], pos[1], pos[2]}, yaw};
