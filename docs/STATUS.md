@@ -1,4 +1,4 @@
-## November 6, 2026: enemy round 12 track C - two runs of the far mirror's round 11 code: no take warp through the hook any more, coverage, plans, frame time, faults and a matched walking frame pair pass, but the glide leaves far-taken walkers 15-47 m off for 7-18 s, so the calm place-error row fails; a guard first noticed a player at 36-42 m (in caution), well inside the 80 m R; nothing turned on (`soldier_act` and `act_plan` stay off unless named; `wp/enemy-fm1plan`, not pushed)
+## November 6, 2026: enemy round 12 track C - two runs of the far mirror's round 11 code: no take warp through the hook any more, coverage, plans, frame time, faults and matched walking frame pairs pass, but the glide leaves far-taken walkers 15-47 m off for 7-18 s, so the calm place-error row fails; a guard first went for the host at 54-59 m in caution (1.5 x d = 81-88 m, beyond the 80 m R); the guest took an LRRP crew fighting in another CP's ALERT as puppets, so the calm limit now ends on any CP's EVASION / ALERT (test only); nothing turned on (`soldier_act` and `act_plan` stay off unless named; `wp/enemy-fm1plan`, not pushed)
 
 Design 7.33 (round 12), protocol section 49. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
 
@@ -21,32 +21,63 @@ Design 7.33 (round 12), protocol section 49. Markers: [O] seen in a log line or 
     5.11 (`516e3ef7`: 15 0.44 / 1.80, 17 0.25 / 3.56, 18 0.89 / 7.05).
   - >= 3 calm walkers mirrored >= 80 % of their walking time: PASS in both (15 / 17 / 18 100 / 99 / 99 % and 100 / 100 /
     99 %; 246 60 / 69 %), without the commanded off window and the 15 s after the shot as 7.33 defines it.
-  - 10 m+ jumps <= 1 a run: `soldier_act_warp15` take lines 0 in both. Census: `516e3ef7` 1 in calm (246, 56.5 m at
-    pairing, not a puppet: the M-series off-screen place correction of 0.15.3); `4735fee5` 1 in calm, a puppet's: 246
-    moved 39.4 m onto his owner copy's spot 475 ms after his glide take (39.3 m) with no warp15 or place line, so
-    something besides the unpack's 15 m warp moved him [U]. The others (4 / 3) were in the notice tail (ALERT, or
-    non-puppets near the walking host).
+  - 10 m+ jumps <= 1 a run: `soldier_act_warp15` take lines 0 in both (one re-apply line, below). Census: `516e3ef7` 1 in
+    calm (246, 56.5 m at pairing, not a puppet: the M-series off-screen place correction of 0.15.3) and 4 after the
+    tail's ALERT, one of them a far-mirror puppet's (176, 19.4 m, a `soldier_act_warp15` re-apply at 407832211, first=0):
+    FAIL by the ALERT count. `4735fee5` 4 before the ALERT (calm / caution): FAIL. One is a puppet's - 246 moved 39.3 m
+    onto his owner copy's spot 335 ms after his glide take: the M-series off-screen correction (guest `place_div` seq=10,
+    39.3 m, view=off, fix=1, then `world_place=warp kind=3` and `event=place kind=correct result=applied` err 0.01 at
+    411340630, 141 ms before the census sample), the same 0.15.3 mechanism as `516e3ef7`'s; three (177 16.5 m, 18 10.1
+    m, 176 18.4 m) are non-puppet M-series corrections in the caution tail (the review's count).
   - 0 released guards standing > 5 s: 4 / 4 by the round 11 rule; none outside the commanded mirror-off window (guard
     18, 19.8 / 20.4 s) and the notice tail's ALERT (guards working as today).
   - plans with the path end within 1 m: 94.1 / 91.3 % PASS. Capture-free frame p95: + 0.45 / + 0.51 ms against the off
-    part PASS (4 / 8 off samples). 0 faults / latches / game overs PASS; no puppet started a ChangePhase.
-  - a matched frame pair of a mirrored guard walking: `4735fee5` w18-0-a - both screens show a soldier by the same fence
-    posts at 186 m (the host's copy marked blue, the guest's dark), both copies walking 0.97 m/s, 0.78 m apart, 0 ms
-    apart by the census (at that range the frame cannot show the gap). In `516e3ef7` none: the guest frames of w15-1 /
-    w15-2 show no figure I can make out where the host's shows guard 15.
-  - calm first-notice distance: in `4735fee5` the host walked from spot A toward walker 15; guard 177's action changed
-    (ka 1 -> 8) at 40 m and the CP went to ALERT at 36.3 m (guard 176 reacted at 42 m); but the CP was in CAUTION then
-    (the guest's own phase request within 0.5 s of the commanded SNEAK), so this is a caution first notice. 1.5 x 42 m = 63
-    m <= 80 m: the 80 m R holds for it; a calm notice is no farther [I]. In `516e3ef7` the tail's teleport landed 10.6 m
-    from guard 177 (no range).
+    part PASS (4 / 8 off samples). 0 faults / latches / game overs PASS.
+  - no ChangePhase started by a puppet: [U], not observable - world_sync.lua attributes no ChangePhase (every one logs
+    att=none). In `4735fee5` the guest raised CP 557 to caution at 411532543, 0.67 s after 10 fresh takes (411531852-873)
+    and 15 ms after an LRRP 25605 tset, and CP 571 at 411527482 (no puppet live, 14 ms after another 25605 tset); the
+    cause of either is [U].
+  - `enemy_div_report` (not a 7.33 row): `4735fee5` FAILS "place error p90 <= 5 m" at 6.2 m (48 samples, max 9.7 m,
+    place_err lines from 411553969 on, the caution / ALERT tail); n/a in `516e3ef7`. Read-backs held 64 / 71 (0 under /
+    above), corrections 44 / 44 and 43 / 43, crew get-outs within about 1 m on both copies; one crew get-out spot 16.8 m
+    off on the guest was corrected off screen (`place_div` why=pair).
+  - a matched frame pair of a mirrored guard walking: PASS in both. `4735fee5` w18-0-a - both screens show a soldier by
+    the same fence posts at 186 m (the host's copy marked blue, the guest's dark), both copies walking 0.97 m/s, 0.78 m
+    apart, 0 ms apart by the census (at that range the frame cannot show the gap). `516e3ef7` w15-3-a (found by the
+    review; I looked at both frames): a soldier by the same fence posts on both screens (blue-marked on the host, dark
+    on the guest) and a second one behind the same tree; the census has guard 15 walking 0.94 / 0.96 m/s, 0.91 m apart;
+    w18-2-a is 4735fee5's fence spot with a soldier there on both (host copy 0.8 m/s, the puppet 2.5 m/s catching up,
+    0.2-0.4 m apart). The w15-1 / w15-2 guest frames show no figure I can make out. w15-3-b and 4735fee5 w18-0-b are
+    still scoped.
+  - calm first-notice distance: FAIL (corrected by the review). In `4735fee5` the host walked from spot A toward walker
+    15 with the CP in CAUTION (the guest's own phase request within 0.5 s of the commanded SNEAK). The first notice is
+    not the ALERT at 36.3 m: at 411565339 (host census) guard 177's destination became the host's own spot (0.08 m flat
+    from the host's debug position) at d = 54.3 m, and he ran to it at 2.7-8.8 m/s; guard 176 got the same destination at
+    411567185 at 58.7 m; both 6-8 s before the ALERT. 1.5 x 54.3-58.7 = 81-88 m > the 80 m caution R (M.R[1]): the R
+    check fails on this evidence (R(caution) needs >= 88 m). 176 / 177 are LRRP crew whose own CP stayed calm; who raised
+    CP 557's ALERT is [I]. In `516e3ef7` the tail's teleport landed 10.6 m from guard 177 (no range).
+  - D-FM1 (a) "in alert, no puppets": FAIL in both (found by the review). The phase lever read each guard's own CP: the
+    LRRP crew 176 / 177 (own CP calm, in the ALERT action ka 18 on the host, inside the 261 m ALERT R) were taken as
+    SetPuppet + SetRestrictNotice puppets after CP 557's ALERT (`516e3ef7` from 407817639 / 407818482; `4735fee5` 177 at
+    411620141, 176 at 411630295, at 97-117 m), and `516e3ef7` hook-warped 176 19.4 m. Fixed in Lua (red 7d2706f2 / green
+    ded0c8da): with the calm limit any CP at EVASION / ALERT on this PC releases every puppet and stops takes
+    (why=phase_limit). Tested only; no run of it.
 - **Built** (red e91e7c71 / green 84106b64, Lua only, off unless `soldier_act` is named): FM1 revision 7 - a PC with the
-  far mirror announces ACT_CAPS {caps, 7}, and a partner's older revision mirrors nothing (why=peer), the version gate
-  for `act_plan` by default (D-FM2). Scenario: the notice tail (f41519ce, then 4c9a6623). Full build + CTest 355/355 at
+  far mirror announces ACT_CAPS {caps, 7}, and a partner's older revision (0.15.3's 6) mirrors nothing: that host sends
+  nothing, that guest releases with why=peer. 84106b64's message overstates it: the revision is 7 whatever `act_plan`
+  is, so a copy of this build with `soldier_act` named and `act_plan` not still pairs, receives the corner targets and
+  its takes wait on `LegMatch` (leg_wait); name both on both copies (D-FM2 turns them on together). The calm limit on
+  any CP's ALERT (red 7d2706f2 / green ded0c8da, world_align_lua_check 474). Scenario: the notice tail (f41519ce, then 4c9a6623). Full build + CTest 355/355 at
   7f6562ea and at 4c9a6623; every contract `--check` as before (known base only; horse_drive / vehicle_controller with
   `--executable`).
 - **Blocks the flip**: (1) far takes - copies 15-47 m apart at a take do not meet on their own (round 9), so either the
-  glide's 7-18 s gap or a take warp: the user's decision (design 7.33 round 12); (2) a copy ahead of the owner copy
-  waits at the leg's end; (3) the 39.4 m take move with no warp line [U] and the copy standing with a live plan [U].
+  glide's 7-18 s gap or a take warp: the user's decision (design 7.33 round 12). The take policy alone does not pass the
+  place row: without the 20 s after each take `4735fee5`'s 15 / 18 pass (p90 1.22 / 1.78) but `516e3ef7`'s 18 stays at
+  7.05 m and 17 fails in both (3.56 / 5.11, the ahead case); and an off-screen take warp already happened through the
+  M-series (246, 39.3 m, view=off). (2) a copy ahead of the owner copy waits at the leg's end; (3) guard 18's copy
+  standing with a live plan in `516e3ef7` [U]; (4) the caution R: a first notice at 54-59 m needs R >= 88 m (now 80);
+  (5) the jump row (4 in calm / caution in `4735fee5`, M-series corrections); (6) the calm limit on any CP's ALERT is
+  tested but not run.
 
 ## November 5, 2026: enemy round 11 track C - the far mirror: the hook keeps a puppet through one late resend, a walker it takes far off glides instead of jumping, a released guard whose brain re-targets with no path is planned again, and the host sends its copy's next path point; built and unit-tested, no hidden run (the queue waited on the machine's floors); `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 

@@ -1528,9 +1528,11 @@ only); [I] inferred; [U] unknown.
     frame p95 + 0.45 / + 0.51 ms, 0 faults, a matched frame pair of guard 18 walking (`4735fee5` w18-0-a). The place
     error p90 failed for every walker (6.8-32.2 m): a far take leaves the copy 15-47 m behind for 7-18 s while the
     catch-up gait runs him (15, 18, 246), or AHEAD of the owner copy, where the catch-up cannot slow him, so he walks to
-    the leg's end and waits there for the owner copy (17, 26.9 m, then re-glides of 15-24 m). Also: 246 moved 39.4 m
-    onto his owner copy's spot 475 ms after a glide take with no warp15 or place line [U]; guard 18's copy stood about 9
-    s with a live plan (ka 1, a follower path, gait 1 -> 3, planned three times from one spot) in `516e3ef7` [U].
+    the leg's end and waits there for the owner copy (17, 26.9 m, then re-glides of 15-24 m). Also: 246's 39.3 m move
+    onto his owner copy's spot 335 ms after a glide take (`4735fee5`) was the M-series off-screen correction (guest
+    `place_div` seq=10 view=off fix=1, `world_place=warp kind=3`, `event=place kind=correct result=applied` at
+    411340630), not an unknown; guard 18's copy stood about 9 s with a live plan (ka 1, a follower path, gait 1 -> 3,
+    planned three times from one spot) in `516e3ef7` [U].
   - The two literal rows conflict for copies that start far apart: the place error needs the copy on the owner's spot
     soon after the take, the jump row forbids the move that would put him there, and copies 17-45 m apart do not meet on
     their own (round 9, `226fc789`). The M-series already moves such copies off screen ("off screen a hop is not seen",
@@ -1538,15 +1540,34 @@ only); [I] inferred; [U] unknown.
     call: the glide's run / wait (now), a take warp only while the copy's and the owner copy's spots are outside the
     guest's view cone (scope included; the jump row then counts seen jumps), or the place error judged from the end of a
     take's catch-up.
-  - Notice: in `4735fee5` the host walked from spot A toward walker 15; the CP went to ALERT with guard 177 at 36.3 m
-    (his action changed at 40 m; guard 176 reacted at 42 m) - in CAUTION (the guest requested it within 0.5 s of the
-    commanded SNEAK). 1.5 x 42 = 63 m <= the 80 m R; a calm notice is no farther [I].
-  - Built: FM1 revision 7 (ACT_CAPS {caps, 7}; an older revision mirrors nothing, why=peer), the version gate for
-    `act_plan` by default (D-FM2); off unless `soldier_act` is named. The notice tail of `enemy-mirror10b-calm.txt`.
+  - Notice (corrected by the review): in `4735fee5` the host walked from spot A toward walker 15 in CAUTION (the guest
+    requested it within 0.5 s of the commanded SNEAK). The first notice came 6-8 s before the ALERT at 36.3 m: guard
+    177's destination became the host's own spot at d = 54.3 m (host census, 411565339; he ran to it at 2.7-8.8 m/s),
+    guard 176's at 58.7 m (411567185). 1.5 x 54.3-58.7 = 81-88 m > the 80 m caution R (M.R[1]): R(caution) needs >= 88
+    m before a flip. Who raised CP 557's ALERT is [I] (176 / 177 are LRRP crew whose own CP stayed calm).
+  - The review's other rows: D-FM1 (a) failed in both runs - the phase lever read each guard's own CP, so the LRRP crew
+    176 / 177 (own CP calm, fighting in CP 557's ALERT, ka 18 on the host) were taken as restricted-notice puppets at
+    97-117 m after the ALERT, and `516e3ef7` re-applied 176 with a 19.4 m warp15 (407832211). "No puppet started a
+    ChangePhase" is [U]: world_sync.lua attributes no ChangePhase (att=none); the guest's CP 557 caution at 411532543
+    came 0.67 s after 10 takes and 15 ms after an LRRP tset, its CP 571 caution at 411527482 with no puppet live.
+    Jumps of 10 m+: `4735fee5` has 4 before the ALERT (246's M-series correction above and three non-puppet M-series
+    corrections in the caution tail), not 1. `enemy_div_report` fails "place error p90 <= 5 m" in `4735fee5` (6.2 m,
+    48 samples, the caution / ALERT tail). `516e3ef7` has matched walking pairs too (w15-3-a, guard 15 0.91 m apart;
+    w18-2-a). The take policy alone cannot pass the place row: without the 20 s after each take `516e3ef7`'s 18 stays
+    at p90 7.05 m and 17 fails in both (3.56 / 5.11, the ahead case).
+  - The calm limit on any CP (round 12 review fix, red 7d2706f2 / green ded0c8da, Lua only): with soldier_act's calm
+    limit (caps bit 2) any CP at EVASION / ALERT on this PC releases every puppet and stops takes (why=phase_limit),
+    so a guard whose own CP stays calm is never a puppet in an alert. Tested (world_align_lua_check), not run.
+  - Built: FM1 revision 7 (ACT_CAPS {caps, 7}; an older revision mirrors nothing, why=peer), the version gate against
+    older builds (0.15.3's revision 6) for `act_plan` by default (D-FM2); off unless `soldier_act` is named. The
+    revision is 7 whatever `act_plan` is: a copy of this build with `soldier_act` named and `act_plan` not pairs, gets
+    the corner targets and its takes wait on `LegMatch` (leg_wait), so name both on both copies. The notice tail of
+    `enemy-mirror10b-calm.txt`.
   - Next: the take policy the user picks (if the off-screen warp: Lua's view cone with no 60 m cut, passed with the m
     so native skips the glide for that take); the ahead case (hold the copy where he stands until the owner copy is
-    within 2 m, instead of walking him to the leg's end); what moved 246 39.4 m with no warp line; the copy standing with
-    a live plan; then one named run, the flip per D-FM1 (a) + D-FM2 and the run with no key named.
+    within 2 m, instead of walking him to the leg's end); the copy standing with a live plan; R(caution) >= 88 m; a run
+    of the calm limit on any CP's ALERT; then one named run, the flip per D-FM1 (a) + D-FM2 and the run with no key
+    named.
 
 ### 8. Soldier transforms (W6)
 

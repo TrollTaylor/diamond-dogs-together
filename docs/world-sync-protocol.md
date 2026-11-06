@@ -2652,5 +2652,8 @@ under `act_plan`.
   target; dest; p` (host); `soldier_act_release` adds the steps `watch` / `watch_none`.
 - `soldier_act_frame` adds `glide`, `rel_watch`, `corner` after `recheck`.
 - Round 12 (enemy round 12 track C): ACT_CAPS (0x5C) carries FM1 revision 7 ({caps, 7}); a partner whose revision is
-  older (or who sends none) mirrors nothing (`why=peer`): `act_plan`'s walk destination is never read by a partner
-  without it. No new op; Lua only.
+  older (or who sends none) mirrors nothing (`why=peer`; a revision 6 host sends nothing, a revision 7 guest releases).
+  The revision does not say whether `act_plan` is on: a revision 7 copy without it still pairs, and its takes of
+  corner-targeted walks wait on `LegMatch` (above). With caps bit 2 (the calm limit) any CP at EVASION / ALERT
+  (localPhase >= 2) on the guest releases every puppet and stops takes (`why=phase_limit`), not only the guard's own
+  CP. No new op; Lua only.
