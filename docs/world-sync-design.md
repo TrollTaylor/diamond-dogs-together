@@ -1408,9 +1408,10 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   a walker at any distance opened with the unpack's 15 m warp (5 take warps of 18-49 m a run, 5 at once at the caution
   retake); (iii) released copies stood 10-30 s with no path: at a kept walk's end his brain set R+0x80 to its next route
   point with no new request (R+0x1a0 unchanged), R+0x19c and his slot cleared, and nothing planned it; (v) the "flapping":
-  `SetMirror` ended the hook's lease on one stale m (a late 1 s resend over `-WanSim bad`), so `ReleaseOne` ran (guard 18:
-  10 hook releases in `689e654c` while Lua held him a puppet the whole time; Lua's own coverage outside the commanded off
-  window and the 15 s after the shot was 100 / 99 / 100 % for 15 / 17 / 18).
+  the hook's `ReleaseOne` ran (guard 18: 10 hook releases in `689e654c` while Lua held him a puppet the whole time [O]);
+  that `SetMirror` ended the hook's lease on one stale m (a late 1 s resend over `-WanSim bad`) is inferred from the code
+  and the timing (that build does not print refuse_stale) [I]. Lua's own coverage outside the commanded off window and the
+  15 s after the shot was 100 / 99 / 100 % for 15 / 17 / 18 (counting those windows 82 / 72 / 84 %).
 - **Built** (native only, no CFG bit, no wire format change, no new contract site; under `act_plan`):
   - `MirrorLease(fresh, was, now)`: a stale m keeps the hook's last fresh lease (it lapses `kActFreshMs` after the last
     fresh m) and the fire-drop stamp; a fresh m stamps now. Lua's `f` and its own `stale` release are unchanged.
@@ -1427,28 +1428,40 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     type in his slot ends the watch. `soldier_act_release` steps `watch` / `watch_none`.
   - `CornerTarget` (the owner side, `MirrorTx`): a walk's destination on the wire is the next point of the host copy's own
     follower path (the point after the segment nearest him, flat; within `kCornerM` 2 m of it the one after), not the
-    leg's end; the leg's end when that point is within 1 m of it or the path has fewer than 2 points (or more than 32). Line
+    leg's end; the leg's end when that point is within 1 m of it (a full path's last segment) or the path has fewer than 2
+    points (or more than 32); on a partial path's last segment, the path's last point. Line
     `soldier_act_corner; t; idx; n; target; dest; p` (host) when the target moves 0.5 m+.
   - The frame line adds `glide`, `rel_watch`, `corner` after `recheck`.
 - **Gate** (as 7.29, scaled to what a player can see at 95-300 m; per mirrored calm walker with >= 20 moving samples):
   place error p50 <= 1.5 / p90 <= 3.0 m; >= 3 of the calm walkers in range mirrored >= 80 % of their walking time (the
   commanded mirror-off window and the 15 s after the guest's shot left out, and reported with them: in `689e654c` that
-  gives 15 / 17 / 18 100 / 99 / 100 %, 246 67 %); jumps of 10 m+ within 300 m of the guest (census, consecutive samples
-  <= 0.7 s apart, all counted; `689e654c`: 5 in calm, 5 after, all take warps) <= 1 a run; 0 released guards standing
+  gives 15 / 17 / 18 100 / 99 / 100 %, 246 67 %; with them 82 / 72 / 84 / 42 %, 2 of 4 by round 10's count); jumps of
+  10 m+ within 300 m of the guest (census, consecutive samples <= 0.7 s apart, and every `soldier_act_warp15` line of
+  10 m+, per guard, deduped; `689e654c`: 11, 6 in calm and 5 after, 10 take warps and one walking puppet's re-apply that
+  the census missed, its samples 907 ms apart) <= 1 a run; 0 released guards standing
   > 5 s; plans with the path end within 1 m >= 90 % (rechecked); a matched frame pair of one mirrored guard walking; no
   ChangePhase started by a puppet; 0 faults / latches / game overs; capture-free frame p95 within + 1 ms of the
   mirror-off part.
 - **Seen**: no hidden run this round. The first job waited 64 min on the queue's floors (C: free 5.0 GB falling to 0,
   commit free 4-15 GB, machine-wide) and was closed as interrupted (void, no game ran); the second
   (20261106-042106-533-103110, the same keys and scenario `enemy-mirror10b-calm.txt`) was still queued behind track B's
-  jobs at the end of the box. The unpack (0x14136f810, read only) uses a dest mode 1 request's entry only for the 15 m
-  warp (0x14136ece0) and sets R+0x80 from the packed destination, so the glide changes nothing but the warp [O decompile].
+  B-africa job and track A's 20261106-032106-729-9dbd7d at the end of the box. The unpack (0x14136f810, read only) uses a
+  dest mode 1 request's entry only for the 15 m warp (0x14136ece0) and sets R+0x80 from the packed destination, so the
+  glide changes nothing but the warp [O decompile]. The red (c37c3066) failed first at the frame line; `Check` exits on
+  the first failure, so the new behaviour checks were not seen failing against the stubs.
+- **Open from the review** (under `act_plan`; to settle before any flip): the release watch is re-armed at every released
+  walk's end, so a brain that keeps re-targeting is hook-planned with no bound, and it follows near / shot / phase
+  releases too (`WatchChoose` ends only on a non-move slot type); the glide drops the 15 m warp backstop for walking
+  puppets at any distance (takes and re-applies), and Lua's apart rule (5 m from a still owner copy for 2 s after a 4 s
+  grace, then 30 s off) may release and hold a puppet glided 18-49 m behind: coverage [U]; `CornerTarget` does not check
+  that the host copy's path is the current leg's (a path ending away from the leg's end counts as partial).
 - **Not addressed**: guard 246's guest copy that stood with a path (cause [U]); a non-walk re-apply while a puppet is
   beyond 15 m still warps (the take of one waits); guard 18's stand straight from a release with no walk (dm 0); the nits
   of 7.29 (`g_rel[]` / `g_planned[]` / now `g_watch[]` not cleared on a mission change).
 - **Next**: the named run (queued; if it ran, slice it and run the round 11 gate script); with the gate passed, the flip
-  per D-FM1 (a) (`soldier_act` calm / caution and `act_plan` following the gun profile, a named 0 the off switch, the
-  ACT_CAPS version gate unchanged) and the run with no key named.
+  per D-FM1 (a) (`soldier_act` calm / caution, a named 0 the off switch, the ACT_CAPS version gate unchanged; D-FM1 (a)
+  names `soldier_act` only, so `act_plan` following the gun profile by default is the user's call) and the run with no
+  key named. A puppet's restricted notice holds down to R = 80 m (taken beyond 95 m, released only within 80 m).
 
 ### 8. Soldier transforms (W6)
 

@@ -2620,8 +2620,10 @@ under `act_plan`.
 
 - SOLDIER_ACT (0x58) request parts: with `act_plan` on the host, a walk's packed destination (request +0x40, dest mode
   +0x61 == 1) is the next point of the host copy's own follower path (`CornerTarget`), not the leg's end; the leg's end
-  when that point is within 1 m of it, on the last leg, or with no readable path (2..32 points). A guest without
-  `act_plan` plans or walks to that point as to any destination.
+  when that point is within 1 m of it (a full path's last segment) or with no readable path (2..32 points); a partial
+  path's last point on its last segment. A guest without `act_plan` takes a walker only while the packed destination is
+  within 3 m flat of its own leg end (`LegMatch`), so a corner target makes its takes wait (`leg_wait`) except where the
+  target is the leg's end: name `act_plan` on both copies.
 - `ACT_V1 m` (SetMirror): with `act_plan` a stale mail keeps the hook's lease and the fire-drop stamp of the last fresh m
   (they lapse 1.5 s after it); the reply's `f` is unchanged.
 - `ACT_V1 q` (QueryFresh): with `act_plan` a request that is not a walk with this copy beyond 15 m of the owner copy is
