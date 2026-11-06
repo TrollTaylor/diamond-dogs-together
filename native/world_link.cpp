@@ -438,6 +438,15 @@ bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world
     return g_core.SnapPair(slot, cur, prev);
 }
 
+bool EntGrants(std::uint32_t ent, std::uint64_t& now_ms, world::Grant& cur, world::Grant& prev) noexcept {
+    now_ms = partner_net::NowMs();
+    cur = world::Grant{};
+    prev = world::Grant{};
+    if (!Configured()) return false;
+    Locked lock;
+    return g_core.EntGrants(ent, now_ms, cur, prev);
+}
+
 bool ActLatest(std::uint16_t slot, std::uint64_t& now_ms, world::Act& out) noexcept {
     now_ms = partner_net::NowMs();
     if (!Configured()) return false;

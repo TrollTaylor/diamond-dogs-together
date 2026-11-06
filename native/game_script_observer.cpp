@@ -2870,6 +2870,29 @@ const char* RefuseWarp(const char* why, std::uint32_t go, std::uint64_t now) noe
         StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {refused=\"args\"}");
     return debug_reply;
 }
+// Enemy round 13 track A (quiet_place, docs/world-sync-design.md 7.31): the owner copy's track for a quiet move, from the
+// guard's two newest correction grants (world_link::EntGrants): where his re-plan goes, and fast (a vehicle) keeps the
+// message. Only asked with quiet_place.
+struct QuietTrack {
+    mgscoop::soldier_act::QuietLead lead = mgscoop::soldier_act::QuietLead::unknown;
+    float to[3]{};
+    float speed = -1.0f;
+    std::uint64_t rx = 0;
+    bool have = false;
+};
+QuietTrack QuietTrackFor(std::uint32_t ent) noexcept {
+    namespace sa = mgscoop::soldier_act;
+    QuietTrack t{};
+    mgscoop::world::Grant gc{}, gp{};
+    std::uint64_t gnow = 0;
+    if (!mgscoop::world_link::EntGrants(ent, gnow, gc, gp)) return t;
+    const sa::OwnerSample oc{gc.valid, {gc.pos_mm[0] * 0.001f, gc.pos_mm[1] * 0.001f, gc.pos_mm[2] * 0.001f}, gc.rx_ms};
+    const sa::OwnerSample op{gp.valid, {gp.pos_mm[0] * 0.001f, gp.pos_mm[1] * 0.001f, gp.pos_mm[2] * 0.001f}, gp.rx_ms};
+    t.lead = sa::QuietLeadFor(oc, op, gnow, t.to, t.speed);
+    t.rx = gc.rx_ms;
+    t.have = true;
+    return t;
+}
 const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     namespace debug = mgscoop::debug_menu;
     namespace sw = mgscoop::soldier_warp;
@@ -2945,18 +2968,25 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     const unsigned quiet_idx = request.go_id & 0x1ffu;
     const bool quiet_asked = mgscoop::soldier_act::QuietAsk(labc.quiet_place, quiet, false,
                                                             grant.kind == mgscoop::world::place::correct, request.go_id);
-    const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos) : mgscoop::soldier_act::QuietWhy::unknown;
+    // Round 13 (design 7.31): the owner copy's track: the re-plan goes where it walks; fast (a vehicle) keeps the message.
+    const QuietTrack quiet_track = quiet_asked ? QuietTrackFor(grant.ent) : QuietTrack{};
+    const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietOwnerWhy(mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos),
+                                                                            quiet_track.lead)
+                                       : mgscoop::soldier_act::QuietWhy::unknown;
     // Enemy round 11 track A (design 7.31): a walker goes quiet too (QuietWhy walk) and is re-planned after the move: the
     // message's handler posts action 0xa6 naming this PC's player for every stance 1-2 guard (the normal stance).
     const bool quiet_walk = quiet_why == mgscoop::soldier_act::QuietWhy::walk;
     const bool quiet_move = quiet_asked && (quiet_why == mgscoop::soldier_act::QuietWhy::ok || quiet_walk);
+    const bool quiet_replan = quiet_move && mgscoop::soldier_act::QuietReplan(quiet_why, quiet_track.lead);
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
     else if (quiet_move) {
         float squared = 0.0f;
         for (unsigned i = 0; i < 3; ++i) squared += (request.pos[i] - request.player[i]) * (request.pos[i] - request.player[i]);
         if (!(squared <= request.max_range * request.max_range)) result.refusal = "range";
-        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw, quiet_walk)) result.refusal = "contract";
+        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw, quiet_replan, grant.ent,
+                                                    quiet_track.lead, quiet_track.have ? quiet_track.to : nullptr, quiet_track.rx))
+            result.refusal = "contract";
         else {
             result.out = 0;
             result.handled = 1;
@@ -2978,11 +3008,15 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
             char line[512]{};
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
-        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s%s%s%s\r\n", unsigned(seq),
+        char lead_part[96]{};
+        if (quiet_asked)
+            StringCchPrintfA(lead_part, ARRAYSIZE(lead_part), "; lead=%s; v=%.2f; replan=%u",
+                             mgscoop::soldier_act::QuietLeadName(quiet_track.lead), quiet_track.speed, quiet_replan ? 1u : 0u);
+        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s%s%s%s%s\r\n", unsigned(seq),
                   unsigned(grant.kind), grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out,
                   unsigned(result.handled), quiet_move ? "quiet" : sw::LeafName(result.chain), result.refusal ? result.refusal : "none",
                   quiet_asked ? "; quiet=" : "", quiet_asked ? mgscoop::soldier_act::QuietWhyName(quiet_why) : "",
-                  quiet_asked ? (quiet ? "; view=off" : "; view=on") : "");
+                  quiet_asked ? (quiet ? "; view=off" : "; view=on") : "", lead_part);
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
@@ -3052,16 +3086,22 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     const unsigned quiet_idx = request.go_id & 0x1ffu;
     const bool quiet_asked = mgscoop::soldier_act::QuietAsk(labc.quiet_place, false, true,
                                                             grant.kind == mgscoop::world::place::correct, request.go_id);
-    const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos) : mgscoop::soldier_act::QuietWhy::unknown;
+    const QuietTrack quiet_track = quiet_asked ? QuietTrackFor(grant.ent) : QuietTrack{};  // round 13 (design 7.31)
+    const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietOwnerWhy(mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos),
+                                                                            quiet_track.lead)
+                                       : mgscoop::soldier_act::QuietWhy::unknown;
     const bool quiet_walk = quiet_why == mgscoop::soldier_act::QuietWhy::walk;
     const bool quiet_move = quiet_asked && (quiet_why == mgscoop::soldier_act::QuietWhy::ok || quiet_walk);
+    const bool quiet_replan = quiet_move && mgscoop::soldier_act::QuietReplan(quiet_why, quiet_track.lead);
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
     else if (quiet_move) {
         float squared = 0.0f;
         for (unsigned i = 0; i < 3; ++i) squared += (request.pos[i] - request.player[i]) * (request.pos[i] - request.player[i]);
         if (!(squared <= request.max_range * request.max_range)) result.refusal = "range";
-        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw, quiet_walk)) result.refusal = "contract";
+        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw, quiet_replan, grant.ent,
+                                                    quiet_track.lead, quiet_track.have ? quiet_track.to : nullptr, quiet_track.rx))
+            result.refusal = "contract";
         else {
             result.out = 0;
             result.handled = 1;
@@ -3085,14 +3125,18 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
         }
         // Enemy round 8: the guest's pose age and its height over the target (dgy_m; about -270 m while the guest's pose is
         // unknown and read as 0, 8b581a26).
-        // Round 12 (quiet_place): leaf=quiet and quiet=<why> as on the guest's warp line.
+        // Round 12 (quiet_place): leaf=quiet and quiet=<why> as on the guest's warp line. Round 13: the owner track too.
+        char lead_part[96]{};
+        if (quiet_asked)
+            StringCchPrintfA(lead_part, ARRAYSIZE(lead_part), "; lead=%s; v=%.2f; replan=%u",
+                             mgscoop::soldier_act::QuietLeadName(quiet_track.lead), quiet_track.speed, quiet_replan ? 1u : 0u);
         LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s; flat=%u; "
-                  "g_age_ms=%u; dgy_m=%.1f; g_src=%s%s%s\r\n", unsigned(seq),
+                  "g_age_ms=%u; dgy_m=%.1f; g_src=%s%s%s%s\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),
                   quiet_move ? "quiet" : sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none",
                   labc.range_flat ? 1u : 0u, snapshot.remote_age_ms, snapshot.remote_range_pos[1] - grant.pos[1],
                   sw::RemoteSourceName(static_cast<sw::RemoteSource>(snapshot.remote_range_src)),
-                  quiet_asked ? "; quiet=" : "", quiet_asked ? mgscoop::soldier_act::QuietWhyName(quiet_why) : "");
+                  quiet_asked ? "; quiet=" : "", quiet_asked ? mgscoop::soldier_act::QuietWhyName(quiet_why) : "", lead_part);
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);

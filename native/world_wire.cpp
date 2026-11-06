@@ -1383,6 +1383,24 @@ bool Core::FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const 
     return false;
 }
 
+bool Core::EntGrants(std::uint32_t ent, std::uint64_t now_ms, Grant& cur, Grant& prev) const noexcept {
+    cur = Grant{};
+    prev = Grant{};
+    if (!paired_ || !level_) return false;
+    for (const Grant& g : grants_) {
+        if (!g.valid || g.ent != ent || g.kind != place::correct || g.epoch != epoch_ || now_ms < g.rx_ms ||
+            now_ms - g.rx_ms > kGrantLifeMs)
+            continue;
+        if (!cur.valid || g.rx_ms > cur.rx_ms || (g.rx_ms == cur.rx_ms && g.serial > cur.serial)) {
+            prev = cur;
+            cur = g;
+        } else if (!prev.valid || g.rx_ms > prev.rx_ms || (g.rx_ms == prev.rx_ms && g.serial > prev.serial)) {
+            prev = g;
+        }
+    }
+    return cur.valid;
+}
+
 unsigned Core::grant_count() const noexcept {
     unsigned n = 0;
     for (const Grant& g : grants_) n += g.valid ? 1u : 0u;

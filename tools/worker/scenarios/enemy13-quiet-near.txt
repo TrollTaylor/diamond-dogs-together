@@ -1,0 +1,112 @@
+# Enemy round 13 track A (docs/world-sync-design.md 7.31), part 2 after enemy8-quiet-calm.txt (same session): the quiet
+# move's walkers, then guards near the guest. At the afgh-ledge seed guards 15 (1740692850) and 246 (1926520947) hold
+# swapped routes on the two copies.
+#   a. walkers (~70 s): the host at its pre-pairing spot 50 m south of afgh_field_cp (421.16, 269.2, 2084.42), the guest at
+#      point B (414.897, 274.034, 2017.557) 67 m further south: the outpost's south guards are corrected off the guest's
+#      screen beyond 60 m (as enemy11-quiet-walk.txt, shorter); with quiet_place each walker is re-planned toward his
+#      owner copy's track (world_place=quiet_plan lead=, src=move|follow).
+#   b. near, both (~40 s): the guest to a logged point 7.5 m west of the host (413.655, 268.660, 2084.490): the south
+#      guards within 60 m of both players are driven (M4 soft follow, DriveReceipt: the set-transform message); with
+#      act_census named, the census of the driven guards (action kinds 3 / 13 / 15 after drive steps).
+#   c. near, the guest alone (~50 s): the host back to point B (110 m from the guards): they are nearer the guest
+#      (guest-owned), so the host's copies get M3 placements (world_place=host_warp), within 60 m of the guest.
+# Both look at 246 / 15 through binoculars now and then (frames on both). No shot, no phase set.
+# Gate (round 13, named quiet_place=1): >= 10 quiet moves incl. >= 3 walkers and >= 2 within 60 m of the guest; 0 radio
+# reports / phase changes caused by a mod move; walkers within 3 m of the owner copy at 2 s and 10 s in >= 80 % of checks;
+# 0 copies > 1.5 m under a level owner; 0 latches / faults / game overs; guest p90 <= 2 m.
+logmark both
+host run teleport 421.16 269.2 2084.42 0
+wait 4000
+host run position
+guest run position
+host run world_status
+guest run world_status
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w246-a
+wait 450
+both capture w246-b
+wait 20000
+logmark both
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-a
+wait 450
+both capture w15-b
+wait 20000
+host run world_status
+guest run world_status
+logmark both
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w246-c
+wait 450
+both capture w246-d
+wait 18000
+host run position
+guest run position
+logmark both
+guest run teleport 413.655 268.660 2084.490 0
+wait 4000
+host run position
+guest run position
+host run world_status
+guest run world_status
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture n246-a
+wait 450
+both capture n246-b
+wait 15000
+logmark both
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture n15-a
+wait 15000
+host run world_status
+guest run world_status
+logmark both
+host run teleport 414.897 274.034 2017.557 0
+wait 4000
+host run position
+guest run position
+host run world_status
+guest run world_status
+guest run aim_ent 1926520947 1.1
+wait 600
+guest hold f 1500 nowait
+wait 700
+both capture m246-a
+wait 20000
+logmark both
+guest run aim_ent 1740692850 1.1
+wait 600
+guest hold f 1500 nowait
+wait 700
+both capture m15-a
+wait 20000
+host run position
+guest run position
+host run world_status
+guest run world_status
+logmark both
