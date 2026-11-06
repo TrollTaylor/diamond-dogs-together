@@ -1,3 +1,14 @@
+## November 5, 2026: enemy round 11 track C - the far mirror: the hook keeps a puppet through one late resend, a walker it takes far off glides instead of jumping, a released guard whose brain re-targets with no path is planned again, and the host sends its copy's next path point; built and unit-tested, the named run pending; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
+
+Design 7.33, protocol section 49. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+
+- **What players get**: nothing new at the defaults (`act_plan` and `soldier_act` stay off unless named).
+- **Built** (red c37c3066, green 8e2c41a8; native only, under `act_plan`; no CFG bit, no wire format change, no new
+  contract site): `MirrorLease`, `GlideEntry`, `TakeWarps`, the release watch, `CornerTarget` (design 7.33). Full build
+  355/355 at 8e2c41a8; every contract check as before (known base only).
+- **Run**: the first job (20261106-031551) waited 64 min on the queue's floors (C: 5.0 GB free falling to 0, commit free
+  4-15 GB; machine-wide) and was closed as interrupted when its runner ended; no game ran (void). Resubmitted at 22:21.
+
 ## November 5, 2026: enemy harden - inside the keys already on (`drive_vert`, `lrrp_follow` in 30010): the soft follow leaves a guard seated in a vehicle alone, a truck read at the map origin is no sample, a parked far truck that its own crew drives is put back at most once a second, and a seated crew is unseated at most 3 times; no default changed, no wire change, no README change (players see no difference)
 
 Design 7.30. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. After merging dev 60bc4a6a (6ad92706):

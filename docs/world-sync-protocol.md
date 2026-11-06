@@ -2612,3 +2612,20 @@ No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. N
 - New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
   planned puppet and at the end of a kept walk.
 - `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.
+
+## 49. Enemy round 11 track C: the hook's lease, the glide, the release watch, the host copy's next path point (lab key `act_plan`, native only; with `soldier_act`; design 7.33)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged; the wire format is unchanged. Native only,
+under `act_plan`.
+
+- SOLDIER_ACT (0x58) request parts: with `act_plan` on the host, a walk's packed destination (request +0x40, dest mode
+  +0x61 == 1) is the next point of the host copy's own follower path (`CornerTarget`), not the leg's end; the leg's end
+  when that point is within 1 m of it, on the last leg, or with no readable path (2..32 points). A guest without
+  `act_plan` plans or walks to that point as to any destination.
+- `ACT_V1 m` (SetMirror): with `act_plan` a stale mail keeps the hook's lease and the fire-drop stamp of the last fresh m
+  (they lapse 1.5 s after it); the reply's `f` is unchanged.
+- `ACT_V1 q` (QueryFresh): with `act_plan` a request that is not a walk with this copy beyond 15 m of the owner copy is
+  not taken (`near_wait`); walks are taken whatever their leg or distance.
+- New lines `soldier_act_glide; t; idx; first; d_m; p; at; lent; gait` (guest) and `soldier_act_corner; t; idx; n;
+  target; dest; p` (host); `soldier_act_release` adds the steps `watch` / `watch_none`.
+- `soldier_act_frame` adds `glide`, `rel_watch`, `corner` after `recheck`.

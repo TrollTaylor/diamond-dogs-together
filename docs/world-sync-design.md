@@ -1401,6 +1401,44 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   ForceStop (a stop that holds, or a get-out that works: none of the commands did, the crews leave together 18-29 s after
   the start); the M3 crew hold above.
 
+#### 7.33 Enemy round 11 track C: the hook's lease, the glide, the release watch, the host copy's next path point (lab key `act_plan`, native only; with `soldier_act`)
+
+- **Why** (round 10, 7.29; runs `15aa58cb` / `689e654c`): (i) guard 15's host copy walked the route's L while the plan took
+  the straight line to the leg's end (he led by p50 3 m, p90 6.6-10.8 m): the wire carried only the leg's end; (ii) taking
+  a walker at any distance opened with the unpack's 15 m warp (5 take warps of 18-49 m a run, 5 at once at the caution
+  retake); (iii) released copies stood 10-30 s with no path: at a kept walk's end his brain set R+0x80 to its next route
+  point with no new request (R+0x1a0 unchanged), R+0x19c and his slot cleared, and nothing planned it; (v) the "flapping":
+  `SetMirror` ended the hook's lease on one stale m (a late 1 s resend over `-WanSim bad`), so `ReleaseOne` ran (guard 18:
+  10 hook releases in `689e654c` while Lua held him a puppet the whole time; Lua's own coverage outside the commanded off
+  window and the 15 s after the shot was 100 / 99 / 100 % for 15 / 17 / 18).
+- **Built** (native only, no CFG bit, no wire format change, no new contract site; under `act_plan`):
+  - `MirrorLease(fresh, was, now)`: a stale m keeps the hook's last fresh lease (it lapses `kActFreshMs` after the last
+    fresh m) and the fire-drop stamp; a fresh m stamps now. Lua's `f` and its own `stale` release are unchanged.
+  - `GlideEntry(self, owner, entry)`: a walk's lent entry (wire +0x61 == 1) lies at most `kGlideM` 14 m (3D) from this copy
+    toward the owner copy, so the unpack's 15 m warp never moves him; the plan walks him to R+0x80 and the catch-up gait
+    (from the owner copy's real position) runs him while the owner copy is ahead by more than 5 m. `HoldPlanned` checks the
+    glided entry. Line `soldier_act_glide; t; idx; first; d_m; p; at; lent; gait` (a take, then at most every 2 s per guard).
+  - `TakeWarps` / `TakeWait(plan, leg, no_warp)`: a take that would open with the warp (a request that is not a walk, this
+    copy beyond 15 m of the owner copy) waits (`near_wait`); walkers are taken whatever their leg or distance (they glide).
+  - The release watch (`ReleaseFreeze`, `WatchChoose`): for `kWatchMs` 60 s after a release (and again from a released
+    walk's end) a copy whose brain re-targeted a walk with no path (dest mode 1, (R+0x19e & 3) == 2, R+0x19c 0xffff, a free
+    or move slot, no follower path, R+0x80 beyond 1.5 m flat) for `kWatchFreezeMs` 0.5 s is planned to R+0x80 with the
+    shadow plan (then a released walk as `ReleaseOne`'s; a failed plan is tried again at most every 2 s). His brain's own
+    type in his slot ends the watch. `soldier_act_release` steps `watch` / `watch_none`.
+  - `CornerTarget` (the owner side, `MirrorTx`): a walk's destination on the wire is the next point of the host copy's own
+    follower path (the point after the segment nearest him, flat; within `kCornerM` 2 m of it the one after), not the
+    leg's end; the leg's end when that point is within 1 m of it or the path has fewer than 2 points (or more than 32). Line
+    `soldier_act_corner; t; idx; n; target; dest; p` (host) when the target moves 0.5 m+.
+  - The frame line adds `glide`, `rel_watch`, `corner` after `recheck`.
+- **Gate** (as 7.29, scaled to what a player can see at 95-300 m; per mirrored calm walker with >= 20 moving samples):
+  place error p50 <= 1.5 / p90 <= 3.0 m; >= 3 of the calm walkers in range mirrored >= 80 % of their walking time (the
+  commanded mirror-off window and the 15 s after the guest's shot left out, and reported with them); jumps of 10 m+
+  within 300 m of the guest (census, consecutive samples <= 0.7 s apart; all counted) <= 1 a run; 0 released guards
+  standing > 5 s; plans with the path end within 1 m >= 90 % (rechecked); a matched frame pair of one mirrored guard
+  walking; no ChangePhase started by a puppet; 0 faults / latches / game overs; capture-free frame p95 within + 1 ms of
+  the mirror-off part.
+- **Seen**: the named run is pending (docs/STATUS.md).
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
