@@ -1406,6 +1406,14 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
                    unsigned(anim_ok ? anim.act[1] : 0), m.cbox_want ? 1u : 0u, m.cbox_seq);
     }
     in.traverse_hold = in.traverse_hold || cbox_hold;
+    // M2h (lab a53a243a: 32 partner_recon=place lines and the remote's pad on body 1 while hold1 held it on the horse): the
+    // horse cargo's hold owns body 1 on this copy (coop_carry's cargo hold without a stock carried body 1, the test
+    // TickBodySafety uses for pi.cargo), so the recon leaves it alone and the window carries a neutral pad.
+    in.body_owned = set.horse_cargo && coop_carry::PartnerCarryHold() && !coop_carry::BodyCarried(1);
+    if (in.body_owned != m.recon_owned) {
+        m.recon_owned = in.body_owned;
+        EmitRecon(m, h, kRcFrozen, "partner_recon=cargo_hold; on=%u; mode=%s\r\n", in.body_owned ? 1u : 0u, pr::ModeName(m.recon.mode));
+    }
     m.recon_remote_ok = in.remote_anim_valid;
     m.recon_remote_act = in.remote_act;
     const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
@@ -7361,6 +7369,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // Step S: the rear seat's holds (HoldSeat grace, the overlay re-entry, the Lua track wait) come with the seat itself
     // (world_horse_pillion's default; play 22926dbf passed the driver's E after a hop-off with them, both orders).
     d.settings.horse_seat_holds = lab.world_horse_pillion && lab.world_horse_share;
+    // M2h: the recon leaves body 1 to the horse cargo's hold with world_horse_cargo (off unless named, its gate not passed).
+    d.settings.horse_cargo = lab.world_horse_cargo && lab.world_horse_share;
     // G5 (docs/native-puppet.md "Ride hides"): lab only, default off (lab_config forces it off in play).
     d.settings.unrealize_all = lab.partner_native_unrealize_all;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):

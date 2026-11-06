@@ -45,12 +45,8 @@ C.LEAD_MAX_MM = LEAD_MAX_MM
 -- drops faster than DOWN_MMPS (a rise is immediate); the lab lever horse_probe cargo_pose sets the heights, back, rate (V).
 -- Within FACE_MM of the root the carrier is against the horse: no facing check (20aef564 refused 0.85 m away).
 local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
--- Body 0's mover: 4 the Lua Warp (the lying pose, with spells on the ground under the moving horse), 0..3 hold0 with
--- Warp's resets (bit 0 A0, bit 1 C0): none (a242d867 / c2927350) and A0 (8cfe8e97 / 7f3155c8) kept it with the horse
--- but in the airborne pose on both screens. hold0 + C0 alone (2; C0.vt+0x90 sets bit 0x20 of the 0x580 record's +0x2C0,
--- which C0.vt+0xD0 0x14128E010 clears while it answers "no fall") kept the lying pose, but a later write of the frame
--- dropped the body under the horse (run cfd2b604, drop 136-288 cm): default 14 adds the native write watch (4) and pin (8)
--- on body 0's transform (horse_body_watch). The lever picks 0..15 (4 the Lua Warp); free0 ends the pin before a lay-down.
+-- Body 0's mover (docs/mounts.md 11): the lever picks 0..15, 4 the Lua Warp, else hold0 with Warp's resets (bit 0 A0,
+-- bit 1 C0: the lying pose); default 14 = C0 + the write watch (4) + pin (8) (cfd2b604); free0 ends the pin first.
 local RESET = 14
 -- The carrier's copy holds body 1 (the downed partner) by hold1 with the same C0 + watch + pin (run cfd2b604: the Lua Warp
 -- of body 1 drew it low behind the rider at a trot / gallop on the carrier's screen); a refusal keeps the Lua Warp.
@@ -294,6 +290,15 @@ local function beginLoad(now)
 end
 -- On foot, carrying the downed partner, E held 450 ms within reach of this copy's horse and facing it.
 local function offTick(now)
+ -- M2h (play 72e6269a: E 900 ms at the horse while carrying, no load, no line): carrying within reach, 1 Hz, the raw E.
+ if now >= (C.nearAt or 0) then
+  C.nearAt = now + 1000
+  local h, x, _, z = cargo(false, false, false) == 1 and horse(), mine()
+  local d = h and x and sqrt((h.x - x) ^ 2 + (h.z - z) ^ 2)
+  if d and d <= REACH_MM then
+   capped("near", fmt("step=near;d_cm=%d;e=%d;mounted=%d", round(d / 10), held("E", now) and 1 or 0, mounted() and 1 or 0), 40)
+  end
+ end
  if not held("E", now) then C.heldSince, C.heldDone = nil, nil; return end
  C.heldSince = C.heldSince or now
  if C.heldDone or now - C.heldSince < HOLD_MS or mounted() then return end
@@ -333,7 +338,9 @@ local function loadTick(now)
   -- The E that loaded them, still held, never takes them down: the take-down waits until E and R have been up once.
   C.takeArmed = not held("R", now) and not held("E", now)
   send(LOADED, 0, C.gen, h.x, h.y, h.z, h.yaw)
-  log(fmt("step=loaded;seat=2;gen=%d;role=carrier;hx=%d;hz=%d", C.gen, round(h.x / 10), round(h.z / 10)))
+  local _, _, _, a = cargoPoint(h)
+  log(fmt("step=loaded;seat=2;gen=%d;role=carrier;hx=%d;hz=%d;hyaw=%d;byaw=%d", C.gen, round(h.x / 10), round(h.z / 10), h.yaw,
+   round((a + pi / 2) * 1000)))
   pin(h)
  elseif now - C.loadAt > LOAD_MS then stop(now, "load_timeout", false) end
 end
@@ -397,8 +404,8 @@ local function carrierTick(now)
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS
   local _, py = mine()
-  capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d", how, rides and 1 or 0, round(h.y / 10),
-   py and round(py / 10) or -1, round(by / 10)), 60)
+  capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d;hyaw=%d;byaw=%d", how, rides and 1 or 0, round(h.y / 10),
+   py and round(py / 10) or -1, round(by / 10), h.yaw, round((ba + pi / 2) * 1000)), 60)
  end
  if now >= C.keepAt then C.keepAt = now + KEEP_MS; send(KEEP, 0, C.gen, h.x, h.y, h.z, h.yaw) end
  if not C.takeArmed and not held("R", now) and not held("E", now) then C.takeArmed = true end

@@ -1461,7 +1461,7 @@ void TestBodyOwned() {
     w.follow = false;
     w.body_v[0] = 4000.0;    // body 1 rides with the horse (the hold moves it)
     w.Run(500);
-    w.remote[0] += 10000.0;  // the held victim's stream jumps (source_jump)
+    w.remote[0] -= 10000.0;  // the held victim's stream jumps back (source_jump)
     w.remote_stance = 3;
     bool armed_neutral = true;
     w.Run(3000, [&](World& x) { if (!(x.out.arm && x.out.neutral)) armed_neutral = false; });
@@ -1474,7 +1474,7 @@ void TestBodyOwned() {
     w.body_v[0] = 0.0;
     w.ResetCounters();
     w.Run(3000);
-    Check(w.places >= 1, "M2h: after the hold the reconciliation places body 1 again (far error)");
+    Check(w.places + w.snaps >= 1, "M2h: after the hold the reconciliation corrects body 1 again (far: place, or snap when prone)");
 }
 
 int main() {
