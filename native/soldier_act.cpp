@@ -324,6 +324,39 @@ ReleaseWalk ReleaseWalkStep(bool ours_live, std::uint64_t near_ms, std::uint64_t
     return ReleaseWalk::walk;
 }
 
+// Round 11 C (red stubs: the old behaviour).
+std::uint64_t MirrorLease(bool fresh, std::uint64_t was_ms, std::uint64_t now_ms) noexcept {
+    (void)was_ms;
+    return fresh ? now_ms : 0;
+}
+
+bool GlideEntry(const float (&self)[3], const float (&owner)[3], float (&entry)[3]) noexcept {
+    (void)self;
+    entry[0] = owner[0]; entry[1] = owner[1]; entry[2] = owner[2];
+    return false;
+}
+
+bool TakeWarps(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept {
+    (void)host_request; (void)self; (void)owner; (void)have;
+    return false;
+}
+
+bool ReleaseFreeze(unsigned dest_mode, std::uint16_t r19e, std::uint16_t r19c, std::uint64_t slot_hash, std::uint16_t slot_handle,
+                   bool path, float d_dest_m) noexcept {
+    (void)dest_mode; (void)r19e; (void)r19c; (void)slot_hash; (void)slot_handle; (void)path; (void)d_dest_m;
+    return false;
+}
+
+WatchStep WatchChoose(bool freeze, std::uint64_t freeze_ms, std::uint64_t age_ms, std::uint64_t slot_hash) noexcept {
+    (void)freeze; (void)freeze_ms; (void)age_ms; (void)slot_hash;
+    return WatchStep::end;
+}
+
+bool CornerTarget(const float (*points)[3], unsigned count, const float (&self)[3], const float (&dest)[3], float (&target)[3]) noexcept {
+    (void)points; (void)count; (void)self; (void)dest; (void)target;
+    return false;
+}
+
 bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
     const float dx = end[0] - dest[0], dy = end[1] - dest[1], dz = end[2] - dest[2];
     return dx * dx + dy * dy + dz * dz <= kPlanEndM * kPlanEndM;
