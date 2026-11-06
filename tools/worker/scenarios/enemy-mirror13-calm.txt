@@ -4,7 +4,8 @@
 #     and the guest's camera looks at the host's character (aim_partner: about 140 degrees from the walkers 15 / 17 / 18,
 #     whose aim_ent yaws were -28..+2 in 4735fee5), then on: the takes see both spots off view (event=mirror_view
 #     view=off, soldier_act_warp15 off=1). The mid-run mirror off / on part looks the same way (so the off and on parts'
-#     frame times compare like with like), so its retakes are off view too; every other take is whatever the camera shows.
+#     frame times compare like with like), so its retakes are off view too, and so are the retakes 15 s after the shot
+#     (aim_partner after shot-5); every other take (apart, range) is whatever the camera shows then.
 # (2) A CALM first-notice distance: the caution part and the sneak are gone; right after the shot part (the CP calm on
 #     both copies in 4735fee5 until the commanded caution) the host walks from spot A toward walker 15 in steps; the first
 #     phase rise / a guard's destination on the host gives the calm first-notice distance (1.5 x d must be <= R(calm) 80 m).
@@ -244,6 +245,7 @@ both capture shot-5-a
 wait 450
 both capture shot-5-b
 wait 3500
+guest run aim_partner 1.1
 host run position
 host run act_status
 logmark both
