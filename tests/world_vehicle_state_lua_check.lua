@@ -573,21 +573,23 @@ do
     -- The host's truck drives again, this copy's crew still seated: still stopped here, placed every frame.
     n = #placedOf(g, 25602)
     for i = 86, 90 do g.H[93]({6100 + i * 100, 25602, 111000 + (i - 85) * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
-    check(forces(g, 25602, true) == 1 and #placedOf(g, 25602) >= n + 5, 'guest: driving again: followed, ForceStop never lifted')
+    -- Enemy harden (design 7.30): the 20 m move at rest above sent ForceStop once more (step=restop): 2 sends, never lifted.
+    check(forces(g, 25602, true) == 2 and forces(g, 25602, false) == 0 and g:count('event=lrrp;step=restop;id=25602') == 1 and
+        #placedOf(g, 25602) >= n + 5, 'guest: driving again: followed, ForceStop never lifted')
     check(g:has('event=lrrp;step=riders;id=25602;n=2;r1=1194:?'), 'guest: a riders line of its own')
     -- Stale 3 s: ForceStop off, the track dropped.
     g:polls(35, 100)
     check(forces(g, 25602, false) == 1 and g:has('event=lrrp;step=stale;id=25602') and g.S.lf.tr[25602] == nil, 'guest: 3 s stale: released')
     -- The local player's ride, unpaired and stop release it too.
     for i = 0, 3 do g.H[93]({20000 + i * 100, 25602, 200000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
-    check(forces(g, 25602, true) == 2, 'guest: a new track stops it again')
+    check(forces(g, 25602, true) == 3, 'guest: a new track stops it again')
     g.riding = true; g.env.vars.playerVehicleGameObjectId = 25602
     n = #placedOf(g, 25602)
     for i = 4, 7 do g.H[93]({20000 + i * 100, 25602, 200000 + i * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
     check(forces(g, 25602, false) == 2 and #placedOf(g, 25602) == n, 'guest: the local player rides it: released, never moved')
     g.riding = false; g.env.vars.playerVehicleGameObjectId = 65535
     for i = 8, 10 do g.H[93]({20000 + i * 100, 25602, 200000 + i * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
-    check(forces(g, 25602, true) == 3, 'guest: off it again: followed again')
+    check(forces(g, 25602, true) == 4, 'guest: off it again: followed again')
     for _, f in ipairs(g.W.stopHooks) do f(true) end
     check(forces(g, 25602, false) == 3 and next(g.S.lf.tr) == nil, 'guest: stop releases every truck it stopped')
 
