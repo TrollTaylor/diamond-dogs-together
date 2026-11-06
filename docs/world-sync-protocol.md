@@ -2651,5 +2651,10 @@ No wire change. Inside `lrrp_follow` (on in 30010 at the defaults, named 1 any m
 - The crew hold (host, M3 `W.ownerOn`; only with `lrrp_follow` named, cfg 1): for 10 s after a crew member's get-out on the host (`W.crewOutAt[ent]`), while the
   host owns him, `P.ownerOf` answers 0 (no OWNER 73 hand-over to the guest); one the guest already owns is left to the
   owner decision; after 10 s the owner decision as before.
-- The guest's clock offset per truck (LRRP_FAST 93's sender tick), only with `lrrp_follow` named (cfg 1): the lowest of the
-  last second's samples, a lower one at once; at the defaults as before (the lowest ever, rising 2 % a sample).
+- The guest's clock offset per truck (LRRP_FAST 93's sender tick): the lowest of the last second's samples, a lower one at
+  once (was the lowest ever, rising 2 % a sample). Round 11's land fix had it named-only; enemy round 12 B: whenever
+  `lrrp_follow` is on, the defaults too (30010 by the gun profile). The crew hold stays named-only.
+- Enemy round 12 B lines (guest, so a run can show the lead's cause): `step=off; id; rise_ms; lag0_ms` when a window
+  raises the offset by 100 ms or more (at most once per 2 s per truck; `lag0_ms` = how far the 0.15.3 filter, kept as a
+  shadow for the lines, lags the new offset); `step=follow` carries `ah; ah0` at its end (the lead used and the 0.15.3
+  filter's, ms, each capped at 400).
