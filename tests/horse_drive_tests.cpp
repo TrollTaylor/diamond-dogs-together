@@ -105,6 +105,30 @@ void TestHoldAlone() {
     Check(!hd::CachedBody1Usable(b0, cached), "hold alone: an unread slot refuses");
 }
 
+// M2i (frames 2a41c416 / c62e2ce6 h2-loaded: body 1 along the horse with its upper body raised at the load, across the
+// back only after the ride, act 5 and the readback yaw unchanged): with world_horse_cargo a hold1 run (no gap over 1 s)
+// adds Warp's A0 reset once, on the first hold1 1 s or more into the run (the stock put-down settled), only while body
+// 0's A0 class and slot equal body 1's.
+void TestHoldRunA0() {
+    hd::HoldRun r{};
+    Check(!hd::HoldRunA0(r, 5000), "hold run A0: the run's first hold1 (the put-down still settling) adds no A0");
+    Check(!hd::HoldRunA0(r, 5033), "hold run A0: the next tick neither");
+    Check(hd::HoldRunA0(r, 5000 + hd::kA0DelayMs), "hold run A0: 1 s into the run, A0 once");
+    Check(!hd::HoldRunA0(r, 5033 + hd::kA0DelayMs), "hold run A0: once per run");
+    Check(!hd::HoldRunA0(r, 5033 + hd::kA0DelayMs + hd::kHoldRunGapMs), "hold run A0: a gap of exactly 1 s keeps the run");
+    const std::uint64_t next = 5034 + hd::kA0DelayMs + 2 * hd::kHoldRunGapMs;
+    Check(!hd::HoldRunA0(r, next), "hold run A0: a longer gap opens a new run (the next load), no A0 at its start");
+    Check(hd::HoldRunA0(r, next + hd::kA0DelayMs), "hold run A0: the new run's A0, 1 s in");
+    Check(!hd::HoldRunA0(r, 100), "hold run A0: a clock behind the last hold opens a run");
+    hd::BodyClass b0{}, b1{};
+    b0.a0_vt = b1.a0_vt = 0x70; b0.a080 = b1.a080 = 0x80;
+    Check(hd::A0Usable(b0, b1), "A0 once: body 0's A0 class and slot equal body 1's");
+    b1.a080 = 0x81;
+    Check(!hd::A0Usable(b0, b1), "A0 once: another A0 slot skips the reset");
+    b1 = b0; b1.a0_vt = 0;
+    Check(!hd::A0Usable(b0, b1), "A0 once: an unread A0 skips the reset");
+}
+
 void TestHoldRefusal() {
     hd::HoldScope s{};
     Check(std::strcmp(hd::HoldRefusal(s), "off") == 0, "hold0: the keys first");
@@ -601,6 +625,7 @@ int main() {
     TestParse();
     TestRefusal();
     TestHoldAlone();
+    TestHoldRunA0();
     TestHoldRefusal();
     TestShared();
     TestVisibility();
