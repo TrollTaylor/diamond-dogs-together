@@ -1,3 +1,45 @@
+## November 6, 2026: enemy round 12 track A - `quiet_place` moved 42 walking guards off the guest's screen with no radio report and no startle, but they walked on along their own route (15 of 35 within 3 m of the host's copy 2 s later): the gate failed, nothing turned on (`wp/enemy-m7`, not pushed)
+
+Design 7.31, protocol 47. Markers: [O] seen in a log line, a frame or the code, [I] inferred, [U] unknown. Merged dev
+7d23eddc (8a989be1); red bb1da3a0 / green 34f7a4fd (on-screen and M3), red 88c2c2db / green (see below: the baseline's
+owner distance).
+
+- **What players get**: nothing new; the defaults behave as 0.15.3. `quiet_place` stays off unless named.
+- **Built** (native, no Lua change, no CFG bit, no wire change; only with `quiet_place=1`): every correction of a soldier
+  asks for the quiet move, on the guest's screen too (`view=on|off` on the warp line), and the host's M3 placements of
+  guest-owned guards go quiet the same way (`HostWarpReceipt`: the same rest check, staging, walker re-plan, gate, range
+  and budget; `leaf=quiet`, `quiet=<why>` on `world_place=host_warp`); the hook runs on a host with `soldier_owner`
+  (`soldier_act::QuietAsk` / `QuietHook`, soldier_act_tests). enemy_div_report: `host_quiet` rows. No Lua edit was
+  needed, so world_place_guest.lua was not split. The review's census correction (no stance 0 in any census) was
+  already in STATUS / design 7.31 / protocol 47 (d132ba67).
+- **Run c66b10b6** (job 20261106-032106-729-9dbd7d, round 11's queued session, run at 34f7a4fd: `quiet_place=1,
+  act_census=1`; enemy8-quiet-calm + enemy11-quiet-walk; both copies in gameplay and connected, frames looked at):
+  - [O] 42 guest corrections, all by the quiet warp (40 of walkers, 2 at rest), 5 guards, 42 moved, read back 0.00 m
+    off the target; 0 set-transform corrections. [O census] no action kind 13 (radio), 3 or 15 within 30 s after any of
+    them (the message's startle in 0f020398 was 3 -> 15 within 0.5-2 s after all 15 corrections). Frames w246 / w15 on
+    both: calm, no radio subtitle.
+  - [O] one phase change: the host's CP went to ALERT (src=host) and the guest applied it. No mod move on the host (no
+    `world_place` or `world_drive` line in the host's log); the host's own guards 246 / 15 stood 5.5-11 m from the
+    host's player, a patrol truck passed 16-19 m away just before. [I] the host's player was seen (the walker part
+    puts the host on their path).
+  - FAIL the walker rows: at 2 s 15 of 35 read-backs within 3 m of the owner copy (246 5.7-10.4 m, 15 3.5-7.0 m, a
+    truck rider 9.5-12.4 m); at 10 s 1 read (the next move re-arms within 10 s). [O] the re-plan sends a walker to his
+    own brain's destination (246: 444, 2137 while the host's copy walked south to z 2090) and only a guard's first
+    move re-plans (after it his slot holds our plan's handle: `step=none`).
+  - FAIL `guard_sank` 1: 2929558510 read back 5.8 m under 5 s after three of his moves (his owner copy stands on a
+    roof, y 276) [U: walked down or fell].
+  - n/a guest place error p90 (no guard within 60 m of the guest); part 1's radio-spot correction of 246 was refused
+    `far` (not exercised); the on-screen and M3 quiet paths were not exercised (0 `view=on`, 0 host placements).
+  - Passed: 0 latches / faults / Game Overs, `plans_lost` 0, 0 log_cap drops.
+- **Session 2** (job 20261106-081816-598-e72569, no key, queued before the result): runs the same parts at the defaults
+  as a baseline of the message corrections; their read-backs now carry `dho_m` too (world_readback.lua, log only;
+  enemy_div_report `place_owner_2s`). Not a flip proof.
+- **Next**: a walker's two copies with different routes cannot meet by a quiet move alone. Try re-planning a moved
+  walker toward the owner copy (its sample position plus speed) instead of his own brain's destination, and re-plan
+  every move (over our own earlier plan's handle); give the radio spot's correction a run where it is not refused
+  `far`; exercise `view=on` and the host's M3 placements (a guard within 60 m of the guest; a guard the guest owns).
+  Then the named run again, the flip, the no-key run.
+
 ## November 5, 2026: enemy round 11 track A - a likely cause of the false radio report found [I] (the set-transform handler posts action 0xa6 naming this PC's player for every normal guard; no run has tested it); `quiet_place` now moves walkers too and re-plans them; NO RUN: the queue waited on the C: floor, nothing turned on (`wp/enemy-m7`, not pushed)
 
 Design 7.31, protocol 47. Markers: [O] seen in a log line, a frame or the code (read-only disassembly / Ghidra), [I]

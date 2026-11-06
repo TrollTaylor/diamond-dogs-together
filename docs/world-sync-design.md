@@ -1460,6 +1460,24 @@ only); [I] inferred; [U] unknown.
   c.quiet_place = gun;`) and the no-key run of the same parts. Still on the message (and its post): the guest's
   on-screen corrections, the host's M3 placements of guest-owned guards. The walkers' re-plan cancels the brain's live
   planner slot; whether his brain then plans again by itself (and what 0xa6 does) is [U] until that run.
+- **Round 12** (enemy round 12 track A, 2026-11-06):
+  - Built (only with `quiet_place=1`): `soldier_act::QuietAsk` asks for the quiet move for every correction of a soldier,
+    on the guest's screen too (`view=on|off` on the warp line), and for the host's M3 placements (`HostWarpReceipt`:
+    the same QuietCheck, StageQuiet, walker re-plan, grant, gate, range and budget; `leaf=quiet`, `quiet=<why>` on
+    `world_place=host_warp`); `QuietHook` runs the hook and its rest views on a host with `soldier_owner` too. No Lua
+    change (the native ignores the Lua's off-screen flag with the key). Log only, at the defaults too: a far message
+    correction's read-backs (`src=place`) carry `dho_m` / `oage_ms` as a quiet move's (`place_owner_2s`).
+  - Run c66b10b6 (named; enemy8-quiet-calm + enemy11-quiet-walk): [O] 42 quiet moves (40 walkers, 5 guards, all off
+    screen, 0 messages), [O census] no kind 13 / 3 / 15 after any; one ALERT on the host's own copies with no mod move
+    there ([I] the host's player seen by 246 / 15 at 5.5-11 m). Gate FAIL: walkers at 2 s 15/35 within 3 m of the owner
+    copy (to 10.4 m; a truck rider 12.4 m), 10 s 1 read; `guard_sank` 1 (2929558510 5.8 m under at 5 s). [O] the
+    re-plan goes to the guard's own brain destination (246: 444, 2137; his host copy walked south) and only a guard's
+    first move re-plans (then `r19c` holds our plan's handle: `step=none`). Not exercised: the radio-spot correction
+    (refused `far`), `view=on`, the host's M3 placements.
+  - Blocks: a walker whose two copies walk different routes does not stay with the owner copy after a quiet move (the
+    message's startle stopped him instead). Next: plan a moved walker toward the owner copy (sample position plus speed)
+    and re-plan over our own earlier plan; a run where the radio-spot correction applies, plus an on-screen and an M3
+    case. `quiet_place` stays off unless named.
 
 ### 8. Soldier transforms (W6)
 
