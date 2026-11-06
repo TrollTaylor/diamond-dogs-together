@@ -19,6 +19,19 @@ host run cargo_status
 host require cargo;state=off;key=1
 guest run cargo_status
 guest require cargo;state=off;key=1
+# M2h (39fff762 (b): where (a) ended, by a rock wall, the stock pickup never shouldered the downed host; 5.5 s did not
+# bring a horse 200 m away): both to the boot spot on open ground, the guest's horse called first, 12 s to arrive; the
+# guest's horse must stand within about 25 m of the boot spot.
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 119
+wait 2000
+guest run horse_spawn
+wait 1000
+host run horse_spawn
+wait 12000
+logmark both
+guest run goto_horse
+waitlog guest 'via=census;horse=(7[89][0-9]|8[0-2][0-9])\.[0-9]+,[0-9.]+,(16[0-6][0-9])\.' 3
 # --- (b) roles swapped: the guest's rifle downs the host, the guest carries them to the horse (the host grants).
 guest run goto_horse
 wait 1000
@@ -50,7 +63,9 @@ guest release
 wait 3500
 guest run coop_carry_bodies
 guest expect carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
-guest run goto_horse
+# M2h (play 72e6269a: goto_horse put the carrier on the horse's census root, the carrier fell / landed and E 900 ms
+# gave no step=loading): the load E from the flank (horse_flank: 1.6 m beside the root, facing it).
+guest run horse_flank
 wait 1200
 guest hold e 900
 guest release
@@ -65,7 +80,8 @@ host require cargo;state=cargo
 wait 1500
 # M2g attempt 3 (39fff762: the victim's own frames showed the horse only at the load): the victim's camera looks down a
 # little so their frames show the horse under the body.
-host mouse 0 200
+# M2h (a53a243a / 39fff762: the victim's frames showed the horse at the load only): the camera turned and lower.
+host mouse 400 300
 wait 400
 both capture h2b-loaded
 # M2g attempt 3 (play 624148f9: the carrier stood at the horse's head and this E did not mount): to its flank first.
