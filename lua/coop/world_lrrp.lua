@@ -1,5 +1,6 @@
 -- Enemy round 8 B / round 9 B (docs/world-sync-design.md 7.21, 7.25; protocol sections 38, 42; native lab key lrrp_follow,
--- off unless named; no CFG bit): the LRRP trucks (the patrol trucks of lrrpVehicle) follow the host's. Spliced after
+-- on with the gun profile in Afghanistan free roam 30010 only since round 10's flip (D-B10), named 1 any map, named 0 off;
+-- no CFG bit): the LRRP trucks (the patrol trucks of lrrpVehicle) follow the host's. Spliced after
 -- world_vehicle_state.lua (W.vehicleState: S.lrrp, S.pose, S.alive, S.on, S.lever); moved out of it in round 9 B.
 --   host:  streams each live LRRP truck no player rides (LRRP_FAST 93: 10 Hz moving, 1 Hz still, 50 ms apart).
 --   guest: holds its copy (ForceStop) and puts it on the host's every frame while it moves or is manned there, pinned
@@ -55,9 +56,10 @@ function LF.on()
   if LF.cfg == nil and (not LF.askAt or t - LF.askAt >= 5000) then
     LF.askAt = t
     local ok, r = pcall(W.receipt, "return 'MGS_COOP_LRRP_CFG_V1'")
-    if ok and (r == 0 or r == 1) then LF.cfg = r == 1 end
+    if ok and (r == 0 or r == 1 or r == 2) then LF.cfg = r end
   end
-  return LF.cfg == true
+  -- Round 10 B: 2 = on by the gun profile's default, Afghanistan free roam (30010) only; 1 = named, any map.
+  return LF.cfg == 1 or LF.cfg == 2 and W.mission == 30010
 end
 local function ent(v) return type(W.byId) == "table" and W.byId[v] and fmt("%.0f", W.byId[v]) or tostring(v) end
 -- NPC riders of `id`: count, gids, and "r1=hash:x:z;..." (a line of its own: W.log keeps 160 chars).
