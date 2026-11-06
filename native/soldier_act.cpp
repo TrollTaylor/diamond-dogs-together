@@ -381,8 +381,7 @@ const char* QuietWhyName(QuietWhy why) noexcept {
 
 QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
                           std::uint16_t slot_handle, bool slot_read) noexcept {
-    (void)slot_read;
-    if (!PlanGate(dest_mode, r19c, r19e, true)) return QuietPlan::none;
+    if (!slot_read || !PlanGate(dest_mode, r19c, r19e, true)) return QuietPlan::none;
     switch (PlanSlot(slot_hash, slot_handle)) {
     case SlotStep::plan: return QuietPlan::plan;
     case SlotStep::cancel_then_plan: return QuietPlan::cancel_then_plan;
@@ -1619,8 +1618,8 @@ void QuietPlanOne(const View& v, unsigned i, const QuietPlanAsk& a, std::uintptr
     Follower f{};
     Slot sl{0, 0xffff, 0xffff};
     const bool fol = slots && FollowerFor(v, i, f) && PlannerKnown(f.planner);
-    if (fol) PlannerSlot(f.planner, i, sl);
-    const QuietPlan step = fol ? QuietPlanChoose(mode, r19c, r19e, sl.hash, sl.handle, true) : QuietPlan::none;
+    const bool slot_read = fol && PlannerSlot(f.planner, i, sl);
+    const QuietPlan step = fol ? QuietPlanChoose(mode, r19c, r19e, sl.hash, sl.handle, slot_read) : QuietPlan::none;
     bool started = false;
     std::uint16_t got = 0xffff;
     if (step == QuietPlan::cancel_then_plan) CancelSlot(f.planner, i, sl.handle);
