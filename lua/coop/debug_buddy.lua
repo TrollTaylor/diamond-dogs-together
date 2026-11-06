@@ -6,7 +6,7 @@ do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,fmt=A.get,A.call,string.format
  local S={handles={horse_spawn=true,horse_status=true,walker_spawn=true,walker_status=true,cargo_status=true,cargo_test=true,sleep_clock=true,
-  seed_buddy=true,companion_status=true,companion_cell=true,companion_lab=true},nextCall=0};D.buddy=S
+  horse_here=true,seed_buddy=true,companion_status=true,companion_cell=true,companion_lab=true},nextCall=0};D.buddy=S
  function S.stop()S.nextCall=0 end
  local function context()
   local W=get(e,"MgsCoopWorld");local B=get(W,"buddy")
@@ -41,9 +41,7 @@ do
   return fmt("horse;selected=%s;available=%d;actor0=%d;localMounted=%d;nativeCount=unverified;remoteRider=unverified;arrival=%s;retry=%s",r.name,r.exists and 1 or 0,r.actor,r.mounted and 1 or 0,
    r.kind==1 and r.exists and r.mounted and "mounted" or "unverified",r.mounted and "none" or "Recall")
  end
- -- Without a deployed buddy the buddy block is not loaded and CallBuddy has
- -- nothing to call. Deploy D-Horse the way the retail free-roam scripts do:
- -- reserve the horse at its spawn point, then load the block.
+ -- No deployed buddy: no block, nothing to call. Reserve the horse at its spawn point, then load (retail free roam).
  local function deployHorse(id)
   local W=get(e,"MgsCoopWorld");local api=get(W,"api")
   local reserve,load=get(TppBuddy2BlockController,"ReserveCallBuddy"),get(TppBuddy2BlockController,"Load")
@@ -82,12 +80,8 @@ do
   D.pending=q
   return true,"submitted_horse_deploy;block=loading;arrival=unverified;close_F9;mount=normal_action"
  end
- -- D-Walker lab lever for the mount hide (docs/mounts.md): the same stock
- -- CallBuddy with BuddyType.WALKER_GEAR four metres to the right, the horse
- -- lever's guards and dog yield; an active buddy block only, never a mount.
- -- Refused while the local player rides: ON_HORSE / ON_VEHICLE, or the gait
- -- statuses PlayerInfo 0x1412CE870 sets for a horse ride (0x79) and a D-Walker
- -- drive (0x7D, no ON_*). The get-on / leave acts 122/123/126 set none.
+ -- D-Walker lever (docs/mounts.md): CallBuddy WALKER_GEAR 4 m right, the horse lever's guards; refused while riding
+ -- (ON_HORSE / ON_VEHICLE, the gait statuses of 0x1412CE870: horse 0x79, D-Walker 0x7D; acts 122/123/126 set none).
  local MOUNTED={"ON_HORSE","ON_VEHICLE","HORSE_IDLE","HORSE_TROT","HORSE_CANTER","HORSE_GALLOP"}
  local function walkerSample(W)
   local a=W.api
@@ -163,8 +157,7 @@ do
   D.pending=q
   return true,"submitted_walker;scope=local;stock_loader;arrival=unverified;mount=normal_action"
  end
- -- M1 (lua/coop/world_companion.lua): companion_status, seed_buddy <kind> (lab), companion_cell [goto]
- -- (the Mother Base Quiet cell, E20); only the host summons (F9): the guest's is refused with a toast.
+ -- M1 (world_companion.lua): companion_status, seed_buddy (lab), companion_cell (E20); the guest's F9 summon is refused.
  local function companion() local W=get(e,"MgsCoopWorld");return W,get(W,"companion") end
  function S.run(a,id)
   local cmd=a[1]
@@ -198,6 +191,14 @@ do
    return ok and type(line)=="string" and #line<=160,ok and line or "cargo_status_refused"
   end
   if (cmd=="walker_spawn" or cmd=="walker_status") and #a==1 then return walker(cmd,id) end
+  -- Step S2 (scenarios): this copy's unridden horse placed 4 m right of the player (world_horse_share S.here).
+  if cmd=="horse_here" and #a==1 then
+   local H,p=get(get(e,"MgsCoopWorld"),"horseShare"),A.pose()
+   if type(get(H,"here"))~="function" then return false,"horse_here_unavailable" end
+   local r=((p[4]+180)%360-180)*math.pi/180
+   local ok,yes,why=pcall(H.here,(p[1]+4*math.cos(r))*1000,p[2]*1000,(p[3]-4*math.sin(r))*1000,r*1000)
+   return ok and yes==true,"horse_here;"..(ok and tostring(why) or "error")
+  end
   if #a~=1 or (cmd~="horse_spawn" and cmd~="horse_status") then return false,"horse_args" end
   local W,B,why=context()
   if not W and why=="buddy_block_inactive" and cmd=="horse_spawn" then return deployHorse(id) end
@@ -214,9 +215,7 @@ do
   local api=W.api
   if type(api.buddyCall)~="function" or type(api.buddyVector)~="function" then return false,"horse_binding" end
   local p=A.pose();local rad=((p[4]+180)%360-180)*math.pi/180
-  -- Four metres to the right of the player; retain the exact ground height.
-  -- Repeating this stock request on the selected horse asks it to recall;
-  -- native pending requests refuse the call before changing selection.
+  -- 4 m right of the player at its ground height; again on the selected horse: a recall (pending ones refuse natively).
   local x,y,z=p[1]+4*math.cos(rad),p[2],p[3]-4*math.sin(rad)
   if not A.finite(x) or not A.finite(y) or not A.finite(z) or math.abs(x)>999996 or math.abs(y)>999996 or math.abs(z)>999996 then return false,"horse_position" end
   local made,v=pcall(api.buddyVector,x,y,z)
@@ -249,8 +248,7 @@ do
    if current~=W or owner~=B then D.pending=nil;A.note(id,false,why or "buddy_context_changed");return end
    local current,why=sample(W)
    if not current then D.pending=nil;A.note(id,false,why);return end
-   -- Active type is set before the engine finishes its pack wait. This
-   -- result confirms selected type only; it never declares nearby arrival.
+   -- The selected type only (set before the pack wait ends); never a nearby arrival.
    if current.kind==1 and current.exists then
     D.pending=nil;A.note(id,true,"horse_selected;"..report(current))
    elseif q.frames>=600 then D.pending=nil;A.note(id,false,"horse_load_timeout;"..report(current)) end
