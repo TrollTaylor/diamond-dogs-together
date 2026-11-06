@@ -3,6 +3,10 @@
 # warped a guard 5.1 / 5.4 m from the host there in c1982534 / 186c02d8), then horse-down-guard.txt from its start:
 # (c2) the guest rides behind the host and is downed by the guard (godmode off once seated), revived; (c1) the guest
 # drives and is downed on the horse (godmode off just before the host makes the guard hostile), E, revived.
+# S3: world_horse_down_off named (labsetting lines are session-wide: it acts only on a rider downed while riding, so
+# parts 1 and 2 run as with no key [I]): the downed driver gets off by the stock get-off (horse_drive=getoff, then
+# horse_drive=ride_rec st=3 on body 0); the passenger is laid off by world_horse_pillion (stop passenger_downed).
+labsetting world_horse_down_off=1
 logmark both
 both debug godmode 1
 host debug teleport 878.8 322.9 1734.2 -5

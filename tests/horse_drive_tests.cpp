@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include "mgscoop/horse_body_watch.hpp"
 #include "mgscoop/horse_drive.hpp"
 #include "mgscoop/horse_ride.hpp"

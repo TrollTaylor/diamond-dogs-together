@@ -8562,6 +8562,35 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                        static_cast<unsigned long long>(dm.rec18), unsigned(dm.rec1a0), unsigned(dm.rec248), m.pillion_grace_n,
                        m.pillion_pose ? 1u : 0u);
         }
+        // Step S3 (logs only): body 1's part of the motion records ReadAnim hashes for instance 0 (the standing pose
+        // changes nothing logged so far), as raw hex whenever their hash changed, at most 120 lines a process.
+        if (m.pillion_err_n) {
+            static std::uint32_t mg_last = 0;
+            static unsigned mg_lines = 0;
+            unsigned char d8[0x80]{}, e0[0x40]{}, f8[0x40]{};
+            if (pp::ReadMotionRaw(st, d8, e0, f8)) {
+                const std::uint32_t h1 = pp::MotionHash(d8 + 0x40, 0x40), h2 = pp::MotionHash(e0, sizeof(e0)),
+                                    h3 = pp::MotionHash(f8, sizeof(f8));
+                const std::uint32_t all = h1 ^ (h2 * 31u) ^ (h3 * 131u);
+                if (all != mg_last && mg_lines < 120) {
+                    mg_last = all;
+                    ++mg_lines;
+                    char hex[3][0x81]{};
+                    const auto put = [](char* out, const unsigned char* b, std::size_t n) noexcept {
+                        static const char digits[] = "0123456789abcdef";
+                        for (std::size_t i = 0; i < n; ++i) {
+                            out[2 * i] = digits[b[i] >> 4];
+                            out[2 * i + 1] = digits[b[i] & 15u];
+                        }
+                    };
+                    put(hex[0], d8 + 0x40, 0x40);
+                    put(hex[1], e0, sizeof(e0));
+                    put(hex[2], f8, sizeof(f8));
+                    EmitFormat(h, "partner_pillion=mg; n=%u; h=%08x,%08x,%08x; d8_1=%s; e0=%s; f8=%s\r\n", mg_lines, h1, h2, h3, hex[0],
+                               hex[1], hex[2]);
+                }
+            }
+        }
         m.pillion_stats_ms = now;
         m.pillion_xz_max = m.pillion_dy_max = 0.f;
         m.pillion_err_n = 0;

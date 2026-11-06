@@ -38,6 +38,11 @@
 //   pbox <mission> <epoch> <x> <y> <z> <yaw>    -> {ready=true,box=true} | refusal  (M4, world_horse_shot: this copy's player
 //     sits behind the partner; the placed census root and yaw of this copy's horse, leased kBoxMs to the seated-shot hook
 //     (partner_seat_shot Class::horse): the player's own bullets start past the horse and the driver in front of them.)
+//   rrec <mission> <epoch>                      -> {ready=true,st0,st1}  (step S3: the RideHorse action's ride records of
+//     bodies 0 and 1 (native/include/mgscoop/horse_ride.hpp), logged change-only as horse_drive=ride_rec; reads only.)
+//   getoff <mission> <epoch>                    -> {ready=true,getoff=1,st} | refusal  (step S3, lab key
+//     world_horse_down_off: this copy's player rides the shared horse and is downed (Lua checks): the stock get-off's
+//     writes on body 0's ride record, next state 3; the downed cycle's ACTION mask hides the player's own E.)
 // mm / mrad. anchor 1: when the partner driver shows body 1 as a horse rider (partner_mount_policy) and its body
 // sample is fresh, the horse goes under that body (HorseUnderRider), the yaw from the stream: the rider sits in the
 // saddle on this screen whatever the two streams' delays are.
@@ -61,7 +66,7 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
 
-enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox };
+enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox, rrec, getoff };
 struct Request {
     Verb verb{};
     std::uint32_t mission{}, epoch{};

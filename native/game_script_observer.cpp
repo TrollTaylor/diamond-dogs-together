@@ -58,6 +58,7 @@
 #include "mgscoop/buddy_capacity_walker.hpp"
 #include "mgscoop/horse_body_watch.hpp"
 #include "mgscoop/horse_drive.hpp"
+#include "mgscoop/horse_ride.hpp"
 #include "mgscoop/buddy_capacity_pins.hpp"
 #include "mgscoop/buddy_ride_read.hpp"
 #include "mgscoop/ride_player_observer.hpp"
@@ -5339,8 +5340,9 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     // cfg: world_horse_share (on), the M2 sub-key world_horse_cargo (cargo, lua/coop/world_horse_cargo.lua) and the M3
     // sub-key world_horse_pillion (pillion, lua/coop/world_horse_pillion.lua); M4's world_horse_shot (shot, with pillion).
     if(q.verb==hd::Verb::cfg) {
-        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {on=%u,cargo=%u,pillion=%u,shot=%u}",labc.world_horse_share?1u:0u,
-            labc.world_horse_cargo?1u:0u,labc.world_horse_pillion?1u:0u,labc.world_horse_pillion && labc.world_horse_shot?1u:0u)))
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {on=%u,cargo=%u,pillion=%u,shot=%u,down=%u}",labc.world_horse_share?1u:0u,
+            labc.world_horse_cargo?1u:0u,labc.world_horse_pillion?1u:0u,labc.world_horse_pillion && labc.world_horse_shot?1u:0u,
+            labc.world_horse_down_off?1u:0u)))
             return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
@@ -5399,6 +5401,57 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     std::uint8_t pend[2]{};
     const bool pendRead=UpperPhaseRead(nullptr,a.record+0x2e3,pend,sizeof(pend));
     const unsigned gen=hd::Generation(horse.records,horse.receiver,horse.realized_mask);
+    // Step S3 rrec / getoff (native/include/mgscoop/horse_ride.hpp): the RideHorse action's ride records (body 1 STANDING on
+    // the rump on the driver's screen while its DM act and record stay put: S2, cause [U]) and the downed rider's get-off.
+    if(q.verb==hd::Verb::rrec || q.verb==hd::Verb::getoff) {
+        namespace hr=mgscoop::horse_ride;
+        static int ridePins=-1;
+        if(ridePins<0) ridePins=hr::PinsReason(reinterpret_cast<std::uintptr_t>(base),span)?0:1;
+        if(ridePins!=1) return refuse("ride_pins");
+        const auto image=reinterpret_cast<std::uintptr_t>(base);
+        const auto readBody=[&](unsigned k,pp::Block& blk,hr::Rec& rec) noexcept -> const char* {
+            rec=hr::Rec{};
+            if(!pp::Realized(player,k) || pp::ResolveBlock(partner_addresses,player,k,blk)) return "block";
+            const auto plugin=hr::FindPlugin(image,blk.blk,player.P);
+            if(!plugin) return "plugin";
+            return hr::Read(plugin,blk.id,blk.id_count,rec);
+        };
+        if(q.verb==hd::Verb::rrec) {
+            static hr::Rec last[2]{};static const char* lastWhy[2]{};static unsigned lines=0;
+            int st[2]={-1,-1};
+            for(unsigned k=0;k<2;++k) {
+                pp::Block blk{};hr::Rec rec{};
+                const char* why=readBody(k,blk,rec);
+                if(rec.ok) st[k]=rec.state;
+                if((hr::Changed(last[k],rec) || why!=lastWhy[k]) && lines<400) {
+                    ++lines;
+                    LogFormat("horse_drive=ride_rec; body=%u; ok=%u; why=%s; st=%u; nx=%u; again=%u; sub=%u; rider=%u; sel=%u; forced=%u; "
+                              "id=%u; n=%u\r\n",k,rec.ok?1u:0u,why?why:"none",unsigned(rec.state),unsigned(rec.next),unsigned(rec.again),
+                              rec.sub?1u:0u,unsigned(rec.rider),unsigned(rec.select),unsigned(rec.forced),unsigned(blk.id),lines);
+                }
+                last[k]=rec;lastWhy[k]=why;
+            }
+            if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=true,st0=%d,st1=%d}",st[0],st[1])))
+                return finish("return {ready=false,reason='read'}");
+            return finish(reply);
+        }
+        // getoff (world_horse_down_off): this copy's player rides the shared horse (census rider 0); Lua checks it is downed.
+        static unsigned getoffLines=0;
+        if(!labc.world_horse_down_off) return refuse("off");
+        if(!(a.occupied && a.rider==0)) return refuse("not_riding");
+        pp::Block blk{};hr::Rec rec{};
+        const char* why=readBody(0,blk,rec);
+        if(!why) why=hr::ForceGetOff(rec.plugin,blk.id,blk.id_count,rec);
+        if(getoffLines<40) {
+            ++getoffLines;
+            LogFormat("horse_drive=getoff; ok=%u; why=%s; st=%u; nx=%u; rider=%u; sel=%u; id=%u\r\n",why?0u:1u,why?why:"none",
+                      unsigned(rec.state),unsigned(rec.next),unsigned(rec.rider),unsigned(rec.select),unsigned(blk.id));
+        }
+        if(why) return refuse(why);
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=true,getoff=1,st=%u}",unsigned(rec.state))))
+            return finish("return {ready=false,reason='read'}");
+        return finish(reply);
+    }
     if(q.verb==hd::Verb::read) {
         // M3c: record 0's life from the receiver's life table (SetMaxLife's loop, a pinned site; -1 unreadable).
         std::uint16_t life=0,maxLife=0;

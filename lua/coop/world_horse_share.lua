@@ -41,7 +41,7 @@ end
 function S.keyOn()
  if S.key == nil then
   local r = receipt("cfg")
-  if r and (r.on == 1 or r.on == 0) then S.key = r.on == 1 end
+  if r and (r.on == 1 or r.on == 0) then S.key, S.downKey = r.on == 1, r.down == 1 end
  end
  return S.key == true
 end
@@ -259,6 +259,26 @@ if type(T) == "table" and type(T.blocked) == "function" then
   if S.busy() then return 3 end
  end
 end
+-- Step S3: the RideHorse ride records of both bodies (native logs them change-only: horse_drive=ride_rec) at RREC_MS; with
+-- world_horse_down_off a downed rider of the shared horse gets off (getoff: the stock get-off's next state 3), at most
+-- GETOFF_TRIES requests GETOFF_MS apart while it stays downed and mounted (the downed cycle's ACTION mask hides its E).
+local RREC_MS, GETOFF_MS, GETOFF_TRIES = 250, 500, 6
+S.GETOFF_MS, S.GETOFF_TRIES = GETOFF_MS, GETOFF_TRIES
+local function selfDown()
+ local d = W.downed
+ local r = type(d) == "table" and type(d.records) == "table" and d.records[W.role] or nil
+ return type(r) == "table" and r.down == true
+end
+function S.rideTick(t)
+ if t >= (S.rrecAt or 0) then S.rrecAt = t + RREC_MS; receipt(fmt("rrec %d %d", W.mission, W.epoch)) end
+ if not (S.downKey and selfDown() and S.localRides()) then S.getoffN = nil; return end
+ S.getoffN = S.getoffN or 0
+ if S.getoffN >= GETOFF_TRIES or t < (S.getoffAt or 0) then return end
+ S.getoffN, S.getoffAt = S.getoffN + 1, t + GETOFF_MS
+ local r = receipt(fmt("getoff %d %d", W.mission, W.epoch))
+ log(fmt("step=getoff;n=%d;ok=%d;reason=%s;", S.getoffN, r and r.ready == true and 1 or 0,
+  r and tostring(r.ready == true and r.st or r.reason) or "receipt"))
+end
 local tick = W.tick
 function W.tick(...)
  if tick then tick(...) end
@@ -277,6 +297,7 @@ function W.tick(...)
   if type(C) == "table" and type(C.HOLD) == "table" and not C.HOLD.HORSE then C.HOLD.HORSE = true end
   S.send(t)
   S.apply(t)
+  S.rideTick(t)
  end)
  if not ok then log("step=error;" .. tostring(err)); pcall(S.reset, "error") end
 end
