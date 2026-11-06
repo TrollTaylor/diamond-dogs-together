@@ -1,3 +1,35 @@
+## November 5, 2026: horse step S2 - riding behind your partner: order (b) from open ground, the standing pose reproduced (cause not found), the downed rider not reproduced; horse log lines kept (`wp/horse`)
+
+**Players get:** nothing new in play; riding behind your partner works as in 0.15.3 (on by default). One fix for logs
+only: the horse's diagnostic lines no longer drop out when the patrol trucks flood the log. Known limits now better
+measured: your partner can see you standing on the horse's back behind them instead of sitting - this round every time
+the guest steered (from the moment they sat down) and, with the host steering, after the horse ran into a rock; a rider
+downed while riding was not tested this round (the test scenes did not get a guard to shoot a rider).
+docs/mounts.md section 16.
+
+- **Code:** `866cce5c` red / `c8209630` green and `9b7afee6` red / `79d467da` green: debug `horse_here` (this copy's
+  unridden horse 4 m right of the player, root 0.6 m over the feet; `world_horse_share` `S.here`, the `place` verb) so
+  the seat scenarios' order (b) starts on the boot spot's open ground (the recall did not move a horse M1's final had
+  placed: 79287a27 / 1c2a6b0a); `partner_pillion=stats` + body 1's act / stance / upper act, overlay phase, DM record,
+  seat grace and pose flag (`228d598c` header fix); scenarios: a rock stop in each order, `horse-down-guard.txt`.
+  `0b4263d2` red / `38c3c705` green: `log_budget::HorseLine` lines from their own world-log bucket (play `b228d163`:
+  441 `world=log_cap` lines on the host took the horse's first_move / stall lines). Full build + CTest 355/355 at
+  `228d598c` and `38c3c705`; every `--check` passes but the base four (carry_info, sleep_plugin differ; native_ui,
+  teammate_targeting no local evidence).
+- **Runs** (no horse key named; `-WanSim bad`, gun profile, research build, afgh-ledge; two attempts): lab `41ae2b4c` /
+  play `b228d163` at `228d598c`, lab `c1982534` / play `186c02d8` at `38c3c705` (the final code head). Order (b) now
+  starts on the boot spot's open ground (`horse_here` placed=1 on both copies, all four runs); at the final head, both
+  orders, lab and play: every first E at an unridden horse mounted, the driver's E after the hop-off got them off
+  (2.6-3.4 s after the seat ended), the passenger's own seat windows 0/0 after the seating second but one 52 cm window in
+  each (a); on the driver's screen body 1 STANDS on the horse's back in (b) from the seating (all three (b) runs this
+  round) and in (a) once the horse is pushed into rock (frames looked at; mounts 16), while every logged state of body 1
+  stays the same. The guard part never reached a mount (attempt 1: the nearest guard 354 m off was routed, and the host's
+  mount fell after `horse_here`; attempt 2: both players fell from a cliff next to the guard). Archives
+  `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` with full observer logs.
+- **Gate not passed:** the standing pose (cause [U]: nothing logged changes with it) and the downed rider (not
+  reproduced: the guard part fell to scenario defects - a routed guard 354 m off, a fall after horse_here at the feet,
+  then a slope that downed both players). No default change. Nothing pushed.
+
 ## November 5, 2026: 0.15.3 package
 
 **Package (2026-11-05):** `dist/DiamondDogsTogether-0.15.3-20261106T015726Z-2bf21f1b/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `0e5eb68` with Release receipt `20261106-015411-6a5bf966e101442bb3735d0c7d291dd2` (passed, 342 audited tests, 0 failures; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.3+0e5eb68` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
