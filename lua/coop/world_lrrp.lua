@@ -217,12 +217,17 @@ H[LF.OP] = function(...)
   if b and ((v[1] - b.tick) % 4294967296 >= 2147483648 or v[1] == b.tick) then return end
   -- Enemy round 11 B (design 7.32): the clock offset is the lowest of the last second's samples (it was the lowest ever,
   -- rising 2 % a sample: after a step up, ahead sat at its 400 ms cap for seconds and the copy led; 86d6045f's 25606).
+  -- Land fix (review): the window only with lrrp_follow named (cfg 1); at the defaults the 0.15.3 filter (no game run of
+  -- the window yet).
   local off = t - v[1]
-  if not tr.off or off < tr.off or off - tr.off > 10000 then tr.off = off end
-  tr.wmin = math.min(tr.wmin or off, off)
-  if t - (tr.wAt or -1e9) >= LF.OFF_WIN_MS then
-    if tr.wAt then tr.off = tr.wmin end
-    tr.wAt, tr.wmin = t, nil
+  if not tr.off or off < tr.off or off - tr.off > 10000 then tr.off = off
+  elseif LF.cfg ~= 1 then tr.off = tr.off + (off - tr.off) * 0.02 end
+  if LF.cfg == 1 then
+    tr.wmin = math.min(tr.wmin or off, off)
+    if t - (tr.wAt or -1e9) >= LF.OFF_WIN_MS then
+      if tr.wAt then tr.off = tr.wmin end
+      tr.wAt, tr.wmin = t, nil
+    end
   end
   tr.a, tr.b, tr.at = b, {tick = v[1], x = v[3], y = v[4], z = v[5], yaw = v[6], v = v[7], n = v[8], f = v[9]}, t
   end, ...)
@@ -480,12 +485,14 @@ end
 -- Enemy round 11 B (design 7.30 proposal, 7.32): the crew hold. fc141dc1: the host handed 25605's crew to the guest 3.4 s
 -- after they got out (event=owner;why=near) and M3 placements left the copies 6.3-8.4 m apart. For HOLD_MS after a host
 -- get-out (W.crewOutAt) the host keeps a crew member it owns (P.ownerOf answers 0; world_place.lua has no room left).
+-- Land fix (review): only with lrrp_follow named (cfg 1). The host's copy stays the brain and host copies do not
+-- perceive the guest (soldier_perceive off), so at the defaults it could leave the guest less seen than 0.15.3.
 local P = W.place
 if type(P) == "table" and type(P.ownerOf) == "function" then
   local ownerOf = P.ownerOf
   function P.ownerOf(h, dh, dq, now)
     local at, o = LF.out[h], type(P.own) == "table" and P.own[h]
-    if at and now - at < LF.HOLD_MS and (not o or o.o == 0) and LF.on() then
+    if at and now - at < LF.HOLD_MS and (not o or o.o == 0) and LF.on() and LF.cfg == 1 then
       if not LF.held[h] then
         LF.held[h] = true
         L("event=lrrp;step=crew_hold;ent=%.0f;after_ms=%.0f;dh_m=%.0f;dq_m=%s", h, now - at, sqrt(dh) / 1000,
