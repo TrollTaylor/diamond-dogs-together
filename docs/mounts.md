@@ -1118,9 +1118,10 @@ Round `wp/horse` step S2 (no horse key named in any run: `pillion_status` `key=1
   body 1's motion graph state (the instance-1 counterparts of Q+0x1D8 / 0x1E0 / 0x1F8, which `ReadAnim` hashes for
   instance 0 only) between a seated and a standing frame, and try once a DM replay of stateRideOnIdle while standing (the
   overlay's own `lost` path); compare (b)'s seat entry with 79287a27's (that one sat: the guest faced 119 there, and the
-  horse stood where (a) ended); the downed rider - a guard placed by hand on flat ground near the boot spot without
-  `clear_enemies` (or seat-a's `clear_enemies` after the guard part), the rider's godmode off just before the guard turns
-  hostile; then the forced get-off by the ride record (`+0x11 = 3`, the state table getter's vtable to find the instance).
+  horse stood where (a) ended); the downed rider - where (b) ends `spawn_enemy here come` already warps a guard 5 m from
+  the host (attempt 2: d 5.1 / 5.4 m), so drop the `enemy goto` (it sent both players off a cliff) and run `horse_here`
+  and the mounts there, the rider's godmode off just before the guard turns hostile; then the forced get-off by the ride
+  record (`+0x11 = 3`, the state table getter's vtable to find the instance).
 
 ## Risks
 
