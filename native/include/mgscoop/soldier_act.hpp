@@ -114,14 +114,27 @@ struct RestView {
     bool realized, listed, has;
     float speed_mps;
     float pos[3], end[3];
+    // Enemy round 11 track A (design 7.31): the stance nibble S+0x98 records +0x34 & 0xf the set-transform handler reads
+    // (0xff: not read).
+    std::uint8_t stance = 0xff;
 };
-enum class QuietWhy : std::uint8_t { ok, unknown, stale, unrealized, unlisted, moving, path };
+// Round 11 (design 7.31): walk = a walking guard or one with a path ahead: the quiet move, then his re-plan (QuietPlan);
+// stance = stance 3-4 or unread: the message (its rotated pose; no action post there). moving / path are no longer given.
+enum class QuietWhy : std::uint8_t { ok, unknown, stale, unrealized, unlisted, moving, path, walk, stance };
 inline constexpr std::uint64_t kRestMs = 250, kRestStaleMs = 1500;
 inline constexpr float kRestSpeedMps = 0.5f, kRestPathM = 2.0f;
 // ok only when the view is at most kRestStaleMs old, realized, listed, his speed known and at most kRestSpeedMps, and no
 // path of his ends more than kRestPathM (x/z) from both where he stands and the target (he would walk there after it).
 QuietWhy QuietChoose(const RestView& r, const float (&target)[3], std::uint64_t now_ms) noexcept;
 const char* QuietWhyName(QuietWhy why) noexcept;
+// Enemy round 11 track A (design 7.31): after a quiet move of a walker, his re-plan from where he now stands to his own
+// brain's destination R+0x80 (the shadow plan 0x1413725f0 of act_plan): only for a started walk (dest mode 1,
+// PlanGate); his brain's live slot of another type is cancelled first (PlanSlot); another type with no handle: busy.
+// slot_read: whether his planner slot was read at all (the review: an unread slot is no empty slot): none if not.
+enum class QuietPlan : std::uint8_t { none, busy, plan, cancel_then_plan };
+QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle, bool slot_read) noexcept;
+const char* QuietPlanName(QuietPlan step) noexcept;
 // Whether idx is among the first count entries of the realized list.
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept;
 #ifdef _WIN32
@@ -342,7 +355,7 @@ QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept;
 void SetQuietRest(bool on) noexcept;
 // Stages a quiet move of guard idx (go: his GameObjectId, for the line) to pos / yaw: the hook runs 0x136ece0 in its next
 // update (before the engine's own) and logs world_place=quiet. False when the hook is not installed or idx is out of range.
-bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept;
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan = false) noexcept;
 #endif
 
 } // namespace mgscoop::soldier_act

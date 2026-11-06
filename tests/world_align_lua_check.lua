@@ -1063,6 +1063,12 @@ if arg[7] and arg[8] then
     ticks(fgB, 160)
     check(logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=2000;') and logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=5000;'),
         'quiet_place: the quiet move is read back at 2 s and 5 s too')
+    -- Enemy round 11 track A (design 7.31): a fourth read-back 10 s after a quiet move (a moved walker keeps walking: his
+    -- gate is measured against the owner copy), and each quiet read-back gives the x/z distance to the owner copy (the
+    -- host's last sample moved on by its speed for at most 400 ms: dho_m; its age: oage_ms).
+    ticks(fgB, 200)
+    check(logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=10000;') and logged(fgB, ';dho_m=') and logged(fgB, ';oage_ms='),
+        'quiet_place: the quiet move is read back at 10 s too, and against the owner copy')
     fgA.warp = {{r = 0, h = 1, leaf = 'engine'}}
     ticks(fgA, 4)
     check(receipt(fgA, "'MGS_COOP_WORLD_WARP_V1' -- 5 1") and not receipt(fgA, "'MGS_COOP_WORLD_WARP_V1' -- 5 1 1"),
