@@ -363,6 +363,12 @@ def analyse(host, guest):
                        'moved': sum(1 for l in host if l.startswith('world_place=quiet;') and fields(l).get('moved') == '1'),
                        'readback': sum(1 for l in host if 'event=readback' in l and 'src=quiet' in l)}
     r['host_quiet'].update(walk_owner(host, 'world_place=host_warp'))
+    # Round 12: the message corrections' 2 s read-backs against the owner copy (src=place dho_m), per side.
+    r['place_owner_2s'] = {}
+    for side, lines in (('host', host), ('guest', guest)):
+        p2 = [fields(l) for l in lines if 'event=readback' in l and 'src=place' in l and 'at=2000' in l and 'dho_m=' in l]
+        r['place_owner_2s'][side] = {'read': len(p2), 'within_3m': sum(1 for f in p2 if float(f.get('dho_m', 99)) <= 3.0),
+                                     'guards': len(set(f.get('ent') for f in p2))}
     owners = [fields(l) for l in host if 'event=owner;' in l or 'event=owner; ' in l]
     r['m3_owner_changes'] = len(owners)
     last, fast = {}, 0
