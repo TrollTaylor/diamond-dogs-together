@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "runtime_verified": false,
+  "native_calls": false,
+  "scope": "MGS_COOP_HORSE_DRIVE_V1 rrec / getoff (step S3): the RideHorse action's per-player ride record (read; getoff writes next state 3 as the stock get-off callers do)",
+  "sites": [
+    {
+      "rva": 19052203,
+      "why": "RideHorse ctor 0x14122B610: obj = vtable 0x1423CB600, obj+0x10 = 0x1423CB680 (the factory 0x14122CF80 returns obj+0x10), obj+0x30 = 0x1423CB6B0",
+      "bytes": "488d054eff1901488901488d05c4ff190148894110488d05e9ff190148894130",
+      "sha256": "d03dc612ea8ce56bfbe72763907d9c4e8ae856abfd7d00b7dd25780d08b3ddb2"
+    },
+    {
+      "rva": 19061301,
+      "why": "RideHorse per-player update 0x14122DA20: rec = *(obj+0x68) + (id - *(*(obj+0x38)+0x24)) * 0x2B0; P = *(*(obj+8)+0x138) (obj+8 = the player block)",
+      "bytes": "488b41388bea8bf22b6824488b41084c8bf14c8b80380100004869edb002000048036968",
+      "sha256": "1b70c8b262ccd2f56f980100c1e807589ac5e978e570f6e78ea846a136b767db"
+    },
+    {
+      "rva": 19062190,
+      "why": "the update's transition check 0x14122DDA0: next = rec+0x11; when non-zero and (rec+0x235 or next != rec+0x10) -> 0x14122DE30 (exit, enter next)",
+      "bytes": "0fb66911458bf04c8bfa488bf185ed745880b9350200000075080fb641103be87447",
+      "sha256": "140cba8ad11dbe879a62e7b3adbc514ade0455d6bf04ae06a08da964bf0b2fe3"
+    },
+    {
+      "rva": 19098509,
+      "why": "ride state 5 (0x141236940) on the get-off check 0x14122F3F0: sub = rec+0x18; sub+0x7C == id & 0x1FF -> sub+0x82 = 6; rec+0x11 = 3; rec+0x235 = 0",
+      "bytes": "4c8b47180fb7c6b9ff0100006623c166413b407c750841c6808200000006448bc6498bd7488bcdc6471103c6873502000000",
+      "sha256": "b19ab8ddc90cb2146488e4ccac271920ea2c52c52ec14f3791272a6c53d11019"
+    }
+  ],
+  "slots": [
+    {
+      "vtable_rva": 37533360,
+      "offset": 24,
+      "target_rva": 19062512,
+      "why": "obj+0x30 interface: the per-player event dispatcher (thunks to 0x14122DA20 with rcx - 0x30)"
+    },
+    {
+      "vtable_rva": 37533184,
+      "offset": 0,
+      "target_rva": 19168512,
+      "why": "the RideHorse primary vtable's first slot"
+    },
+    {
+      "vtable_rva": 37533312,
+      "offset": 0,
+      "target_rva": 19052828,
+      "why": "the obj+0x10 interface vtable's first slot"
+    }
+  ]
+}

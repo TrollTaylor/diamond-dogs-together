@@ -70,6 +70,7 @@ local function fixture(host, level, mb)
             c.acts = c.acts or {}
             c.acts[#c.acts + 1] = source
             if source:find("-- p ", 1, true) then return c.pReply or {p = 1} end
+            if c.actFn then return c.actFn(source) end
             return c.actReply or {f = 1, sh = c.shots or 0}
         end
         c.receipts[#c.receipts + 1] = source
@@ -1063,6 +1064,12 @@ if arg[7] and arg[8] then
     ticks(fgB, 160)
     check(logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=2000;') and logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=5000;'),
         'quiet_place: the quiet move is read back at 2 s and 5 s too')
+    -- Enemy round 11 track A (design 7.31): a fourth read-back 10 s after a quiet move (a moved walker keeps walking: his
+    -- gate is measured against the owner copy), and each quiet read-back gives the x/z distance to the owner copy (the
+    -- host's last sample moved on by its speed for at most 400 ms: dho_m; its age: oage_ms).
+    ticks(fgB, 200)
+    check(logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=10000;') and logged(fgB, ';dho_m=') and logged(fgB, ';oage_ms='),
+        'quiet_place: the quiet move is read back at 10 s too, and against the owner copy')
     fgA.warp = {{r = 0, h = 1, leaf = 'engine'}}
     ticks(fgA, 4)
     check(receipt(fgA, "'MGS_COOP_WORLD_WARP_V1' -- 5 1") and not receipt(fgA, "'MGS_COOP_WORLD_WARP_V1' -- 5 1 1"),
@@ -1442,6 +1449,32 @@ if arg[7] and arg[8] then
     check(#ss.drives == n1 and not ss.W.snapDriving(ENT1, ss.now), 'M4: a stale stream backs the guard off')
     ticks(ss, 10)
     check(#ss.drives > n1, 'M4: and tries again after 500 ms')
+    -- Enemy harden (design 7.30): a guard seated in a vehicle on this copy (GetVehicleGameObjectId, the placements'
+    -- vehicle_local) is never driven: no xz step and no vert snap would pull him out of the seat (f256bf29: 25605's two
+    -- riders drove past the guest 12 m off, its riders streamed and driven); on foot again he is driven.
+    ;(function()
+        local sv = guestFix(180)
+        sv.W.snapOn = true
+        sv.positions[1] = {0, 1.8, 20.0}
+        sv.vehicles = {[1] = 77}
+        ticks(sv, 10)
+        local function drivesOf(c, slot)
+            local n = 0
+            for _, s in ipairs(c.drives or {}) do if s:find(" -- " .. slot .. " ", 1, true) then n = n + 1 end end
+            return n
+        end
+        check(drivesOf(sv, 1) == 0 and not sv.W.snapDriving(ENT1, sv.now) and logCount(sv, 'event=snap_seated;ent=3000000001;id=1;on=1') == 1,
+            'M4: a guard seated in a vehicle here is never driven (one snap_seated line)')
+        sv.vehicles = {}
+        ticks(sv, 20)
+        check(drivesOf(sv, 1) > 0 and logCount(sv, 'event=snap_seated;ent=3000000001;id=1;on=0') == 1, 'M4: out of the vehicle he is driven again')
+        sv.vehicles = {[1] = 77}
+        local n2 = drivesOf(sv, 1)
+        ticks(sv, 20)
+        check(drivesOf(sv, 1) <= n2 + 8 and logCount(sv, 'event=snap_seated;ent=3000000001;id=1;on=1') == 2, 'M4: seated again: left alone within 250 ms')
+        ticks(sv, 300)
+        check(logged(sv, 'event=snap_stats;') and logged(sv, ';seated='), 'M4: snap_stats counts the seated skips')
+    end)()
     -- Enemy gaps: a driven copy 1.5 m under its owner for 2 s logs event=drive_sink once (v: its y minus the target's, cm).
     local sk = guestFix(180)
     sk.W.snapOn = true
@@ -1789,6 +1822,17 @@ if arg[7] and arg[8] then
     ticks(t, 80)
     check(logged(t, 'event=readback;ent=3000000001;src=place;at=500;') and not logged(t, 'event=readback_fix;'),
         'far without place_reach: read back and logged only')
+    -- Enemy round 12 track A (design 7.31): a far message correction's read-backs give the x/z distance to the owner copy
+    -- too (dho_m / oage_ms, as a quiet move's), so the default path's walkers can be compared with quiet_place's.
+    -- Round 12 review: dho_m / oage_ms on that 2 s src=place line itself, not on any line.
+    -- (An inner function: the main chunk is at Lua 5.1's 200-local limit.)
+    check((function(c)
+        for _, line in ipairs(c.logs) do
+            if line:find('event=readback;ent=3000000001;src=place;at=2000;', 1, true) and line:find(';dho_m=', 1, true) and
+                line:find(';oage_ms=', 1, true) then return true end
+        end
+        return false
+    end)(t), 'far: the message correction is read back against the owner copy too (dho_m on its 2 s read-back)')
     end
     end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
@@ -1869,7 +1913,7 @@ if arg[7] and arg[8] then
     do
     local mg = guestFix(0)
     mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
-    mg.W.handlers[92]({1, 6})                               -- the partner's ACT_CAPS (round 6)
+    mg.W.handlers[92]({1, 7})                               -- the partner's ACT_CAPS (round 6)
     -- R(ALERT) is 1.5 x the farthest ALERT hit (122.4 m on the host, run 3bc7280b) = 184 m, not capped: 12 copies stayed
     -- realized out to 212 m (host) and 400 m (guest), so no realize radius was measured (skeptic of 7b709720).
     -- FM1 retry (run 94a7bf2a): the guest's own copies hit it from up to 173.9 m in ALERT (guard 16), so R(ALERT) is
@@ -1937,7 +1981,7 @@ if arg[7] and arg[8] then
     -- The host side: its own NORMAL guard within 250 m of the guest and beyond R - 10 m is registered; nearer ones not.
     local mh = followFixture(true)
     mh.W.snapOn, mh.W.actOn, mh.W.mission = true, true, 30010
-    mh.W.handlers[92]({1, 6})
+    mh.W.handlers[92]({1, 7})
     mh.positions[900] = {0, 0, 0}
     mh.positions[1] = {0, 1.8, 100.0}
     mh.positions[2] = {0, 1.8, 30.0}
@@ -1951,7 +1995,7 @@ if arg[7] and arg[8] then
     check((function()
         local ma = guestFix(0)
         ma.W.snapOn, ma.W.actOn, ma.W.mission = true, true, 30010
-        ma.W.handlers[92]({1, 6})
+        ma.W.handlers[92]({1, 7})
         ma.positions[1] = {0, 1.8, 100.0}
         ma.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
         ticks(ma, 70)
@@ -1971,7 +2015,7 @@ if arg[7] and arg[8] then
     check((function()  -- its own function: the main chunk is at Lua's 200-local limit
         local mr = followFixture(true)
         mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
-        mr.W.handlers[92]({1, 6})
+        mr.W.handlers[92]({1, 7})
         mr.positions[900] = {0, 0, 0}
         mr.positions[1] = {0, 1.8, 280.0}
         mr.positions[2] = {0, 1.8, 320.0}
@@ -1989,7 +2033,7 @@ if arg[7] and arg[8] then
     end
     local mr = guestFix(0)
     mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
-    mr.W.handlers[92]({1, 6})
+    mr.W.handlers[92]({1, 7})
     mr.positions[1] = {0, 1.8, 100.0}
     ticks(mr, 4)
     check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet (setup)')
@@ -2062,19 +2106,29 @@ if arg[7] and arg[8] then
         ticks(oh, 60)
         check(n(oh, ' -- t ') == 0 and n(oh, ' -- s ') == 0, 'FM1 round 6: an old partner: the host registers and sends nothing')
         local capsTx = 0
-        for _, t in ipairs(oh.tx) do if t.op == 92 and t.v[1] == 1 and t.v[2] == 6 then capsTx = capsTx + 1 end end
-        check(capsTx == 1, 'FM1 round 6: a PC with soldier_act announces ACT_CAPS {1, 6} once while paired')
-        og.W.handlers[92]({1, 6})
+        for _, t in ipairs(oh.tx) do if t.op == 92 and t.v[1] == 1 and t.v[2] == 7 then capsTx = capsTx + 1 end end
+        check(capsTx == 1, 'FM1 round 12: a PC with soldier_act announces ACT_CAPS {1, 7} (revision 7) once while paired')
+        -- Round 12 C (design 7.33, D-FM2): act_plan follows the gun profile with the far mirror, and its walk destination
+        -- (the host copy's next path point) is revision 7's: a revision 6 partner (soldier_act named without act_plan, as
+        -- 0.15.3 has it) takes and gives no puppet.
+        og.W.handlers[92]({3, 6})
         ticks(og, 8)
-        check(og.W.mirror.pp[3000000001] ~= nil and logged(og, 'event=mirror_peer;caps=1;rev=6'),
+        check(next(og.W.mirror.pp) == nil and n(og, ' -- m ') == 0 and logged(og, 'event=mirror_peer;caps=3;rev=6'),
+            'FM1 round 12: a revision 6 partner (no act_plan) takes no puppet')
+        oh.W.handlers[92]({3, 6})
+        ticks(oh, 8)
+        check(n(oh, ' -- t ') == 0 and n(oh, ' -- s ') == 0, 'FM1 round 12: a revision 6 partner: the host registers and sends nothing')
+        og.W.handlers[92]({1, 7})
+        ticks(og, 8)
+        check(og.W.mirror.pp[3000000001] ~= nil and logged(og, 'event=mirror_peer;caps=1;rev=7'),
             'FM1 round 6: after the partner\'s ACT_CAPS: a puppet')
-        oh.W.handlers[92]({1, 6})
+        oh.W.handlers[92]({1, 7})
         ticks(oh, 8)
         check(n(oh, ' -- t 1 1') >= 1 and n(oh, ' -- s ') >= 1, 'FM1 round 6: after the partner\'s ACT_CAPS: the host sends')
         og.W.handlers[92]({0, 6})
         ticks(og, 2)
         check(logged(og, 'on=0;why=peer') and next(og.W.mirror.pp) == nil, 'FM1 round 6: a partner without the mirror releases every puppet')
-        og.W.handlers[92]({1, 6})
+        og.W.handlers[92]({1, 7})
         for _, f in ipairs(og.W.unpairedHooks) do f(1) end
         check(og.W.mirror.peer == nil, 'FM1 round 6: unpaired forgets the partner\'s caps')
         local ow = guestFix(0)
@@ -2082,14 +2136,14 @@ if arg[7] and arg[8] then
         ticks(ow, 60)
         local quiet = true
         for _, t in ipairs(ow.tx) do if t.op == 92 then quiet = false end end
-        check(quiet, 'FM1 round 6: without soldier_act nothing is announced (the defaults send nothing new)')
+        check(quiet, 'FM1 round 6: without soldier_act nothing is announced')
     end)()
     -- FM1 round 6 (4): the phase lever (soldier_act=calm, native's ACT_V1 p reply pl=1) mirrors only in calm / caution;
     -- without it (pl=0, the current behaviour) an ALERT puppet beyond R(ALERT) + 15 m stays.
     ;(function()
         local pl = guestFix(0)
         pl.W.snapOn, pl.W.actOn, pl.W.mission = true, true, 30010
-        pl.W.handlers[92]({1, 6})
+        pl.W.handlers[92]({1, 7})
         pl.positions[1] = {0, 1.8, 280.0}
         ticks(pl, 8)
         check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever: a puppet at 280 m in calm (setup)')
@@ -2105,13 +2159,79 @@ if arg[7] and arg[8] then
         pl.W.cp[100].localPhase = 1
         ticks(pl, 40)
         check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever pl=1: a puppet again in caution')
+        -- Round 12 C (D-FM1 (a); runs 516e3ef7 / 4735fee5: LRRP crew 176 / 177, their own CP calm, fought in CP 557's ALERT
+        -- and the guest took them at 97-117 m): with the calm limit any CP at EVASION / ALERT on this PC ends the mirror.
+        local limits = logCount(pl, 'event=mirror;ent=3000000001;on=0;why=phase_limit')
+        pl.W.cp[100].localPhase = 0
+        pl.W.cp[200].localPhase = 3
+        ticks(pl, 20)
+        check(logCount(pl, 'event=mirror;ent=3000000001;on=0;why=phase_limit') == limits + 1 and pl.W.mirror.pp[3000000001] == nil,
+            'phase lever pl=1: released while another CP is in ALERT (D-FM1 (a))')
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] == nil, 'phase lever pl=1: none taken while another CP is in ALERT')
+        pl.W.cp[200].localPhase = 0
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever pl=1: a puppet again once every CP is below EVASION')
+    end)()
+    -- Enemy round 13 C (the user's decision D-FM3 (b)): a puppet may be warped onto his owner copy's spot only while both
+    -- spots are outside this player's view (the M-series 100-degree camera cone with no distance cut: binoculars and
+    -- scopes look along the camera's yaw): ACT_V1 w after his m. R(caution) is 90 m (1.5 x the 54.3-58.7 m first notice in
+    -- caution, run 4735fee5).
+    ;(function()
+        local vw = guestFix(0)                                -- this player at the origin, looking +z
+        vw.W.snapOn, vw.W.actOn, vw.W.mission = true, true, 30010
+        vw.W.handlers[92]({1, 7})
+        check(vw.W.mirror.R[0] == 80 and vw.W.mirror.R[1] == 90, 'D-FM3: R 80 m calm, 90 m caution (1.5 x 58.7 m, 4735fee5)')
+        local function nW()
+            local n = 0
+            for _, s in ipairs(vw.acts or {}) do if s:find(' -- w 1 1', 1, true) then n = n + 1 end end
+            return n
+        end
+        vw.positions[1] = {0, 1.8, -120.0}                    -- behind this player
+        vw.actReply = {f = 1, sh = 0, ox = 30000, oy = 1800, oz = -150000}  -- his owner copy behind too, 30 m off
+        ticks(vw, 8)
+        check(vw.W.mirror.pp[3000000001] ~= nil and nW() >= 1 and logged(vw, 'event=mirror_view;ent=3000000001;view=off'),
+            'D-FM3: both spots behind this player: w (the walk may warp)')
+        local w0 = nW()
+        vw.actReply = {f = 1, sh = 0, ox = 30000, oy = 1800, oz = 150000}   -- his owner copy 150 m ahead: in view
+        ticks(vw, 8)
+        check(nW() == w0 and logged(vw, 'event=mirror_view;ent=3000000001;view=on'), 'D-FM3: the owner copy in view: no w (he glides)')
+        vw.actReply = {f = 1, sh = 0, ox = 30000, oy = 1800, oz = -150000}
+        vw.positions[1] = {0, 1.8, 250.0}                     -- the copy 250 m ahead: in view (no distance cut)
+        ticks(vw, 8)
+        check(nW() == w0 and vw.W.mirror.pp[3000000001] ~= nil, 'D-FM3: the copy in view at 250 m: no w')
+    end)()
+    -- Round 13 C (run 1fb060aa: guard 18's take waited on near_wait - his host copy stood 44.8 m away - and came 11 s later in
+    -- view as a 35.9 m glide): a candidate refused with the q reply's owner position, both spots off view: ACT_V1 w, then q
+    -- again (native lets that take open with the warp); one spot in view: no w, he waits.
+    ;(function()
+        local function cand(oz)
+            local c = guestFix(0)
+            c.W.snapOn, c.W.actOn, c.W.mission = true, true, 30010
+            c.W.handlers[92]({1, 7})
+            c.positions[1] = {0, 1.8, -120.0}
+            c.actFn = function(src)
+                if src:find(' -- w ', 1, true) then c.wAt = c.wAt or #c.acts; return {f = 0, sh = 0} end
+                if src:find(' -- q ', 1, true) then return {f = c.wAt and 1 or 0, sh = 0, ox = 30000, oy = 1800, oz = oz} end
+                return {f = 1, sh = 0, ox = 30000, oy = 1800, oz = oz}
+            end
+            ticks(c, 8)
+            return c
+        end
+        local off = cand(-150000)
+        local firstM
+        for k, s in ipairs(off.acts) do if s:find(' -- m 1 1', 1, true) then firstM = firstM or k end end
+        check(off.W.mirror.pp[3000000001] ~= nil and off.wAt and firstM and off.wAt < firstM,
+            'D-FM3 take: a waiting candidate with both spots off view: w, then q again, then taken')
+        local on = cand(150000)
+        check(on.W.mirror.pp[3000000001] == nil and not on.wAt, 'D-FM3 take: his owner copy in view: no w, not taken')
     end)()
     -- FM1 round 6 (2): riders (GetVehicleGameObjectId) are skipped by the far rule (run adecad01: two LRRP riders of another
     -- CP were puppeted at 297 m and released apart 283-285 m off); a puppet who mounts is released (why=vehicle).
     ;(function()
         local rv = guestFix(0)
         rv.W.snapOn, rv.W.actOn, rv.W.mission = true, true, 30010
-        rv.W.handlers[92]({1, 6})
+        rv.W.handlers[92]({1, 7})
         rv.vehicles = {[1] = 77}
         rv.positions[1] = {0, 1.8, 120.0}
         ticks(rv, 40)
@@ -2125,7 +2245,7 @@ if arg[7] and arg[8] then
             'riders: a puppet who mounts is released')
         local hv = followFixture(true)
         hv.W.snapOn, hv.W.actOn, hv.W.mission = true, true, 30010
-        hv.W.handlers[92]({1, 6})
+        hv.W.handlers[92]({1, 7})
         hv.positions[900] = {0, 0, 0}
         hv.positions[1] = {0, 1.8, 100.0}
         hv.vehicles = {[1] = 77}
@@ -2139,7 +2259,7 @@ if arg[7] and arg[8] then
     ;(function()
         local mw = guestFix(0)
         mw.W.snapOn, mw.W.actOn, mw.W.mission = true, true, 30010
-        mw.W.handlers[92]({1, 6})
+        mw.W.handlers[92]({1, 7})
         mw.positions[1] = {0, 1.8, 100.0}
         mw.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
         ticks(mw, 70)

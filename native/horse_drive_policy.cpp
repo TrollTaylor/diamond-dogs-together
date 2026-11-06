@@ -84,6 +84,9 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
             !number(-1000000000, 1000000000, v[3]) || !number(-1000000000, 1000000000, v[4]) || !number(-31416, 31416, v[5]))
             return false;
+    } else if (word("rrec") || word("getoff")) {
+        r.verb = p[-1] == 'c' ? Verb::rrec : Verb::getoff;
+        if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;
     } else if (word("place")) {
         r.verb = Verb::place;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
@@ -126,6 +129,21 @@ const char* HoldRefusal(const HoldScope& s) noexcept {
 
 bool CachedBody1Usable(const BodyClass& b0, const BodyClass& c) noexcept {
     return c.t_vt && c.t68 && c.t70 && c.t58 && b0.t_vt == c.t_vt && b0.t68 == c.t68 && b0.t70 == c.t70 && b0.t58 == c.t58;
+}
+
+bool HoldRunA0(HoldRun& r, std::uint64_t now) noexcept {
+    if (!r.last || now < r.last || now - r.last > kHoldRunGapMs) {
+        r.start = now;
+        r.a0 = false;
+    }
+    r.last = now;
+    if (r.a0 || now - r.start < kA0DelayMs) return false;
+    r.a0 = true;
+    return true;
+}
+
+bool A0Usable(const BodyClass& b0, const BodyClass& b1) noexcept {
+    return b1.a0_vt && b1.a080 && b0.a0_vt == b1.a0_vt && b0.a080 == b1.a080;
 }
 
 const char* PlaceRefusal(const PlaceScope& s) noexcept {
@@ -190,7 +208,7 @@ bool HoldSeat(SeatHold& h, bool lease, float& back, float& up, bool& pose) noexc
         h.pose = pose;
         return true;
     }
-    // The review of M4: the grace only with world_horse_shot named (h.grace); at the defaults a lapse ends the seat.
+    // The grace only with h.grace (Settings.horse_seat_holds: the seat's default since step S); without it a lapse ends it.
     if (h.grace && h.live && h.miss < kSeatGraceTicks) {
         ++h.miss;
         back = h.back;

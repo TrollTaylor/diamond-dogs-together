@@ -1406,6 +1406,14 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
                    unsigned(anim_ok ? anim.act[1] : 0), m.cbox_want ? 1u : 0u, m.cbox_seq);
     }
     in.traverse_hold = in.traverse_hold || cbox_hold;
+    // M2h (lab a53a243a: 32 partner_recon=place lines and the remote's pad on body 1 while hold1 held it on the horse): the
+    // horse cargo's hold owns body 1 on this copy (coop_carry's cargo hold without a stock carried body 1, the test
+    // TickBodySafety uses for pi.cargo), so the recon leaves it alone and the window carries a neutral pad.
+    in.body_owned = set.horse_cargo && coop_carry::PartnerCarryHold() && !coop_carry::BodyCarried(1);
+    if (in.body_owned != m.recon_owned) {
+        m.recon_owned = in.body_owned;
+        EmitRecon(m, h, kRcFrozen, "partner_recon=cargo_hold; on=%u; mode=%s\r\n", in.body_owned ? 1u : 0u, pr::ModeName(m.recon.mode));
+    }
     m.recon_remote_ok = in.remote_anim_valid;
     m.recon_remote_act = in.remote_act;
     const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
@@ -5662,8 +5670,8 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     in.horse = set.horse_share && m.visibility.horse;
     // Horse plan M3: body 1 rides behind this copy's player (the seat1 lease): seated whatever the remote's act.
     in.pillion = m.pillion_pose;
-    // M4: the stopped pillion seat re-enters only with world_horse_shot named (the review of M4).
-    in.pillion_reseat = set.horse_shot;
+    // M4: the stopped pillion seat re-enters (run d935beae); with the seat's default since step S (world_horse_pillion).
+    in.pillion_reseat = set.horse_seat_holds;
     if (pending) in.debug = d.overlay_request;
     in.blocked = OverlayBlocked(d, h, st, terminating, parts_loaded, anim_ok, anim);
     in.body_present = !terminating && set.stage >= 3 && parts_loaded && !m.range_hidden && !m.visibility.hidden && !m.visibility_logged;
@@ -5678,6 +5686,11 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     }
     in.q18[0] = dm.q18[0];
     in.q18[1] = dm.q18[1];
+    // Step S2: body 1's DM record while the overlay seats it behind this copy's rider (the pillion stats line).
+    if (in.pillion) {
+        m.pillion_dm = dm;
+        m.pillion_dm_ok = in.dm_ok;
+    }
     in.g388 = dm.g388;
     in.rec18 = dm.rec18;
     in.cam_ok = dm.cam_ok;
@@ -7356,8 +7369,15 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // Horse plan M1 shared D-Horse (docs/mounts.md "Shared D-Horse"): lab and play, off unless named until its gate.
     d.settings.horse_share = lab.world_horse_share;
     // Horse plan M4 (docs/mounts.md "Shoot from the back of the horse"): lab and play, off unless named (the gate not
-    // reached); it also carries the rear seat's holds (HoldSeat grace, the overlay re-entry, the Lua track wait).
+    // reached).
     d.settings.horse_shot = lab.world_horse_shot && lab.world_horse_pillion && lab.world_horse_share;
+    // Step S: the rear seat's holds (HoldSeat grace, the overlay re-entry, the Lua track wait) come with the seat itself
+    // (world_horse_pillion's default; play 22926dbf passed the driver's E after a hop-off with them, both orders).
+    d.settings.horse_seat_holds = lab.world_horse_pillion && lab.world_horse_share;
+    // M2h: the recon leaves body 1 to the horse cargo's hold with world_horse_cargo (off unless named, its gate not passed).
+    d.settings.horse_cargo = lab.world_horse_cargo && lab.world_horse_share;
+    // Step S3: the motion-record log with world_horse_down_off (off unless named; fixland4: nothing new at the defaults).
+    d.settings.horse_down_off = lab.world_horse_down_off && lab.world_horse_share;
     // G5 (docs/native-puppet.md "Ride hides"): lab only, default off (lab_config forces it off in play).
     d.settings.unrealize_all = lab.partner_native_unrealize_all;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
@@ -7993,10 +8013,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         bool pillion = false, seat_pose = true;
         float back = 0.f, up = 0.f, lp[4]{}, lq[4]{}, seat_yaw = 0.f;
         // M4: a lease live on the previous tick survives kSeatGraceTicks lapsed ticks (run d935beae: a capture's stall),
-        // only with world_horse_shot named (the review: no play pass of the driver's get-off with it).
-        m.pillion_hold.grace = set.horse_shot;
+        // with the seat's default since step S (world_horse_pillion; play 22926dbf passed the driver's get-off with it).
+        m.pillion_hold.grace = set.horse_seat_holds;
         const bool lease = set.horse_share && set.source == PartnerSource::net && st.local == 0 &&
                            horse_drive::HoldSeat(m.pillion_hold, horse_drive::SeatLease(now, back, up, seat_pose), back, up, seat_pose);
+        if (lease && m.pillion_hold.miss) ++m.pillion_grace_n;  // step S2: a lapsed lease kept by the grace this tick
         if (lease && h.read_local_body && h.read_local_body(h.context, st, lp, lq)) {
             const float yaw = partner::QuatToYaw(lq);
             const float rider[3] = {lp[0], lp[1], lp[2]};
@@ -8112,8 +8133,17 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=%s; mount=horse; act=%u; valid=%u; kind=%u; live=%u; fresh=%u; "
                        "reason=shared_horse\r\n", m.visibility.horse ? "show" : "show_end", unsigned(visibility_sample.act),
                        visibility_sample.anim_valid ? 1u : 0u, unsigned(vi.kind), vi.ride_live ? 1u : 0u, vi.horse_shown ? 1u : 0u);
-        // The rider's body anchors the next horse placement (the saddle under body 1 on this screen).
-        if (m.visibility.horse && body_read && pp::Realized(st, partner::partner_index) && st.parts[1] == c::parts_loaded_state) {
+        // The rider's body anchors the next horse placement (the saddle under body 1 on this screen); with
+        // world_horse_cargo not during the get-off act 122 (M2j: horse_drive::AnchorNote), one line at each edge.
+        const bool anchor_note =
+            horse_drive::AnchorNote(set.horse_cargo, visibility_sample.anim_valid, visibility_sample.act);
+        if (m.visibility.horse && !anchor_note != m.anchor_hold) {
+            m.anchor_hold = !anchor_note;
+            EmitCapped(m.mount_cap, h, "partner_mount", "horse_drive=anchor_hold; on=%u; act=%u\r\n", m.anchor_hold ? 1u : 0u,
+                       unsigned(visibility_sample.act));
+        }
+        if (anchor_note && m.visibility.horse && body_read && pp::Realized(st, partner::partner_index) &&
+            st.parts[1] == c::parts_loaded_state) {
             const float rider[3] = {body_pos[0], body_pos[1], body_pos[2]};
             horse_drive::NoteRiderBody(rider, now);
         }
@@ -8527,12 +8557,57 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     if ((m.pillion_seat_ok || m.pillion_err_n) && now - m.pillion_stats_ms >= 1000) {
         if (m.pillion_err_n && m.pillion_stats_lines < 600) {
             ++m.pillion_stats_lines;
-            EmitFormat(h, "partner_pillion=stats; xz_cm=%d; dy_cm=%d; n=%u\r\n", static_cast<int>(std::lround(m.pillion_xz_max * 100.f)),
-                       static_cast<int>(std::lround(m.pillion_dy_max * 100.f)), m.pillion_err_n);
+            // Step S2 (play 79287a27 (b), body 1 standing on the rump after a rock stall): body 1's act / stance / speed /
+            // upper act this tick, the overlay's phase, its DM record as last read while seating, the grace ticks used.
+            std::uint8_t upper[2]{};
+            const bool upper_ok = pp::ReadUpper(st, upper);
+            const pp::DmState& dm = m.pillion_dm;
+            EmitFormat(h,
+                       "partner_pillion=stats; xz_cm=%d; dy_cm=%d; n=%u; act=%u; st=%u; sp=%u; q28=%u; qd8=%u; up=%d; ov=%s; dm=%u; "
+                       "q18=0x%x,0x%x; ps2d8=%d; rec10=%u; rec11=%u; rec18=0x%llx; rec1a0=%u; rec248=0x%02x; grace=%u; pose=%u\r\n",
+                       static_cast<int>(std::lround(m.pillion_xz_max * 100.f)), static_cast<int>(std::lround(m.pillion_dy_max * 100.f)),
+                       m.pillion_err_n, anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.stance[1]) : 0u,
+                       anim_ok ? unsigned(anim.speed[1]) : 0u, anim_ok ? unsigned(anim.q28[1]) : 0u, anim_ok ? unsigned(anim.qd8[1]) : 0u,
+                       upper_ok ? int(upper[1]) : -1, pdo::PhaseName(m.overlay.phase), m.pillion_dm_ok ? 1u : 0u, unsigned(dm.q18[0]),
+                       unsigned(dm.q18[1]), int(dm.ps2d8[1]), unsigned(dm.rec10), unsigned(dm.rec11),
+                       static_cast<unsigned long long>(dm.rec18), unsigned(dm.rec1a0), unsigned(dm.rec248), m.pillion_grace_n,
+                       m.pillion_pose ? 1u : 0u);
+        }
+        // Step S3 (logs only, with world_horse_down_off): the motion records ReadAnim hashes for instance 0 - body 1's
+        // part of *(Q+0x1D8) (+0x40, coop_carry's request stride) and the first 0x40 bytes of *(Q+0x1E0) / *(Q+0x1F8)
+        // (instance 0's part unless their stride is under 0x40: not known to be body 1's) - as raw hex whenever their
+        // hash changed, at most 120 lines a process.
+        if (horse_drive::MotionLog(set.horse_down_off, m.pillion_err_n)) {
+            static std::uint32_t mg_last = 0;
+            static unsigned mg_lines = 0;
+            unsigned char d8[0x80]{}, e0[0x40]{}, f8[0x40]{};
+            if (pp::ReadMotionRaw(st, d8, e0, f8)) {
+                const std::uint32_t h1 = pp::MotionHash(d8 + 0x40, 0x40), h2 = pp::MotionHash(e0, sizeof(e0)),
+                                    h3 = pp::MotionHash(f8, sizeof(f8));
+                const std::uint32_t all = h1 ^ (h2 * 31u) ^ (h3 * 131u);
+                if (all != mg_last && mg_lines < 120) {
+                    mg_last = all;
+                    ++mg_lines;
+                    char hex[3][0x81]{};
+                    const auto put = [](char* out, const unsigned char* b, std::size_t n) noexcept {
+                        static const char digits[] = "0123456789abcdef";
+                        for (std::size_t i = 0; i < n; ++i) {
+                            out[2 * i] = digits[b[i] >> 4];
+                            out[2 * i + 1] = digits[b[i] & 15u];
+                        }
+                    };
+                    put(hex[0], d8 + 0x40, 0x40);
+                    put(hex[1], e0, sizeof(e0));
+                    put(hex[2], f8, sizeof(f8));
+                    EmitFormat(h, "partner_pillion=mg; n=%u; h=%08x,%08x,%08x; d8_1=%s; e0=%s; f8=%s\r\n", mg_lines, h1, h2, h3, hex[0],
+                               hex[1], hex[2]);
+                }
+            }
         }
         m.pillion_stats_ms = now;
         m.pillion_xz_max = m.pillion_dy_max = 0.f;
         m.pillion_err_n = 0;
+        m.pillion_grace_n = 0;
     }
     // lost -> live on the net source this tick (hybrid and apply=input relink).
     const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;

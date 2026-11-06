@@ -1043,6 +1043,11 @@ struct LabConfig {
     // with the pillion seat). Off unless named in lab and play (the M4 gate was not reached); a named 1 runs in play.
     bool world_horse_shot = false;
     bool world_horse_shot_given = false;
+    // world_horse_down_off=0|1 (step S3, docs/mounts.md section 19; with world_horse_share): this copy's player, downed
+    // while riding the shared D-Horse, gets off (MGS_COOP_HORSE_DRIVE_V1 getoff: the stock get-off's next state 3 on the
+    // RideHorse ride record, lua/coop/world_horse_share.lua). Off unless named in lab and play until its gate passes.
+    bool world_horse_down_off = false;
+    bool world_horse_down_off_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
     // (relief) vehicle on both copies. The follow seeds carry the host's relief carry vars and
     // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN

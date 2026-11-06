@@ -139,6 +139,24 @@ f.hold("E", 500)
 check(f.C.state == "loading" and f.logged("event=horse_cargo;step=loading;seat=2;gen=22"), "host carrier: 450 ms E hold loads at once")
 f = fixture(); f.role = 0; f.hold("E", 600)
 check(f.C.state == "off" and not f.called("010"), "not carrying: another E use, nothing")
+check(not f.logged("step=near"), "M2h: not carrying: no step=near")
+check(not f.logged("step=refuse;why=carry") and not f.logged("step=load_e"), "M2j: not carrying at the E: no load line")
+-- M2j (lab 01d9924e (c): carrying at the horse, step=near e=1, no step=loading and no line; play 403e46a2 (b): the
+-- flank warp ended the guest's carry): an E begun while carrying that ends under 450 ms logs step=load_e (held_ms), and
+-- one whose carry ended by 450 ms logs step=refuse;why=carry.
+f = fixture(); f.role = 1; f.hold("E", 200); f.tick(50)
+check(f.C.state == "off" and f.logged("step=load_e;held_ms="), "M2j: a short E while carrying: step=load_e")
+f = fixture(); f.role = 1; f.holdE(true); f.tick(50); f.role = 0
+for _ = 1, 10 do f.now = f.now + 50; f.holdE(true); f.tick(50) end
+check(f.C.state == "off" and f.logged("step=refuse;why=carry"), "M2j: the carry ended during the E: step=refuse;why=carry")
+-- M2h (play 72e6269a: the carrier held E 900 ms at the horse, no step=loading and no refusal line): carrying within reach
+-- of the horse logs the raw E read and the mount state at most once a second.
+f = fixture(); f.role = 1; f.tick(50)
+check(f.logged("event=horse_cargo;step=near;d_cm=100;e=0;mounted=0"), "M2h: carrying within reach logs step=near (raw E up)")
+local nearN = #f.logs; f.holdE(true); f.tick(50)
+check(#f.logs == nearN, "M2h: step=near at most once a second")
+f.now = f.now + 950; f.holdE(true); f.tick(50)
+check(f.logged("event=horse_cargo;step=near;d_cm=100;e=1;mounted=0"), "M2h: step=near shows the raw E held")
 f = fixture(); f.role = 1; f.D.records[2].down = false; f.hold("E", 600)
 check(f.C.state == "off" and f.logged("step=refuse;why=awake"), "a partner who is not down is never loaded")
 f = fixture(); f.role = 1; f.horse.x = 103000; f.hold("E", 600)
@@ -163,6 +181,9 @@ local l = f.sent(4)
 check(l and l[3] == 2 and l[4] == 1 and l[6] == 0 and l[7] == 22 and l[8] == 101000 and l[9] == 3000 and l[10] == 300000 and l[11] == 0,
  "LOADED: seat 2, the host, the victim's generation, this copy's horse pose")
 check(f.logged("event=horse_cargo;step=loaded;seat=2;gen=22;role=carrier"), "step=loaded seat=2")
+-- M2h (a53a243a host-h2-loaded: body 1 sat up on the rump at the load): the load line carries the horse's yaw and the
+-- hold's yaw (mrad).
+check(f.logged("role=carrier;hx=10100;hz=30000;hyaw=0;byaw=1571"), "M2h: step=loaded carries hyaw and the hold's byaw")
 check(not f.C.downedPosture(), "the carrier's own downed posture is never the cargo's")
 local w = f.lastWarp(1)
 check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-6 and
@@ -180,12 +201,14 @@ check(f.C.RISE_MM == 450 and f.C.GROUND_MM == 1350, "body 1 0.45 m over the cens
 check(f.C.RIDE_RISE_MM == 150, "riding: body 1 0.15 m over the rider")
 f.horse.x, f.horse.yaw = 102000, 1571
 f.mounted = true
-f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 2.5
+-- M2h: the rider sits 0.4 m over the census root (runs a53a243a / 990d2530 step=pin: py - hy 0.39-0.40 m).
+f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 3.4
 f.tick(50)
 w = f.lastWarp(1)
 check(math.abs(w.x - (102.1 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3 and
- math.abs(w.y - (2.5 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
+ math.abs(w.y - (3.4 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
 check(f.logged("step=pin;how=rider;mounted=1"), "the pin stats line names the rider anchor")
+check(f.logged(";hyaw=1571;byaw=3142;t_ms=") or f.logged(";hyaw=1571;byaw=3142"), "M2h: the pin stats line carries hyaw and byaw")
 check(math.abs(w.rotY - (1.571 + math.pi / 2)) < 2e-3, "riding: body 1 a quarter turn from the horse's yaw")
 -- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low behind the rider at a gallop): while riding, body 1 leads by the
 -- rider's last per-tick move (it is drawn after this tick's own move), never by a jump over 0.6 m.
@@ -199,6 +222,20 @@ f.env.vars.playerPosX = 104.4
 f.tick(50)
 w = f.lastWarp(1)
 check(math.abs(w.x - (104.4 - f.C.RIDE_BACK_MM / 1000)) < 1e-3, "a 2 m jump between ticks is no motion: no lead")
+-- M2h (lab 990d2530: right after the mount the rider's own position stood 0.97 m under the census root, step=pin py_cm 33751
+-- hy_cm 33848, and body 1 went 0.15 m over it, by the ground): a rider not yet up in the saddle (under the census root) holds
+-- body 1 on the census cargo point.
+f.env.vars.playerPosY = 2.9
+f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.x - (102.0 - f.C.BACK_MM / 1000)) < 1e-3 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-3 and
+ math.abs(w.z - 300.0) < 1e-2, "M2h: riding but under the census root (not seated yet): body 1 on the census cargo point")
+f.env.vars.playerPosY = 3.4
+f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.y - (3.4 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "M2h: seated again: the rider anchor")
+f.tick(2100)
+check(f.logged(";bx_cm=") and f.logged(";px_cm="), "M2h: the pin stats line carries the target's and the rider's x,z")
 f.env.vars.playerPosX, f.env.vars.playerPosY = 100, 2
 local keeps = f.count(6)
 for i = 1, 22 do f.tick(50) end
@@ -253,12 +290,24 @@ check(math.abs(f.lastWarp(1).y - (2.0 + f.C.RISE_MM / 1000 + 1.0)) < 1e-6, "a ce
 -- M2f (run 5a92c73f (c), the carrier's copy after the dismount: census root 0.52 m over the carrier's ground, so 0.45 m over it
 -- fell under the old 1.0 m edge and the body went 1.35 m over the ground, 0.38 m high over the rump): the window's low
 -- edge is 0.8 m.
-check(f.C.GROUND_LO_MM == 800, "the ground window's low edge is 0.8 m")
+-- M2j (lab 3a86c82f (a), the carrier's copy after the dismount by a rock wall: census root 0.15 m over the carrier's
+-- ground, its cargo point 0.6 m over it; the 0.8 m low edge put body 1 1.35 m over the carrier's ground, 0.75 m over the
+-- census point, and frames host-h2-stays / -stays2 show it lying flat in the air over the horse): no low edge. A census
+-- cargo point under 2.0 m over the carrier's ground is used as it is, also one under the carrier's feet (the carrier on a
+-- rock beside the horse); only a census far over the carrier (run 7359e4d2, about 2 m high) is corrected.
+check(f.C.GROUND_LO_MM == nil, "no low edge")
 f.horse.y = 2520; f.tick(50)
 check(math.abs(f.lastWarp(1).y - (2.52 + f.C.RISE_MM / 1000)) < 1e-6,
  "a census 0.52 m over the carrier's ground: still the census cargo point")
 f.horse.y = 2300; f.tick(50)
-check(math.abs(f.lastWarp(1).y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6, "a census 0.3 m over the ground: kept 1.35 m over the ground")
+check(math.abs(f.lastWarp(1).y - (2.3 + f.C.RISE_MM / 1000)) < 1e-6, "a census 0.3 m over the ground: the census cargo point")
+f.horse.y = 2150; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (2.15 + f.C.RISE_MM / 1000)) < 1e-6,
+ "3a86c82f: a census root 0.15 m over the carrier's ground: the census cargo point")
+f.horse.y = 1200; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (1.2 + f.C.RISE_MM / 1000)) < 1e-6, "a census cargo point under the carrier's feet: the census")
+f.horse.y = 4000; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6, "a census 2 m high: still kept 1.35 m over the ground")
 f.horse.y = 3000; f.tick(50)
 -- Out of reach: nothing.
 f = fixture(); load(f); f.env.vars.playerPosX = 110; f.hold("R", 1200)

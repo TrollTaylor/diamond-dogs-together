@@ -291,9 +291,10 @@ bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned 
     return !first && !changed_far && plan_live && !warp && gait_now == gait_want;
 }
 
-unsigned TakeWait(bool plan, bool leg_match, bool take_near) noexcept {
-    (void)take_near;  // round 10 C: no 10 m rule (TakeNear stays for the record)
-    if (plan) return 0u;  // the plan walks him onto the host copy's path; beyond 15 m the take opens with the unpack's warp
+unsigned TakeWait(bool plan, bool leg_match, bool no_warp) noexcept {
+    // Round 10 C: no 10 m rule (TakeNear stays for the record); with act_plan the plan walks him onto the host copy's path.
+    // Round 11 C: a take that would open with the unpack's warp waits (a walk glides, GlideEntry: never a warp).
+    if (plan) return no_warp ? 0u : 2u;
     return leg_match ? 0u : 1u;
 }
 
@@ -324,6 +325,78 @@ ReleaseWalk ReleaseWalkStep(bool ours_live, std::uint64_t near_ms, std::uint64_t
     return ReleaseWalk::walk;
 }
 
+// Round 11 track C (act_plan, design 7.33).
+std::uint64_t MirrorLease(bool fresh, std::uint64_t was_ms, std::uint64_t now_ms) noexcept {
+    return fresh ? now_ms : was_ms;
+}
+
+bool GlideEntry(const float (&self)[3], const float (&owner)[3], float (&entry)[3]) noexcept {
+    const float dx = owner[0] - self[0], dy = owner[1] - self[1], dz = owner[2] - self[2];
+    const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(d > kGlideM)) {  // within kGlideM (or NaN): the owner copy's own, as before
+        entry[0] = owner[0]; entry[1] = owner[1]; entry[2] = owner[2];
+        return false;
+    }
+    const float f = kGlideM / d;
+    entry[0] = self[0] + dx * f; entry[1] = self[1] + dy * f; entry[2] = self[2] + dz * f;
+    return true;
+}
+
+bool OffViewFresh(std::uint64_t stamp_ms, std::uint64_t now_ms) noexcept {
+    return stamp_ms != 0 && now_ms >= stamp_ms && now_ms - stamp_ms <= kOffViewMs;
+}
+
+bool GlideOn(bool plan, bool walk, bool have_self, bool off_view) noexcept { return plan && walk && have_self && !off_view; }
+
+bool TakeNoWarp(bool take_warps, bool off_view) noexcept { return !take_warps || off_view; }
+
+bool OwnerStill(const float (&self)[3], float (&ref)[3], std::uint64_t& ref_at, std::uint64_t now_ms) noexcept {
+    const float dx = self[0] - ref[0], dz = self[2] - ref[2];
+    if (!(dx * dx + dz * dz <= kOwnerStillM * kOwnerStillM) || !ref_at) {  // moved (or NaN, or the first call): a new spot
+        ref[0] = self[0]; ref[1] = self[1]; ref[2] = self[2];
+        ref_at = now_ms ? now_ms : 1;
+        return false;
+    }
+    return now_ms >= ref_at && now_ms - ref_at >= kOwnerStillMs;
+}
+
+bool TakeWarps(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept {
+    if (host_request[0x61] == 1u || !have) return false;  // a walk glides; unknown positions: the unpack lends his own
+    return Warp15(self, owner);
+}
+
+bool ReleaseFreeze(unsigned dest_mode, std::uint16_t r19e, std::uint16_t r19c, std::uint64_t slot_hash, std::uint16_t slot_handle,
+                   bool path, float d_dest_m) noexcept {
+    return PlanGate(dest_mode, r19c, r19e, true) && PlanSlot(slot_hash, slot_handle) == SlotStep::plan && !path &&
+           d_dest_m > kReleaseArriveM;  // NaN / unknown (-1): no freeze
+}
+
+WatchStep WatchChoose(bool freeze, std::uint64_t freeze_ms, std::uint64_t age_ms, std::uint64_t slot_hash) noexcept {
+    if (age_ms >= kWatchMs) return WatchStep::end;
+    const std::uint64_t h = slot_hash & 0xffffffffffffull;
+    if (h != 0 && h != kMoveHash) return WatchStep::end;  // his brain's own type: his brain walks again
+    return freeze && freeze_ms >= kWatchFreezeMs ? WatchStep::plan : WatchStep::wait;
+}
+
+bool CornerTarget(const float (*points)[3], unsigned count, const float (&self)[3], const float (&dest)[3], float (&target)[3]) noexcept {
+    if (!points || count < 2) return false;
+    unsigned best = 0;
+    float bestD = 3.4e38f;
+    for (unsigned j = 0; j + 1 < count; ++j) {
+        const float ax = points[j][0], az = points[j][2], bx = points[j + 1][0] - ax, bz = points[j + 1][2] - az;
+        const float px = self[0] - ax, pz = self[2] - az, len = bx * bx + bz * bz;
+        float u = len > 0.0f ? (px * bx + pz * bz) / len : 0.0f;
+        u = u < 0.0f ? 0.0f : (u > 1.0f ? 1.0f : u);
+        const float ex = px - u * bx, ez = pz - u * bz, d = ex * ex + ez * ez;
+        if (d < bestD) { bestD = d; best = j; }  // NaN: never nearer
+    }
+    unsigned t = best + 1;
+    const float cx = points[t][0] - self[0], cz = points[t][2] - self[2];
+    if (cx * cx + cz * cz <= kCornerM * kCornerM && t + 1 < count) ++t;  // at the corner: the one after
+    target[0] = points[t][0]; target[1] = points[t][1]; target[2] = points[t][2];
+    return !PlanEndNear(target, dest);
+}
+
 bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
     const float dx = end[0] - dest[0], dy = end[1] - dest[1], dz = end[2] - dest[2];
     return dx * dx + dy * dy + dz * dz <= kPlanEndM * kPlanEndM;
@@ -351,11 +424,15 @@ QuietWhy QuietChoose(const RestView& r, const float (&target)[3], std::uint64_t 
     if (now_ms > r.at && now_ms - r.at > kRestStaleMs) return QuietWhy::stale;
     if (!r.realized) return QuietWhy::unrealized;
     if (!r.listed) return QuietWhy::unlisted;
-    if (!(r.speed_mps >= 0.0f) || r.speed_mps > kRestSpeedMps) return QuietWhy::moving;
+    // Round 11 (design 7.31): the set-transform handler rotates a stance 3-4 pose and posts no action there: those keep the
+    // message, as an unread stance does. Stance 0-2 go quiet (1-2 is where the handler posts action 0xa6).
+    if (r.stance > 2u) return QuietWhy::stance;
+    // A walker (or a guard with a path ahead) goes quiet too and is re-planned after the move (QuietPlanOne).
+    if (!(r.speed_mps >= 0.0f) || r.speed_mps > kRestSpeedMps) return QuietWhy::walk;
     if (r.has) {
         const float ex = r.end[0] - r.pos[0], ez = r.end[2] - r.pos[2], tx = r.end[0] - target[0], tz = r.end[2] - target[2];
         const float lim = kRestPathM * kRestPathM;
-        if (!(ex * ex + ez * ez <= lim) && !(tx * tx + tz * tz <= lim)) return QuietWhy::path;
+        if (!(ex * ex + ez * ez <= lim) && !(tx * tx + tz * tz <= lim)) return QuietWhy::walk;
     }
     return QuietWhy::ok;
 }
@@ -369,8 +446,101 @@ const char* QuietWhyName(QuietWhy why) noexcept {
     case QuietWhy::unlisted: return "unlisted";
     case QuietWhy::moving: return "moving";
     case QuietWhy::path: return "path";
+    case QuietWhy::walk: return "walk";
+    case QuietWhy::stance: return "stance";
+    case QuietWhy::fast: return "fast";
     }
     return "?";
+}
+
+QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle, bool slot_read) noexcept {
+    if (!slot_read || !PlanGate(dest_mode, r19c, r19e, true)) return QuietPlan::none;
+    switch (PlanSlot(slot_hash, slot_handle)) {
+    case SlotStep::plan: return QuietPlan::plan;
+    case SlotStep::cancel_then_plan: return QuietPlan::cancel_then_plan;
+    default: return QuietPlan::busy;
+    }
+}
+
+const char* QuietPlanName(QuietPlan step) noexcept {
+    switch (step) {
+    case QuietPlan::none: return "none";
+    case QuietPlan::busy: return "busy";
+    case QuietPlan::plan: return "plan";
+    case QuietPlan::cancel_then_plan: return "cancel_plan";
+    case QuietPlan::replan: return "replan";
+    }
+    return "?";
+}
+
+// Enemy round 13 track A (design 7.31): where the owner copy walks, from its two newest correction samples.
+QuietLead QuietLeadFor(const OwnerSample& cur, const OwnerSample& prev, std::uint64_t now_ms, float (&to)[3], float& speed) noexcept {
+    speed = -1.0f;
+    to[0] = to[1] = to[2] = 0.0f;
+    if (!cur.valid) return QuietLead::unknown;
+    to[0] = cur.pos[0]; to[1] = cur.pos[1]; to[2] = cur.pos[2];
+    if (!prev.valid || cur.rx_ms < prev.rx_ms) return QuietLead::unknown;
+    const std::uint64_t dt = cur.rx_ms - prev.rx_ms;
+    if (dt < kOwnerMinDtMs || dt > kOwnerMaxDtMs) return QuietLead::unknown;
+    const float s = static_cast<float>(dt) * 0.001f;
+    const float vx = (cur.pos[0] - prev.pos[0]) / s, vz = (cur.pos[2] - prev.pos[2]) / s;
+    speed = std::sqrt(vx * vx + vz * vz);
+    if (!std::isfinite(speed)) { speed = -1.0f; return QuietLead::unknown; }
+    if (speed < kQuietStandMps) return QuietLead::stand;
+    if (speed > kQuietFastMps) return QuietLead::fast;
+    const std::uint64_t age = now_ms > cur.rx_ms ? now_ms - cur.rx_ms : 0;
+    const std::uint64_t lead = age + kQuietLeadMs > kQuietLeadMaxMs ? kQuietLeadMaxMs : age + kQuietLeadMs;
+    const float ls = static_cast<float>(lead) * 0.001f;
+    to[0] = cur.pos[0] + vx * ls;
+    to[2] = cur.pos[2] + vz * ls;
+    return QuietLead::walk;
+}
+
+const char* QuietLeadName(QuietLead lead) noexcept {
+    switch (lead) {
+    case QuietLead::unknown: return "unknown";
+    case QuietLead::stand: return "stand";
+    case QuietLead::walk: return "walk";
+    case QuietLead::fast: return "fast";
+    }
+    return "?";
+}
+
+QuietWhy QuietOwnerWhy(QuietWhy why, QuietLead lead) noexcept {
+    return (why == QuietWhy::ok || why == QuietWhy::walk) && lead == QuietLead::fast ? QuietWhy::fast : why;
+}
+
+bool QuietReplan(QuietWhy why, QuietLead lead) noexcept {
+    if (lead == QuietLead::fast) return false;
+    return why == QuietWhy::walk || (why == QuietWhy::ok && lead == QuietLead::walk);
+}
+
+QuietPlan QuietPlanFollow(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle, bool slot_read, std::uint16_t ours) noexcept {
+    const QuietPlan first = QuietPlanChoose(dest_mode, r19c, r19e, slot_hash, slot_handle, slot_read);
+    if (first != QuietPlan::none) return first;
+    if (!slot_read || dest_mode != 1) return QuietPlan::none;
+    return PlanLiveFor(ours, r19c, slot_hash, slot_handle, false) ? QuietPlan::replan : QuietPlan::none;
+}
+
+bool QuietFollowDue(const QuietFollow& f, std::uint64_t rx_ms, QuietLead lead, const float (&to)[3], std::uint64_t now_ms) noexcept {
+    if (!f.on || now_ms >= f.until || rx_ms <= f.last_rx) return false;
+    if (lead != f.lead) return true;
+    const float dx = to[0] - f.to[0], dz = to[2] - f.to[2];
+    return !(dx * dx + dz * dz <= kQuietFollowMoveM * kQuietFollowMoveM);
+}
+
+bool QuietAsk(bool quiet_place, bool off_screen, bool host, bool correction, std::uint32_t go) noexcept {
+    // Round 12 (design 7.31): on this player's screen too, and the host's M3 placements: the message's handler posts action
+    // 0xa6 naming this PC's player for a stance 1-2 guard wherever he stands and whoever moves him.
+    (void)off_screen;
+    (void)host;
+    return quiet_place && correction && (go >> 9) == 2u;
+}
+
+bool QuietHook(bool quiet_place, bool soldier_follow, bool soldier_owner, bool host) noexcept {
+    return quiet_place && soldier_follow && (!host || soldier_owner);
 }
 
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept {
@@ -489,6 +659,22 @@ struct RelWalk {
 };
 RelWalk g_rel[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_cRelKeep{0}, g_cRelReplan{0}, g_cRelEnd{0}, g_cRecheck{0};
+// Round 11 track C (act_plan, design 7.33; hook thread): the release watch per guard (WatchChoose), the glide line's last
+// time per guard, the owner side's last corner per guard (a soldier_act_corner line when it changes).
+struct Watch {
+    bool on;
+    std::uint64_t at, freezeAt, tryAt;
+};
+Watch g_watch[kMaxSoldiers]{};
+std::uint64_t g_glideLogAt[kMaxSoldiers]{};
+// Round 13 C (D-FM3 (b)): the last ACT_V1 w per guard (OffViewFresh): his and his owner copy's spots outside the guest's view.
+std::atomic<std::uint64_t> g_offViewAt[kMaxSoldiers]{};
+// Round 13 C (act_plan, the owner side): OwnerStill's spot / time per guard and whether his walk is sent as "stay here".
+float g_stillRef[kMaxSoldiers][3]{};
+std::uint64_t g_stillAt[kMaxSoldiers]{};
+bool g_stillOn[kMaxSoldiers]{};
+float g_cornerLast[kMaxSoldiers][3]{};
+std::atomic<std::uint32_t> g_cGlide{0}, g_cRelWatch{0}, g_cCorner{0};
 std::atomic<float> g_ownPos[kMaxSoldiers][3]{};  // each realized non-puppet guard's own position (OwnDests), for TakeNear
 Shadow g_shadow{};
 bool g_shadowBuilt = false;
@@ -530,7 +716,42 @@ Probe g_probe{};
 std::atomic<std::uint32_t> g_probeRuns{0};
 
 // Enemy round 8 (quiet_place): staged quiet moves (the runtime thread writes under g_quietLock, the hook runs them).
-struct QuietMove { bool due; std::uint32_t go; std::uint16_t seq; float pos[3]; float yaw; };
+// Round 13 (design 7.31): with the owner track's lead, target and newest sample time for the re-plan and its follow.
+struct QuietMove {
+    bool due;
+    std::uint32_t go;
+    std::uint16_t seq;
+    float pos[3];
+    float yaw;
+    bool replan;
+    std::uint32_t ent;
+    QuietLead lead;
+    float to[3];
+    bool have_to;
+    std::uint64_t rx;
+};
+// Enemy round 11 (quiet_place, design 7.31; hook thread only): a quiet-moved walker's re-plan, run after the original
+// manager update (QuietPlanStep), and the plan checks it arms (PlanCheckStep, kPlanCheckMs after).
+struct QuietPlanAsk {
+    bool due;
+    std::uint32_t go;
+    std::uint16_t seq;
+    std::uint32_t ent;
+    QuietLead lead;
+    float to[3];
+    bool have_to;
+    std::uint64_t rx;
+    bool follow;  // round 13: from the follow (a newer owner sample), not a move
+};
+QuietPlanAsk g_qplan[kMaxSoldiers]{};
+// Round 13 (design 7.31; hook thread only): the handle our last quiet plan of each guard got (0xffff none), the follow
+// after it (QuietFollowDue) and its last poll.
+std::uint16_t g_qours[kMaxSoldiers];
+bool g_qoursInit = false;
+QuietFollow g_qfol[kMaxSoldiers]{};
+std::uint64_t g_qfolPoll[kMaxSoldiers]{};
+bool g_qwatch[kMaxSoldiers]{};
+unsigned g_qplanLive = 0;
 QuietMove g_quiet[kMaxSoldiers]{};
 SRWLOCK g_quietLock = SRWLOCK_INIT;
 std::atomic<bool> g_quietPending{false};
@@ -992,6 +1213,51 @@ void ProbeStep(const View& v, std::uint64_t now) noexcept {
 }
 
 // FM1, the owner (hook thread): pack every registered guard; stage a changed record (rate-capped) for SendStaged.
+// Round 11 track C (act_plan, design 7.33): the follower's path points (up to kCornerPoints; more: none read).
+constexpr unsigned kCornerPoints = 32;
+int CornerSafe(const View& v, unsigned i, const float (&self)[3], unsigned char (&w)[0x70], std::uint64_t now) noexcept {
+    __try {
+        Follower f{};
+        if (!FollowerFor(v, i, f)) return 0;
+        std::uintptr_t vt = 0, fnHas = 0, fnPath = 0;
+        if (!Rd(f.obj, vt) || !vt || !Rd(vt + c::follower_has, fnHas) || !Rd(vt + c::follower_path, fnPath) || !InImage(fnHas) ||
+            !InImage(fnPath))
+            return 0;
+        if (!reinterpret_cast<FollowerHas>(fnHas)(reinterpret_cast<void*>(f.obj), f.key)) return 0;
+        const auto path = reinterpret_cast<std::uintptr_t>(reinterpret_cast<FollowerPathOf>(fnPath)(reinterpret_cast<void*>(f.obj), f.key));
+        std::uintptr_t points = 0;
+        std::uint32_t count = 0;
+        if (!path || !Rd(path + c::path_points, points) || !Rd(path + c::path_count, count) || !points || count < 2 || count > kCornerPoints)
+            return 0;
+        float pts[kCornerPoints][3];
+        for (std::uint32_t k = 0; k < count; ++k) {
+            const auto* e = reinterpret_cast<const float*>(points + static_cast<std::uintptr_t>(k) * 0x10);
+            pts[k][0] = e[0]; pts[k][1] = e[1]; pts[k][2] = e[2];
+        }
+        std::uint64_t packed = 0;
+        std::memcpy(&packed, w + 0x40, sizeof(packed));
+        float dest[3]{}, target[3]{};
+        DecodePacked(packed, dest);
+        if (!CornerTarget(pts, count, self, dest, target)) return 0;
+        const std::uint64_t np = EncodePacked(target);
+        std::memcpy(w + 0x40, &np, sizeof(np));
+        float (&last)[3] = g_cornerLast[i];
+        if (Dist(target, last) > 0.5f) {
+            last[0] = target[0]; last[1] = target[1]; last[2] = target[2];
+            char line[360]{};
+            const int n = std::snprintf(line, sizeof(line),
+                "soldier_act_corner; t=%llu; idx=%u; n=%u; target=%.2f,%.2f,%.2f; dest=%.2f,%.2f,%.2f; p=%.2f,%.2f,%.2f\r\n",
+                static_cast<unsigned long long>(now), i, count, target[0], target[1], target[2], dest[0], dest[1], dest[2], self[0],
+                self[1], self[2]);
+            if (n > 0) Emit(line);
+        }
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_cPlanFault.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+}
+
 void MirrorTx(const View& v, std::uint64_t now) noexcept {
     for (unsigned i = 0; i < v.count; ++i) {
         const std::uint64_t at = g_txAt[i].load(std::memory_order_relaxed);
@@ -1000,6 +1266,26 @@ void MirrorTx(const View& v, std::uint64_t now) noexcept {
         if (!PackSafe(v, i, w, o)) continue;
         float own[3]{};
         const bool havePos = Pos(v, i, own);
+        // Round 11 C (act_plan): a walk's destination is the host copy's next path point (CornerTarget), not the leg's end.
+        if (g_planOn.load(std::memory_order_relaxed) && w[0x61] == 1u && havePos && CornerSafe(v, i, own, w, now) == 1)
+            g_cCorner.fetch_add(1, std::memory_order_relaxed);
+        // Round 13 C (act_plan; 1fb060aa guard 246): while the host copy stands (OwnerStill), his walk's destination is his own
+        // spot, so the puppet stays with him instead of walking the corner target ahead and waiting there.
+        if (i < kMaxSoldiers) {
+            const bool still = havePos && OwnerStill(own, g_stillRef[i], g_stillAt[i], now) && g_planOn.load(std::memory_order_relaxed) &&
+                               w[0x61] == 1u;
+            if (still) {
+                const std::uint64_t np = EncodePacked(own);
+                std::memcpy(w + 0x40, &np, sizeof(np));
+            }
+            if (still != g_stillOn[i]) {
+                g_stillOn[i] = still;
+                char line[200]{};
+                const int n = std::snprintf(line, sizeof(line), "soldier_act_still; t=%llu; idx=%u; on=%u; p=%.2f,%.2f,%.2f\r\n",
+                                            static_cast<unsigned long long>(now), i, still ? 1u : 0u, own[0], own[1], own[2]);
+                if (n > 0) Emit(line);
+            }
+        }
         AcquireSRWLockExclusive(&g_actLock);
         Stage& s = g_stage[i];
         s.slot = g_txSlot[i].load(std::memory_order_relaxed);
@@ -1036,7 +1322,8 @@ struct FakeTable {
 };
 alignas(16) unsigned char g_fakeEntries[kMaxSoldiers][0x18]{};
 FakeTable g_fake{0, &g_fakeEntries[0][0], kMaxSoldiers, 0};
-bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70], const float (&at)[3], bool first) noexcept {
+bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70], const float (&at)[3], bool first,
+                       bool off_view) noexcept {
     const std::uintptr_t r = Record(v, i);
     const std::uintptr_t slotTable = v.s + c::s_netpos;
     std::uintptr_t table = 0;
@@ -1054,9 +1341,15 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
     const bool haveSelf = Pos(v, i, self);
     if (haveSelf) ownYaw = reinterpret_cast<const float*>(v.pos + static_cast<std::uintptr_t>(i) * c::slots_pos_stride)[3];
     if (!std::isfinite(ownYaw)) ownYaw = 0.0f;
-    const bool warp = haveSelf && Warp15(self, at);
+    // Round 11 C (act_plan): a walk's entry lies within kGlideM of this copy (GlideEntry): the unpack's warp never moves him;
+    // the plan and the catch-up gait (from the owner copy's real position `at`) bring him onto the host copy's walk.
+    // Round 13 C (D-FM3 (b)): not while Lua's ACT_V1 w says both spots are outside the guest's view (off_view): then the
+    // unpack's 15 m warp puts a far copy on the owner copy's spot (soldier_act_warp15 off=1).
+    float lent[3] = {at[0], at[1], at[2]};
+    const bool glide = GlideOn(plan, w[0x61] == 1u, haveSelf, off_view) && GlideEntry(self, at, lent);
+    const bool warp = haveSelf && Warp15(self, lent);
     unsigned char saved[0x18]{}, entry[0x18]{};
-    PrefillEntry(entry, at, plan ? EntryYaw(w, ownYaw) : 0.0f);
+    PrefillEntry(entry, lent, plan ? EntryYaw(w, ownYaw) : 0.0f);
     __try {
         if (covered) {
             const std::uintptr_t e = data + static_cast<std::uintptr_t>(i) * c::net_stride;
@@ -1100,6 +1393,19 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
         }
         *reinterpret_cast<volatile std::uint16_t*>(r + c::r_flags) |= 0x80u;
         if (plan && i < kMaxSoldiers) g_appliedNow[i] = true;
+        if (glide && i < kMaxSoldiers) {
+            g_cGlide.fetch_add(1, std::memory_order_relaxed);
+            const std::uint64_t t = NowMs();
+            if (first || t - g_glideLogAt[i] >= 2000) {
+                g_glideLogAt[i] = t;
+                char line[360]{};
+                const int n = std::snprintf(line, sizeof(line),
+                    "soldier_act_glide; t=%llu; idx=%u; first=%u; d_m=%.1f; p=%.2f,%.2f,%.2f; at=%.2f,%.2f,%.2f; lent=%.2f,%.2f,%.2f; gait=%u\r\n",
+                    static_cast<unsigned long long>(t), i, first ? 1u : 0u, Dist(self, at), self[0], self[1], self[2], at[0], at[1], at[2],
+                    lent[0], lent[1], lent[2], (bits >> 1) & 7u);
+                if (n > 0) Emit(line);
+            }
+        }
         if (warp) {
             float after[3]{};
             Pos(v, i, after);
@@ -1107,9 +1413,9 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
             char line[400]{};
             const int n = std::snprintf(line, sizeof(line),
                 "soldier_act_warp15; t=%llu; idx=%u; first=%u; d_m=%.1f; p=%.2f,%.2f,%.2f; at=%.2f,%.2f,%.2f; after=%.2f,%.2f,%.2f; "
-                "moved_m=%.1f; yaw=%.3f; plan=%u\r\n",
+                "moved_m=%.1f; yaw=%.3f; plan=%u; off=%u\r\n",
                 static_cast<unsigned long long>(NowMs()), i, first ? 1u : 0u, Dist(self, at), self[0], self[1], self[2], at[0], at[1], at[2],
-                after[0], after[1], after[2], Dist(self, after), plan ? EntryYaw(w, ownYaw) : 0.0f, plan ? 1u : 0u);
+                after[0], after[1], after[2], Dist(self, after), plan ? EntryYaw(w, ownYaw) : 0.0f, plan ? 1u : 0u, off_view ? 1u : 0u);
             if (n > 0) Emit(line);
         }
         return true;
@@ -1168,7 +1474,8 @@ void OwnDests(const View& v, std::uint64_t now) noexcept {
 }
 // Round 9 track C (act_plan, design 7.26): whether a due re-apply of guard i's walk is held (PlanHold): the request is the
 // planned one but for a destination moved within 1 m, our plan still holds his slot, no 15 m warp, no gait change.
-bool HoldPlanned(const View& v, unsigned i, const unsigned char (&w)[0x70], const unsigned char (&planned)[0x70], const float (&at)[3]) noexcept {
+bool HoldPlanned(const View& v, unsigned i, const unsigned char (&w)[0x70], const unsigned char (&planned)[0x70], const float (&at)[3],
+                 bool off_view) noexcept {
     if (i >= kMaxSoldiers || !g_planHave[i] || w[0x61] != 1u || planned[0x61] != 1u) return false;
     const std::uintptr_t r = Record(v, i);
     std::uint16_t r19c = 0xffff;
@@ -1183,7 +1490,10 @@ bool HoldPlanned(const View& v, unsigned i, const unsigned char (&w)[0x70], cons
     if (!PartialHolds(g_planPartial[i], self, g_planEnd[i])) return false;  // round 10 C: near a partial path's end
     std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
     const unsigned now = (bits >> 1) & 7u, want = GaitCatchUp(AheadM(self, at, dest), g_wireGait[i]);
-    return PlanHold(false, RequestChangedFar(planned, w), live, Warp15(self, at), now, want);
+    float lent[3] = {at[0], at[1], at[2]};
+    // Round 11 C: a walk's entry glides, so the unpack would not warp him; round 13 C: off view it does not (no hold).
+    if (!off_view) GlideEntry(self, at, lent);
+    return PlanHold(false, RequestChangedFar(planned, w), live, Warp15(self, lent), now, want);
 }
 void MirrorRx(const View& v, std::uint64_t now) noexcept {
     // The fire-drop mask lapses with the apply's own lease (kActFreshMs without ACT_V1 m), whatever Lua forgot to release.
@@ -1222,8 +1532,9 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
             const bool first = !a.valid || a.gen != gen;
             const bool changed = !first && newReq && RequestChanged(w, a.req);
             const bool moving = !first && haveOwner && a.have_owner && OwnerMoved(a.owner, owner);
+            const bool offView = i < kMaxSoldiers && OffViewFresh(g_offViewAt[i].load(std::memory_order_relaxed), now);  // round 13 C
             if (ReapplyDue(first, changed, moving, now >= a.at ? now - a.at : 0) && !first &&
-                g_planOn.load(std::memory_order_relaxed) && HoldPlanned(v, i, w, a.req, haveOwner ? owner : own)) {
+                g_planOn.load(std::memory_order_relaxed) && HoldPlanned(v, i, w, a.req, haveOwner ? owner : own, offView)) {
                 // Round 9 C: held (no unpack, no restart, no new plan); the planned request stays the one compared.
                 g_cPlanHold.fetch_add(1, std::memory_order_relaxed);
                 a.at = now;
@@ -1231,7 +1542,7 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
                 if (haveOwner) std::memcpy(a.owner, owner, sizeof(owner));
             } else if (ReapplyDue(first, changed, moving, now >= a.at ? now - a.at : 0)) {
                 g_cDue.fetch_add(1, std::memory_order_relaxed);
-                if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own, first)) {
+                if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own, first, offView)) {
                     g_cApplied.fetch_add(1, std::memory_order_relaxed);
                     if (!first && !changed && moving) g_cReapply.fetch_add(1, std::memory_order_relaxed);
                     std::memcpy(a.req, w, sizeof(w));
@@ -1434,6 +1745,50 @@ void ReleaseWalkOne(const View& v, unsigned i, std::uint64_t now) noexcept {
     ReleaseLine(v, i, step == ReleaseWalk::finish ? "finish" : (orphan ? "over_cancel" : "over"), w.handle, sl, now - w.at, now);
 }
 
+// Round 11 track C (act_plan, design 7.33): the release watch. A released copy (no released walk running) whose brain
+// re-targeted a walk with no path for kWatchFreezeMs is planned to R+0x80 (the released walk then runs as ReleaseOne's);
+// a failed plan is tried again at most every 2 s.
+void WatchOne(const View& v, unsigned i, std::uintptr_t slots, std::uint64_t now) noexcept {
+    Watch& w = g_watch[i];
+    const std::uintptr_t r = Record(v, i);
+    std::uint16_t h = 0xffff, r19e = 0;
+    std::uint32_t bits = 0;
+    Rd(r + c::r_handle, h);
+    Rd(r + c::r_flags, r19e);
+    Rd(r + c::r_bits, bits);
+    Follower f{};
+    Slot sl{0, 0xffff, 0xffff};
+    if (!slots || !FollowerFor(v, i, f) || !PlannerKnown(f.planner) || !PlannerSlot(f.planner, i, sl)) { w.on = false; return; }
+    bool has = false;
+    std::uint32_t count = 0;
+    float end[3]{}, p[3]{}, dest[3]{};
+    FollowerPath(f, has, count, end);
+    std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
+    float dd = -1.0f;
+    if (Pos(v, i, p)) {
+        const float dx = dest[0] - p[0], dz = dest[2] - p[2];
+        dd = std::sqrt(dx * dx + dz * dz);
+    }
+    const bool freeze = ReleaseFreeze((bits >> 9) & 0xfu, r19e, h, sl.hash, sl.handle, has && count, dd);
+    if (!freeze) w.freezeAt = 0;
+    else if (!w.freezeAt) w.freezeAt = now;
+    const WatchStep step = WatchChoose(freeze, w.freezeAt ? now - w.freezeAt : 0, now - w.at, sl.hash);
+    if (step == WatchStep::end) { w.on = false; return; }
+    if (step == WatchStep::wait || (w.tryAt && now - w.tryAt < 2000)) return;
+    w.tryAt = now;
+    bool started = false;
+    const std::uint16_t got = PlanShadow(v, i, r, bits, f, slots, now, started);
+    if (got != 0xffff) {
+        g_rel[i] = RelWalk{true, got, now, 0};
+        g_cRelWatch.fetch_add(1, std::memory_order_relaxed);
+        g_cPlan.fetch_add(1, std::memory_order_relaxed);
+    } else if (started) {
+        g_cPlanNone.fetch_add(1, std::memory_order_relaxed);
+    }
+    PlannerSlot(f.planner, i, sl);
+    ReleaseLine(v, i, got != 0xffff ? "watch" : "watch_none", got, sl, now - w.at, now);
+}
+
 // Round 8 track C (act_plan; hook thread, after the original manager update, so after the engine's own offline start of
 // each puppet's new request): 0x1413725f0 again with the shadow gate object, for the planner to plan from where he stands
 // to R+0x80 (finding 1: offline the start plans nothing and his follower keeps his brain's old path).
@@ -1451,14 +1806,18 @@ void PlanStep(std::uintptr_t m) noexcept {
             // ReleaseWalkOne ends it; otherwise our live handle is cancelled (his brain's next walk is not refused).
             const std::uint64_t mat = g_mirAt[i].load(std::memory_order_relaxed);
             const bool mirrored = mat && now - mat <= kActFreshMs;
-            if (mirrored) g_rel[i].on = false;  // the mirror has him again
+            if (mirrored) { g_rel[i].on = false; g_watch[i].on = false; }  // the mirror has him again
             if (g_planned[i] && !mirrored) {
                 g_planned[i] = false;
                 g_planHave[i] = false;
                 g_planPartial[i] = false;
                 ReleaseOne(v, i, slots, now);
+                g_watch[i] = Watch{true, now, 0, 0};  // round 11 C: the release watch
             } else if (g_rel[i].on && !mirrored) {
                 ReleaseWalkOne(v, i, now);
+                if (!g_rel[i].on) g_watch[i] = Watch{true, now, 0, 0};  // round 11 C: watched again from the walk's end
+            } else if (g_watch[i].on && !mirrored) {
+                WatchOne(v, i, slots, now);
             }
             if (!g_appliedNow[i]) continue;
             g_appliedNow[i] = false;
@@ -1549,6 +1908,14 @@ void QuietOne(const View& v, unsigned i, const QuietMove& q) noexcept {
     }
     char line[160]{};
     if (FormatQuietLine(q.go, q.seq, moved, bias, err, dy, line, sizeof(line))) Emit(line);
+    // Round 11 (design 7.31): a moved walker is re-planned after this update's original (QuietPlanStep).
+    if (moved && q.replan && i < kMaxSoldiers) {
+        if (!g_qplan[i].due) ++g_qplanLive;
+        g_qplan[i] = QuietPlanAsk{true, q.go, q.seq, q.ent, q.lead, {q.to[0], q.to[1], q.to[2]}, q.have_to, q.rx, false};
+    } else if (moved && i < kMaxSoldiers && g_qfol[i].on) {
+        // Round 13: a quiet move without a re-plan (both copies at rest) ends his follow.
+        g_qfol[i].on = false;
+    }
 }
 void QuietStep(std::uintptr_t m) noexcept {
     g_quietPending.store(false, std::memory_order_relaxed);
@@ -1562,6 +1929,128 @@ void QuietStep(std::uintptr_t m) noexcept {
         if (g_quiet[i].due) { q = g_quiet[i]; g_quiet[i].due = false; }
         ReleaseSRWLockExclusive(&g_quietLock);
         if (q.due) QuietOne(v, i, q);
+    }
+}
+
+// Enemy round 11 (quiet_place, design 7.31; hook thread, after the original manager update): a walker the quiet warp moved
+// is re-planned from where he now stands to his own brain's destination R+0x80 with act_plan's shadow plan 0x1413725f0
+// (his brain's live planner slot of another type is cancelled first), so his follower no longer holds the old path that
+// walked him back (1befcef4: 9.4-14.1 m on). One world_place=quiet_plan line per move; the plan check follows
+// kPlanCheckMs after (soldier_act_plan line, read only).
+void QuietPlanOne(const View& v, unsigned i, const QuietPlanAsk& a, std::uintptr_t slots, std::uint64_t now) noexcept {
+    if (!g_qoursInit) { for (auto& h : g_qours) h = 0xffff; g_qoursInit = true; }
+    const std::uintptr_t r = Record(v, i);
+    std::uint32_t bits = 0;
+    std::uint16_t r19c = 0xffff, r19e = 0;
+    Rd(r + c::r_bits, bits);
+    Rd(r + c::r_handle, r19c);
+    Rd(r + c::r_flags, r19e);
+    const unsigned mode = (bits >> 9) & 0xfu;
+    Follower f{};
+    Slot sl{0, 0xffff, 0xffff};
+    const bool fol = slots && FollowerFor(v, i, f) && PlannerKnown(f.planner);
+    const bool slot_read = fol && PlannerSlot(f.planner, i, sl);
+    // Round 13 (design 7.31): our own live plan is re-planned too (round 12: every later move gave step=none).
+    const QuietPlan step = fol ? QuietPlanFollow(mode, r19c, r19e, sl.hash, sl.handle, slot_read, g_qours[i]) : QuietPlan::none;
+    bool started = false;
+    std::uint16_t got = 0xffff;
+    if (step == QuietPlan::cancel_then_plan) CancelSlot(f.planner, i, sl.handle);
+    if (step == QuietPlan::plan || step == QuietPlan::cancel_then_plan || step == QuietPlan::replan) {
+        if (!g_shadowBuilt) { BuildShadow(g_shadow); g_shadowBuilt = true; }
+        // Round 13: toward the owner copy's track (a.to), not his own brain's R+0x80. The start (0x1413725f0, decompiled
+        // read only) builds the move from R+0x80 and, for bits & 1, the request's waypoint R+0xa4 first; so R+0x80 holds
+        // a.to for the call (no waypoint) and his brain's own destination again after it (the path query copied the point).
+        float keep[3]{};
+        std::memcpy(keep, reinterpret_cast<const void*>(r + c::r_dest), sizeof(keep));
+        if (a.have_to) std::memcpy(reinterpret_cast<void*>(r + c::r_dest), a.to, sizeof(a.to));
+        got = PlanShadow(v, i, r, a.have_to ? (bits & ~1u) : bits, f, slots, now, started);
+        if (a.have_to) std::memcpy(reinterpret_cast<void*>(r + c::r_dest), keep, sizeof(keep));
+        if (started && got != 0xffff) {
+            g_qwatch[i] = true;
+            g_qours[i] = got;
+        }
+    }
+    // The follow: from a started plan of a move (or a follow re-plan) until kQuietFollowMs after the move.
+    QuietFollow& fw = g_qfol[i];
+    if (started && got != 0xffff && a.have_to && a.ent) {
+        if (!a.follow) {
+            fw.until = now + kQuietFollowMs;
+            fw.ent = a.ent;
+            fw.go = a.go;
+            fw.seq = a.seq;
+        }
+        fw.on = true;
+        fw.ours = got;
+        fw.last_rx = a.rx;
+        fw.lead = a.lead;
+        std::memcpy(fw.to, a.to, sizeof(fw.to));
+    } else if (!a.follow || step == QuietPlan::none) {
+        fw.on = false;
+    } else {
+        fw.last_rx = a.rx;  // a follow re-plan that did not start: not again for the same sample
+    }
+    float p[3]{}, dest[3]{};
+    Pos(v, i, p);
+    std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
+    char line[480]{};
+    const int n = std::snprintf(line, sizeof(line),
+        "world_place=quiet_plan; go=%u; seq=%u; idx=%u; mode=%u; r19c=0x%04x; r19e=0x%04x; slot=0x%012llx; slot_h=0x%04x; "
+        "fol=%u; step=%s; started=%u; handle=0x%04x; p=%.2f,%.2f,%.2f; dest=%.2f,%.2f,%.2f; lead=%s; to=%.2f,%.2f,%.2f; src=%s\r\n",
+        unsigned(a.go), unsigned(a.seq), i, mode, r19c, r19e, static_cast<unsigned long long>(sl.hash & 0xffffffffffffull),
+        sl.handle, fol ? 1u : 0u, QuietPlanName(step), started ? 1u : 0u, got, p[0], p[1], p[2], dest[0], dest[1], dest[2],
+        a.have_to ? QuietLeadName(a.lead) : "none", a.to[0], a.to[1], a.to[2], a.follow ? "follow" : "move");
+    if (n > 0) Emit(line);
+}
+// Round 13 (design 7.31): a followed guard's newest owner sample (every kQuietFollowPollMs): a re-plan when it is due.
+void QuietFollowOne(const View& v, unsigned i, std::uintptr_t slots, std::uint64_t now) noexcept {
+    QuietFollow& fw = g_qfol[i];
+    if (now >= fw.until) { fw.on = false; return; }
+    if (now - g_qfolPoll[i] < kQuietFollowPollMs) return;
+    g_qfolPoll[i] = now;
+    world::Grant gc{}, gp{};
+    std::uint64_t gnow = 0;
+    if (!world_link::EntGrants(fw.ent, gnow, gc, gp)) return;
+    const OwnerSample oc{gc.valid, {gc.pos_mm[0] * 0.001f, gc.pos_mm[1] * 0.001f, gc.pos_mm[2] * 0.001f}, gc.rx_ms};
+    const OwnerSample op{gp.valid, {gp.pos_mm[0] * 0.001f, gp.pos_mm[1] * 0.001f, gp.pos_mm[2] * 0.001f}, gp.rx_ms};
+    float to[3]{};
+    float speed = -1.0f;
+    const QuietLead lead = QuietLeadFor(oc, op, gnow, to, speed);
+    if (lead == QuietLead::fast) { fw.on = false; return; }
+    if (!QuietFollowDue(fw, gc.rx_ms, lead, to, now)) return;
+    const QuietPlanAsk a{true, fw.go, fw.seq, fw.ent, lead, {to[0], to[1], to[2]}, true, gc.rx_ms, true};
+    QuietPlanOne(v, i, a, slots, now);
+}
+void QuietPlanStep(std::uintptr_t m) noexcept {
+    __try {
+        View v{};
+        if (!Resolve(m, v)) return;
+        const std::uint64_t now = NowMs();
+        std::uintptr_t slots = 0;
+        Rd(v.s + c::s_slots, slots);
+        unsigned live = 0;
+        for (unsigned i = 0; i < v.count && i < kMaxSoldiers; ++i) {
+            if (g_qplan[i].due) {
+                const QuietPlanAsk a = g_qplan[i];
+                g_qplan[i].due = false;
+                QuietPlanOne(v, i, a, slots, now);
+            }
+            if (g_qfol[i].on) {
+                QuietFollowOne(v, i, slots, now);
+                if (g_qfol[i].on) ++live;
+            }
+            if (g_qwatch[i]) {
+                PlanCheckStep(v, i, now);
+                if (!g_planCheck[i].pending) g_qwatch[i] = false;
+                else ++live;
+            }
+        }
+        g_qplanLive = live;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        std::memset(g_qplan, 0, sizeof(g_qplan));
+        std::memset(g_qwatch, 0, sizeof(g_qwatch));
+        std::memset(g_qfol, 0, sizeof(g_qfol));
+        g_qplanLive = 0;
     }
 }
 
@@ -1583,6 +2072,12 @@ void RestStep(const View& v, std::uint64_t now) noexcept {
         if (!r.realized || !Pos(v, i, p)) { h = {}; continue; }
         r.pos[0] = p[0]; r.pos[1] = p[1]; r.pos[2] = p[2];
         r.listed = list && ListHas(reinterpret_cast<const std::uint16_t*>(list), listCount, i);
+        // Round 11: the stance nibble the set-transform handler reads (S+0x98 records +0x34 & 0xf; the census's st).
+        if (v.recData && i < v.recCount) {
+            std::uint32_t st = 0;
+            if (Rd(v.recData + static_cast<std::uintptr_t>(i) * c::rec_stride + c::rec_stance, st))
+                r.stance = static_cast<std::uint8_t>(st & 0xfu);
+        }
         if (h.at[0] && now > h.at[0] && now - h.at[0] <= 4 * kRestMs) {
             const float dx = p[0] - h.pos[0][0], dz = p[2] - h.pos[0][2];
             r.speed_mps = std::sqrt(dx * dx + dz * dz) * 1000.0f / static_cast<float>(now - h.at[0]);
@@ -1650,6 +2145,8 @@ void __fastcall UpdateDetour(void* m) {
         g_probe.pending.load(std::memory_order_relaxed))
         StepSafe(reinterpret_cast<std::uintptr_t>(m));
     g_original(m);
+    // Round 11 (quiet_place, design 7.31): the quiet-moved walkers' re-plans and their plan checks.
+    if (g_qplanLive) QuietPlanStep(reinterpret_cast<std::uintptr_t>(m));
     // Round 8 track C (act_plan): after the engine's own start of each puppet's new request.
     if (g_planOn.load(std::memory_order_relaxed) && g_actOn.load(std::memory_order_relaxed) && !g_actHost.load(std::memory_order_relaxed))
         PlanStep(reinterpret_cast<std::uintptr_t>(m));
@@ -1724,10 +2221,12 @@ QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept {
 }
 void SetQuietRest(bool on) noexcept { g_restOn.store(on); }
 
-bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept {
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan, std::uint32_t ent,
+                QuietLead lead, const float* to, std::uint64_t rx_ms) noexcept {
     if (!g_installed.load() || idx >= kMaxSoldiers) return false;
     AcquireSRWLockExclusive(&g_quietLock);
-    g_quiet[idx] = QuietMove{true, go, seq, {pos[0], pos[1], pos[2]}, yaw};
+    g_quiet[idx] = QuietMove{true, go, seq, {pos[0], pos[1], pos[2]}, yaw, replan, ent, lead,
+                             {to ? to[0] : 0.0f, to ? to[1] : 0.0f, to ? to[2] : 0.0f}, to != nullptr, rx_ms};
     ReleaseSRWLockExclusive(&g_quietLock);
     g_quietPending.store(true, std::memory_order_release);
     return true;
@@ -1801,6 +2300,7 @@ bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) 
     if (idx >= kMaxSoldiers) return false;
     if (!on || !g_actOn.load()) {
         g_mirAt[idx].store(0, std::memory_order_relaxed);
+        g_offViewAt[idx].store(0, std::memory_order_relaxed);  // round 13 C
         g_mirGen[idx].fetch_add(1, std::memory_order_relaxed);
         soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), false);
         AcquireSRWLockExclusive(&g_actLock);
@@ -1830,9 +2330,17 @@ bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) 
     fresh = m.req_valid && now >= m.req_rx_ms && now - m.req_rx_ms <= kActFreshMs;
     ReleaseSRWLockExclusive(&g_actLock);
     if (!fresh) g_cStale.fetch_add(1, std::memory_order_relaxed);
-    g_mirAt[idx].store(fresh ? (now_ms ? now_ms : 1) : 0, std::memory_order_relaxed);
-    soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), fresh, now_ms ? now_ms : 1);  // the fire-drop lease
+    const std::uint64_t stamp = now_ms ? now_ms : 1;
+    // Round 11 C (act_plan): a stale m keeps the last fresh lease (MirrorLease); it lapses kActFreshMs after it.
+    const std::uint64_t lease = g_planOn.load(std::memory_order_relaxed) ? MirrorLease(fresh, g_mirAt[idx].load(std::memory_order_relaxed), stamp)
+                                                                        : (fresh ? stamp : 0);
+    g_mirAt[idx].store(lease, std::memory_order_relaxed);
+    soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), lease != 0, lease ? lease : stamp);  // the fire-drop lease
     return fresh;
+}
+
+void SetOffView(unsigned idx, std::uint64_t now_ms) noexcept {
+    if (idx < kMaxSoldiers) g_offViewAt[idx].store(now_ms ? now_ms : 1, std::memory_order_relaxed);
 }
 
 std::atomic<bool> g_paused{false};
@@ -1854,16 +2362,28 @@ bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept {
     }
     unsigned char req[0x70];
     std::memcpy(req, act.req, sizeof(req));
+    // Round 11 C: this copy's own position (OwnDests) and the owner copy's (the order part) for TakeWarps.
+    float self[3]{}, owner[3]{};
+    bool haveOwner = false;
+    if (idx < kMaxSoldiers)
+        for (int k = 0; k < 3; ++k) self[k] = g_ownPos[idx][k].load(std::memory_order_relaxed);
+    std::uint32_t oflags = 0;
+    std::memcpy(&oflags, act.order + 0x24, sizeof(oflags));
+    if (act.order_valid && (oflags & 1u)) { std::memcpy(owner, act.order + 0x18, sizeof(owner)); haveOwner = true; }
     // Round 10 track C (TakeWait): with act_plan a walker is taken whatever his leg or distance (226fc789: 3 of 4 calm
-    // walkers waited on LegMatch and the 10 m rule and stayed 17-45 m off); without it LegMatch as round 6.
-    const unsigned wait = TakeWait(g_planOn.load(std::memory_order_relaxed), LegMatch(req, own, valid), true);
+    // walkers waited on LegMatch and the 10 m rule and stayed 17-45 m off); without it LegMatch as round 6. Round 11 C: no
+    // take that opens with the unpack's warp (a walk glides).
+    // Round 13 C (D-FM3 (b)): off view (Lua's ACT_V1 w for this candidate) a take may open with the warp.
+    const bool offView = idx < kMaxSoldiers && OffViewFresh(g_offViewAt[idx].load(std::memory_order_relaxed), now);
+    const unsigned wait = TakeWait(g_planOn.load(std::memory_order_relaxed), LegMatch(req, own, valid),
+                                   TakeNoWarp(TakeWarps(req, self, owner, valid && haveOwner), offView));
     if (wait == 1u) { g_cLegWait.fetch_add(1, std::memory_order_relaxed); return false; }
     if (wait == 2u) { g_cNearWait.fetch_add(1, std::memory_order_relaxed); return false; }
     return true;
 }
 
 void ReleaseAll() noexcept {
-    for (unsigned i = 0; i < kMaxSoldiers; ++i) { g_mirAt[i].store(0); g_txAt[i].store(0); g_mirGen[i].fetch_add(1); }
+    for (unsigned i = 0; i < kMaxSoldiers; ++i) { g_mirAt[i].store(0); g_txAt[i].store(0); g_mirGen[i].fetch_add(1); g_offViewAt[i].store(0); }
     soldier_authority::ClearMirrored();
     AcquireSRWLockExclusive(&g_actLock);
     for (auto& m : g_mail) m = Mail{};
@@ -1886,6 +2406,7 @@ Counters ReadCounters() noexcept {
     k.plan_none = g_cPlanNone.load(); k.plan_release = g_cPlanRelease.load();
     k.plan_hold = g_cPlanHold.load();
     k.rel_keep = g_cRelKeep.load(); k.rel_replan = g_cRelReplan.load(); k.rel_end = g_cRelEnd.load(); k.recheck = g_cRecheck.load();
+    k.glide = g_cGlide.load(); k.rel_watch = g_cRelWatch.load(); k.corner = g_cCorner.load();
     return k;
 }
 
@@ -1896,13 +2417,29 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
         "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u; payload_ids=%u; due=%u; reapply=%u; "
         "expired=%u; order_clear=%u; leg_wait=%u; plan=%u; plan_skip=%u; warp15=%u; plan_ok=%u; plan_far=%u; plan_nopath=%u; "
         "near_wait=%u; gait_up=%u; plan_fault=%u; plan_cancel=%u; plan_busy=%u; plan_none=%u; plan_release=%u; plan_hold=%u; "
-        "rel_keep=%u; rel_replan=%u; rel_end=%u; recheck=%u\r\n",
+        "rel_keep=%u; rel_replan=%u; rel_end=%u; recheck=%u; glide=%u; rel_watch=%u; corner=%u\r\n",
         static_cast<unsigned long long>(now), k.frames, k.frame_p95_us / 1000.0, k.mirrored, k.tx_parts, k.staged, k.rx, k.applied,
         k.orders, k.refuse_table, k.refuse_fault, k.remap_player, k.fire_dropped, k.noise_dropped, k.local_shots, k.same,
         k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear, k.leg_wait, k.plan, k.plan_skip, k.warp15,
         k.plan_ok, k.plan_far, k.plan_nopath, k.near_wait, k.gait_up, k.plan_fault, k.plan_cancel, k.plan_busy, k.plan_none,
-        k.plan_release, k.plan_hold, k.rel_keep, k.rel_replan, k.rel_end, k.recheck);
+        k.plan_release, k.plan_hold, k.rel_keep, k.rel_replan, k.rel_end, k.recheck, k.glide, k.rel_watch, k.corner);
     return n > 0 && static_cast<std::size_t>(n) < capacity;
+}
+
+bool QueryOwner(std::uint16_t slot, std::int32_t (&mm)[3]) noexcept {
+    std::uint64_t now = 0;
+    world::Act act{};
+    if (!g_actOn.load() || !world_link::ActLatest(slot, now, act) || !act.order_valid) return false;
+    std::uint32_t flags = 0;
+    std::memcpy(&flags, act.order + 0x24, sizeof(flags));
+    if (!(flags & 1u)) return false;
+    float p[3]{};
+    std::memcpy(p, act.order + 0x18, sizeof(p));
+    for (int k = 0; k < 3; ++k) {
+        if (!(p[k] >= -100000.0f && p[k] <= 100000.0f)) return false;
+        mm[k] = static_cast<std::int32_t>(p[k] * 1000.0f + (p[k] < 0.0f ? -0.5f : 0.5f));
+    }
+    return true;
 }
 
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept {

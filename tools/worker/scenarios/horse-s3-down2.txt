@@ -1,0 +1,82 @@
+# Step S3 attempt 3 (lab): the rider downed while riding, world_horse_down_off named (session-wide; acts only on a
+# downed rider). Lessons of attempts 1-2: no clear_enemies (it left the nearest guard 321 m away), godmode off BEFORE
+# the rider mounts (debug godmode 0 did not take while riding), the guard made hostile by the player on foot (debug
+# commands are refused while mounted), horses called (no horse_here). Both players go where S2's (b) ended (a guard
+# was warped 5.1-5.4 m from the host there four times), the horses are called there; the guest drives, the host on
+# foot makes the guard hostile; lines horse_drive=getoff / ride_rec st=3 on the guest, frames on both screens; revive.
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting world_horse_down_off=1
+boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
+logmark both
+both debug godmode 1
+host debug teleport 878.8 322.9 1734.2 -5
+guest debug teleport 880.6 322.6 1733.0 -5
+wait 4000
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 12000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+logmark both
+guest debug godmode 0
+wait 500
+guest run status
+guest expect ^status;.*god=0;.*life=
+guest run goto_horse
+wait 2000
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+host hold s 900
+host release
+wait 600
+host run spawn_enemy here come
+host expect ^guard_here;ent=
+host run enemy notice nearest
+host mouse 1200 0
+both capture s3d-before
+host burst s3d-shot-host 4 1000
+guest burst s3d-shot-guest 4 1000
+waitlog guest 'world_lua=event=downed; step=entered;' 40
+both capture s3d-down
+waitlog guest 'horse_drive=getoff; ok=1;' 6
+host run enemy ignore nearest
+wait 1500
+guest run horse_status
+guest expect localMounted=0
+both capture s3d-down-1s
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+guest run downed_status
+guest expect down=1
+both capture s3d-down-4s
+logmark both
+host debug goto_carry
+wait 1500
+both capture s3d-before-revive
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest expect down=0
+both capture s3d-revived
+guest debug godmode 1
+wait 1000

@@ -98,6 +98,71 @@ q3 = r3['quiet']
 check(q3['why'] == {'moving': 1, 'ok': 1} and q3['readback_5s'] == 1 and q3['walk_on_within_2m_5s'] == 1 and
       q3['moves_both_within_1m'] == 0 and q3['moves_read'] == 1,
       'the quiet reasons, the 5 s walk-on read-back and the per-move read-back rows')
+# Enemy round 11 track A (design 7.31): a walker's quiet move (quiet=walk), his re-plan (world_place=quiet_plan) and the
+# owner rows: the 2 s and 10 s read-backs after it within 3 m of the owner copy (dho_m).
+guest5 = guest3 + [
+    'world_place=warp; seq=10; kind=3; ent=667680985; go=1060; age_ms=0; r=0; h=1; leaf=quiet; refused=none; quiet=walk',
+    'world_place=quiet; go=1060; seq=10; moved=1; bias=1; err_m=0.00; dy_m=0.00',
+    'world_place=quiet_plan; go=1060; seq=10; idx=36; mode=1; r19c=0xffff; r19e=0x006e; slot=0xdf31ba77279e; slot_h=0x0001; '
+    'fol=1; step=cancel_plan; started=1; handle=0x0004; p=1.00,2.00,3.00; dest=4.00,2.00,3.00',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=500; ms=500; dy_m=0.00; held=1; far_m=80; dxz_m=0.20; dho_m=0.30; oage_ms=200; t_ms=1500',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=2.10; dho_m=1.20; oage_ms=300; t_ms=3000',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=5000; ms=5000; dy_m=0.00; held=1; far_m=80; dxz_m=6.00; dho_m=2.50; oage_ms=400; t_ms=6000',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=10000; ms=10000; dy_m=0.00; held=1; far_m=80; dxz_m=12.0; dho_m=4.10; oage_ms=900; t_ms=11000',
+]
+q5 = rep.analyse(host2, guest5)['quiet']
+check(q5['why'] == {'moving': 1, 'ok': 1, 'walk': 1} and q5['walk_moves'] == 1 and q5['plans'] == {'cancel_plan': 1} and
+      q5['plans_started'] == 1 and q5['walk_owner_2s'] == {'read': 1, 'within_3m': 1, 'walkers': 1} and
+      q5['walk_owner_10s'] == {'read': 1, 'within_3m': 0, 'walkers': 1} and q5['plans_lost'] == 0,
+      'round 11: quiet moves of walkers, their re-plans and the owner rows at 2 s and 10 s')
+# Enemy round 11 track A, as the review checked it: a later quiet=ok move of the same guard is not a walker move (the move's
+# own warp line names its kind, not the guard), a cancelled slot whose plan did not start is a lost plan (per guard), and
+# the owner rows count the walkers read.
+guest6 = guest5 + [
+    'world_place=warp; seq=11; kind=3; ent=667680985; go=1061; age_ms=0; r=0; h=1; leaf=quiet; refused=none; quiet=ok',
+    'world_place=quiet; go=1061; seq=11; moved=1; bias=1; err_m=0.00; dy_m=0.00',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=500; ms=500; dy_m=0.00; held=1; far_m=80; dxz_m=0.20; dho_m=0.30; oage_ms=200; t_ms=21500',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=0.30; dho_m=9.00; oage_ms=300; t_ms=23000',
+    'world_place=quiet_plan; go=1062; seq=12; idx=37; mode=1; r19c=0xffff; r19e=0x006e; slot=0xdf31ba77279e; slot_h=0x0002; '
+    'fol=1; step=cancel_plan; started=0; handle=0xffff; p=1.00,2.00,3.00; dest=4.00,2.00,3.00',
+    'world_place=quiet_plan; go=1063; seq=13; idx=37; mode=1; r19c=0xffff; r19e=0x006e; slot=0xdf31ba77279e; slot_h=0x0003; '
+    'fol=1; step=cancel_plan; started=0; handle=0xffff; p=1.00,2.00,3.00; dest=4.00,2.00,3.00',
+]
+q6 = rep.analyse(host2, guest6)['quiet']
+check(q6['walk_moves'] == 1 and q6['walk_owner_2s'] == {'read': 1, 'within_3m': 1, 'walkers': 1} and
+      q6['walk_owner_10s'] == {'read': 1, 'within_3m': 0, 'walkers': 1} and q6['plans_lost'] == 2 and
+      q6['plans_lost_guards'] == 1,
+      'round 11 review: a later quiet=ok move of a walker is not a walker move; lost plans per guard; walkers read')
+# Enemy round 12 track A (design 7.31): with quiet_place the host's M3 placements go quiet too: host_quiet counts the host's
+# quiet moves (world_place=host_warp leaf=quiet), the reasons (quiet=<why>) and the walkers' owner rows from the host's
+# read-backs (dho_m against the guest's copy); the guest's quiet rows do not take the host's lines.
+host7 = host2 + [
+    'world_place=host_warp; seq=20; ent=667680985; go=1060; age_ms=0; r=0; h=1; leaf=quiet; near=guest; refused=none; flat=0; '
+    'g_age_ms=100; dgy_m=0.0; g_src=pose; quiet=walk',
+    'world_place=quiet; go=1060; seq=20; moved=1; bias=0; err_m=0.10; dy_m=0.00',
+    'world_place=host_warp; seq=21; ent=2929558510; go=1041; age_ms=0; r=0; h=1; leaf=typed; near=guest; refused=none; flat=0; '
+    'g_age_ms=100; dgy_m=0.0; g_src=pose; quiet=stance',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=500; ms=500; dy_m=0.00; held=1; far_m=5; dxz_m=0.20; dho_m=0.30; oage_ms=200; t_ms=1500',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=2000; ms=2000; dy_m=0.00; held=1; far_m=5; dxz_m=2.10; dho_m=1.00; oage_ms=300; t_ms=3000',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=5000; ms=5000; dy_m=0.00; held=1; far_m=5; dxz_m=6.00; dho_m=1.50; oage_ms=400; t_ms=6000',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=10000; ms=10000; dy_m=0.00; held=1; far_m=5; dxz_m=12.0; dho_m=3.50; oage_ms=900; t_ms=11000',
+]
+r7 = rep.analyse(host7, guest3)
+hq = r7['host_quiet']
+check(hq['warps'] == 1 and hq['moved'] == 1 and hq['why'] == {'walk': 1, 'stance': 1} and hq['walk_moves'] == 1 and
+      hq['walk_owner_2s'] == {'read': 1, 'within_3m': 1, 'walkers': 1} and
+      hq['walk_owner_10s'] == {'read': 1, 'within_3m': 0, 'walkers': 1} and r7['quiet'] == r3['quiet'],
+      'round 12: the host\'s quiet M3 placements, their reasons and the walkers\' owner rows (host_quiet)')
+# Enemy round 12 track A: the default (message) corrections' 2 s read-backs against the owner copy (src=place dho_m), per
+# side, so a no-key run's far walkers compare with quiet_place's walk_owner_2s.
+guest8 = guest3 + [
+    'world_lua=event=readback; ent=1926520947; src=place; at=500; ms=500; dy_m=0.00; held=1; far_m=80; dxz_m=0.20; dho_m=0.30; oage_ms=200; t_ms=1500',
+    'world_lua=event=readback; ent=1926520947; src=place; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=2.10; dho_m=4.20; oage_ms=300; t_ms=3000',
+    'world_lua=event=readback; ent=1740692850; src=place; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=1.10; dho_m=1.20; oage_ms=300; t_ms=3000',
+    'world_lua=event=readback; ent=1740692850; src=place; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=1.10; t_ms=3500',
+]
+check(rep.analyse(host2, guest8)['place_owner_2s']['guest'] == {'read': 2, 'within_3m': 1, 'guards': 2},
+      'round 12: the message corrections\' 2 s read-backs against the owner copy (place_owner_2s)')
 # Enemy flip A-vert (user decision D-A10, design 7.27): drive_sink is information only; the gate row is "vert left under":
 # a copy more than 1.5 m under its owner copy for more than 2 s after the owner copy was level in y for 1 s (per guard,
 # with the time), from the native world_drive lines (no t_ms: the last t_ms before each).

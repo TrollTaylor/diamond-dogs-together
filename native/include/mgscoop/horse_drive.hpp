@@ -38,6 +38,11 @@
 //   pbox <mission> <epoch> <x> <y> <z> <yaw>    -> {ready=true,box=true} | refusal  (M4, world_horse_shot: this copy's player
 //     sits behind the partner; the placed census root and yaw of this copy's horse, leased kBoxMs to the seated-shot hook
 //     (partner_seat_shot Class::horse): the player's own bullets start past the horse and the driver in front of them.)
+//   rrec <mission> <epoch>                      -> {ready=true,st0,st1}  (step S3: the RideHorse action's ride records of
+//     bodies 0 and 1 (native/include/mgscoop/horse_ride.hpp), logged change-only as horse_drive=ride_rec; reads only.)
+//   getoff <mission> <epoch>                    -> {ready=true,getoff=1,st} | refusal  (step S3, lab key
+//     world_horse_down_off: this copy's player rides the shared horse and is downed (Lua checks): the stock get-off's
+//     writes on body 0's ride record, next state 3; the downed cycle's ACTION mask hides the player's own E.)
 // mm / mrad. anchor 1: when the partner driver shows body 1 as a horse rider (partner_mount_policy) and its body
 // sample is fresh, the horse goes under that body (HorseUnderRider), the yaw from the stream: the rider sits in the
 // saddle on this screen whatever the two streams' delays are.
@@ -60,8 +65,18 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 // An anchored target is used only within kAnchorMaxM of the stream's (a stale or unrealized body never drags the horse).
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
+// M2j (lab 2a41c416 guest: body 0 2.03 m under its target just after the carrier got off; act 122, the get-off, holds a
+// shown ride, so each anchored place put the horse under the body getting off): with world_horse_cargo
+// (Settings.horse_cargo) the rider body anchors nothing during a valid act 122 and the stream pose places the horse.
+inline constexpr std::uint16_t kGetOffAct = 122;
+constexpr bool AnchorNote(bool cargo, bool act_valid, std::uint16_t act) noexcept {
+    return !(cargo && act_valid && act == kGetOffAct);
+}
+// Step S3's motion-record log (partner_pillion=mg, logs only) in a 1 s window with seat-error samples, only with
+// world_horse_down_off (Settings.horse_down_off; fixland4: nothing new at the defaults).
+constexpr bool MotionLog(bool down_off, unsigned err_n) noexcept { return down_off && err_n != 0; }
 
-enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox };
+enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox, rrec, getoff };
 struct Request {
     Verb verb{};
     std::uint32_t mission{}, epoch{};
@@ -98,6 +113,17 @@ struct BodyClass {
     std::uintptr_t t_vt{}, t68{}, t70{}, t58{}, c0_vt{}, c090{}, a0_vt{}, a080{};
 };
 bool CachedBody1Usable(const BodyClass& body0, const BodyClass& cached) noexcept;
+// M2i (frames 2a41c416 / c62e2ce6 h2-loaded: body 1 along the horse, upper body raised, at the load; across the back
+// only after the ride, act 5 and the readback yaw unchanged): with world_horse_cargo a hold1 run (no gap over
+// kHoldRunGapMs) adds Warp's A0 reset once, on its first hold1 kA0DelayMs or more into the run (run 144d99bb: Warp's A0
+// left body 0 prone), only while body 0's A0 class and slot equal body 1's (else skipped, never a refusal).
+inline constexpr std::uint64_t kHoldRunGapMs = 1000, kA0DelayMs = 1000;
+struct HoldRun {
+    std::uint64_t last{}, start{};
+    bool a0{};
+};
+bool HoldRunA0(HoldRun& run, std::uint64_t now) noexcept;
+bool A0Usable(const BodyClass& body0, const BodyClass& body1) noexcept;
 
 // Horse plan M3 (lab key world_horse_pillion): ride behind your partner. The prologue's rear rider sits about 0.4-0.5 m
 // behind the front rider at the same height (vehicles-companions-design 3.3); probe P2 put a guard 0.44 m behind the
@@ -122,10 +148,10 @@ bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcep
 // overlay seat. The partner driver keeps a lease that was live on its previous tick kSeatGraceTicks more ticks with its
 // last offsets (in: this tick's SeatLease and its values; out: the values to use); a lease gone longer ends the seat.
 inline constexpr unsigned kSeatGraceTicks = 2;
-// The review of M4: no play run passed the driver's get-off with the hold in, so the grace is part of world_horse_shot
-// (off unless named): grace false (the defaults) ends the seat on the first lapsed tick, as in 0.15.2.
+// Step S: the grace comes with the seat (world_horse_pillion's default; play 22926dbf passed the driver's get-off with it);
+// grace false (a named world_horse_pillion=0) ends the seat on the first lapsed tick, as in 0.15.2.
 struct SeatHold {
-    bool grace{};  // world_horse_shot named on this copy (set by the partner driver each tick)
+    bool grace{};  // Settings.horse_seat_holds on this copy (set by the partner driver each tick)
     bool live{};
     unsigned miss{};
     float back{}, up{};

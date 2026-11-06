@@ -22,7 +22,13 @@ local function fixture(o)
     W.receipt = function(text)
         local verb = text:match("MGS_COOP_HORSE_DRIVE_V1' %-%- (.*)$")
         if not verb then return nil end
-        if verb == "cfg" then return {on = f.key and 1 or 0} end
+        if verb == "cfg" then return {on = f.key and 1 or 0, down = o.down and 1 or 0} end
+        if verb:find("^rrec ") then f.rrecs = (f.rrecs or 0) + 1; return {ready = true, st0 = 5, st1 = 0} end
+        if verb:find("^getoff ") then
+            f.getoffs = f.getoffs or {}
+            f.getoffs[#f.getoffs + 1] = {at = f.now, verb = verb}
+            return {ready = true, getoff = 1, st = 5}
+        end
         local h = f.horse
         if verb:find("^read ") then
             return {ready = true, id = HORSE, realized = true, occupied = h.occupied, rider = 0, pending = 0, x = h.x, y = h.y, z = h.z, yaw = h.yaw, gen = f.gen}
@@ -261,4 +267,67 @@ f.fast(5500, p.x, 2000, p.z, 100)
 f.tick(50)
 check(#seen == 1 and seen[1][3] == 100, "M3: world_horse_pillion hears the placement")
 check(f.S.busy(), "M3: a pillion seated or driving: busy")
+-- Step S2 (scenarios, debug horse_here): the unridden horse placed at x,y,z mm / yaw mrad (not anchored); refused while
+-- either player rides it, and with the key off.
+do
+ local g = fixture()
+ local ok, why = g.S.here(805000, 340500, 1636500, -1047)
+ local q = g.places[#g.places]
+ check(ok == true and why == "ok" and q and q.x == 805000 and q.y == 340500 and q.z == 1636500 and q.yaw == -1047 and q.anchor == 0,
+  "S2: here places the unridden horse (not anchored)")
+ check(g.logged("event=horse_share;step=here;placed=1;reason=ok;x=80500;y=34050;z=163650"), "S2: here logs the placement")
+ local n = #g.places
+ g.rides = true
+ ok, why = g.S.here(1, 2, 3, 0)
+ check(not ok and why == "ridden" and #g.places == n, "S2: refused while this copy's player rides")
+ g.rides = false
+ for i = 0, 6 do g.fast(9000 + i * 50, 10000 + i * 200, 2000, 30000, 100); g.tick(50) end
+ n = #g.places
+ ok, why = g.S.here(1, 2, 3, 0)
+ check(not ok and why == "ridden" and #g.places == n, "S2: refused while the partner's ride track is live")
+ local k = fixture({key = false})
+ ok, why = k.S.here(1, 2, 3, 0)
+ check(not ok and why == "off" and #k.places == 0, "S2: key off: refused")
+ g = fixture(); g.placeOk = false
+ ok, why = g.S.here(1, 2, 3, 0)
+ check(not ok and why == "pins" and g.logged("step=here;placed=0;reason=pins"), "S2: a native refusal is returned and logged")
+end
+-- Step S3: with world_horse_down_off the ride records are polled (rrec, native logs them) and a downed rider of the
+-- shared horse asks native for the stock get-off (getoff) at most 6 times 500 ms apart while it stays downed and
+-- mounted. fixland4 (review: no run without a horse key at the S3 code): at the defaults no rrec poll at all.
+do
+ local g = fixture()
+ for _ = 1, 12 do g.tick(100) end
+ check((g.rrecs or 0) == 0, "S3: world_horse_down_off not named: no rrec poll (nothing new at the defaults)")
+ local r = fixture({down = true})
+ for _ = 1, 12 do r.tick(100) end
+ check((r.rrecs or 0) >= 4 and (r.rrecs or 0) <= 6, "S3: world_horse_down_off named: rrec every 250 ms")
+ g.W.role = 2
+ g.W.downed = {records = {[2] = {down = true}}}
+ g.rides = true
+ for _ = 1, 30 do g.tick(100) end
+ check(g.getoffs == nil, "S3: key not named: a downed rider is not taken off")
+ local d = fixture({down = true})
+ d.W.role = 2
+ d.rides = true
+ for _ = 1, 10 do d.tick(100) end
+ check(d.getoffs == nil, "S3: key named, the rider not downed: nothing")
+ d.W.downed = {records = {[2] = {down = true}}}
+ for _ = 1, 50 do d.tick(100) end
+ check(d.getoffs and #d.getoffs == 6, "S3: downed and mounted: 6 getoff requests")
+ check(d.getoffs[2].at - d.getoffs[1].at >= 500, "S3: 500 ms apart")
+ check(d.getoffs[1].verb == "getoff 30010 7" and d.logged("event=horse_share;step=getoff;n=1;ok=1;reason=5;"),
+  "S3: the request names the mission and epoch; the line logs the reply's state")
+ d.rides = false
+ d.tick(100)
+ d.rides = true
+ for _ = 1, 3 do d.tick(100) end
+ check(#d.getoffs == 7, "S3: off the horse ends the episode; mounted and downed again asks again")
+ local u = fixture({down = true})
+ u.W.role = 1
+ u.W.downed = {records = {[2] = {down = true}}}
+ u.rides = true
+ for _ = 1, 20 do u.tick(100) end
+ check(u.getoffs == nil, "S3: the partner downed (another role's record) does not take this rider off")
+end
 print("world_horse_share_lua_check: " .. checks .. " checks passed")

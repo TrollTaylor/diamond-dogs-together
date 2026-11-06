@@ -94,13 +94,27 @@ local function resetHold()
 end
 -- MGO's down rules drain an interrupted revive instead of restarting it: the
 -- same reviver resuming on the same downed generation keeps what is left.
+-- M2i (lab 107977cb (a): a held revive about 3 s in was reset when the victim's status came 517 ms late under -WanSim
+-- bad): a late status is no release by the player. While a record is past FRESH, or the actor's own view of the
+-- target was (target generation 0), the hold drains as after a brief release, and that drain is kept through the late
+-- spell and LATE_MS after it (the reviver's E gate re-arms); other releases keep it for one tick as before.
+local LATE_MS=1000
 local function releaseHold(now)
   local decay
   if D.holdAt and D.progress > 0 and D.target ~= 0 then
     decay={target=D.target,generation=D.holdGeneration,actor=D.holdActor,progress=D.progress,at=now}
-  end
+  elseif D.decay and D.lateAt and now >= D.lateAt and now - D.lateAt <= LATE_MS then decay=D.decay end
   resetHold()
   D.decay=decay
+end
+local function late(r,now) return r and r.ready and now >= r.at and now - r.at > FRESH end
+-- fixland3 (review): no game ran the drain, so it is on only with world_horse_cargo named (lab); at the defaults
+-- every revive keeps the reset on a late status as before.
+local function lateDrain()
+  local HC=W.horseCargo
+  if type(HC) ~= "table" or type(HC.keyOn) ~= "function" then return false end
+  local ok,yes=pcall(HC.keyOn)
+  return ok and yes == true
 end
 local function resumedProgress(now,targetRole,target,actor)
   local d=D.decay
@@ -301,6 +315,28 @@ local function poll(now)
     return false
   end
   if D.revivePoll then r.held = D.revivePoll(r, now) end
+  -- M2h (lab a53a243a: no revive after the horse take-down and no line saying why): the raw E held near a downed
+  -- teammate while the revive does not take it, at most once a second (carry role, the record's age, generation, xz mm).
+  local o=D.records[3 - W.role]
+  if o and o.down then
+    local p,q,dm=r.pos,o.pos,-1
+    if type(p) == "table" and type(q) == "table" and type(p[1]) == "number" and type(p[3]) == "number" and
+      type(q[1]) == "number" and type(q[3]) == "number" then dm=math.sqrt((p[1] - q[1]) ^ 2 + (p[3] - q[3]) ^ 2) end
+    local age,carry=type(o.at) == "number" and now - o.at or -1,valid(r.carry,0,4) and r.carry or -1
+    if D.rawHeld and not r.held and now >= (D.waitAt or 0) then
+      D.waitAt=now + 1000
+      log(fmt("step=revive_wait;carry=%d;other=down;age_ms=%.0f;gen=%.0f;d_mm=%.0f;down=%d", carry, age, o.generation or 0, dm,
+        r.down and 1 or 0))
+    end
+    -- M2h (lab 990d2530 (a) / (b): four E holds by the downed teammate after the take-down, no revive, no revive_wait): on
+    -- foot within 5 m of a downed teammate, 1 Hz (120 a mission): the raw E, the revive's held, its mask, xz mm, age.
+    if D.nearMission ~= W.mission then D.nearMission, D.nearN = W.mission, 0 end
+    if carry <= 0 and not r.down and dm >= 0 and dm <= 5000 and now >= (D.nearAt or 0) and D.nearN < 120 then
+      D.nearAt,D.nearN=now + 1000,D.nearN + 1
+      log(fmt("step=revive_near;raw=%d;held=%d;mask=%d;d_mm=%.0f;age_ms=%.0f;gen=%.0f", D.rawHeld and 1 or 0, r.held and 1 or 0,
+        D.reviveMaskOwned and 1 or 0, dm, age, o.generation or 0))
+    end
+  end
   D.refusalAt=nil
   D.nativeSleepActive=r.nativeSleepActive==true or nil
   D.active,D.boundMission,D.boundEpoch=true,W.mission,W.epoch
@@ -368,7 +404,15 @@ end
 local function hostTick(now)
   local a,b=D.records[1],D.records[2]
   local pairedClock=D.sleepClock and D.sleepClock.Tick(now) or false
-  if not fresh(a, now) or not fresh(b, now) then resetHold(); return end
+  if not fresh(a, now) or not fresh(b, now) then
+    if (fresh(a, now) or late(a, now)) and (fresh(b, now) or late(b, now)) and lateDrain() then
+      if D.holdAt and D.progress > 0 then
+        log(fmt("step=revive_late;target=%d;progress=%d;age_ms=%.0f", D.target, D.progress, math.max(now - a.at, now - b.at)))
+      end
+      D.lateAt=now; releaseHold(now)
+    else resetHold() end
+    return
+  end
   if D.pendingGrant then
     local p=D.pendingGrant
     local target=D.records[p.role]
@@ -398,10 +442,20 @@ local function hostTick(now)
   if targetRole == 0 then resetHold(); return end
   local target,actor=D.records[targetRole],D.records[3 - targetRole]
   if actor.down or not actor.held or actor.targetGeneration ~= target.generation or not distance(actor, target) then
+    if not actor.down and actor.targetGeneration == 0 and lateDrain() then D.lateAt=now end
+    -- M2h: a held revive the host does not count (the actor's target generation or the 3 m reach), once a second.
+    if actor.held and not actor.down and now >= (D.waitHostAt or 0) then
+      D.waitHostAt=now + 1000
+      log(fmt("step=revive_wait;host=1;role=%d;target_gen=%.0f;gen=%.0f;near=%d", targetRole, actor.targetGeneration or 0,
+        target.generation or 0, distance(actor, target) and 1 or 0))
+    end
     releaseHold(now); return
   end
   if D.target ~= targetRole or D.holdGeneration ~= target.generation or D.holdActor ~= actor.generation then
     local resumed=resumedProgress(now,targetRole,target,actor)
+    if resumed > 0 and D.lateAt and now - D.lateAt <= LATE_MS + 100 then
+      log(fmt("step=revive_resume;target=%d;progress=%d", targetRole, floor(resumed)))
+    end
     D.decay=nil
     D.holdAt,D.holdGeneration,D.holdActor=now - resumed,target.generation,actor.generation
   end
@@ -442,7 +496,17 @@ function D.tick(now)
   if D.sleepClock then D.sleepClock.Bind() end
   if not clockTime(now) then pauseSleepClock("clock_invalid"); resetHold(); publishHud(); return end
   if D.lastNow and (now < D.lastNow or now - D.lastNow > FRESH) then
-    pauseSleepClock(now < D.lastNow and "clock_reverse" or "loop_gap"); resetHold()
+    local why=now < D.lastNow and "clock_reverse" or "loop_gap"
+    pauseSleepClock(why)
+    -- M2j (lab 01d9924e (a): a held revive zeroed with no late line, the victim's record 534 ms old after it): a host
+    -- loop gap is no release by the player; with world_horse_cargo it drains the hold as a late status does (and logs
+    -- the reset or drain; fixland4: at the defaults no line, the reset exactly as before).
+    local keyed=lateDrain()
+    local drain=why == "loop_gap" and keyed
+    if keyed and D.holdAt and D.progress > 0 then
+      log(fmt("step=revive_reset;why=%s;progress=%d;gap_ms=%.0f;drain=%d", why, D.progress, now - D.lastNow, drain and 1 or 0))
+    end
+    if drain then D.lateAt=now; releaseHold(now) else resetHold() end
   end
   D.lastNow=now
   if not W.inGame() then partnerSleepClear(); pauseSleepClock("game_paused"); resetHold(); publishHud(); return end

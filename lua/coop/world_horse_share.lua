@@ -41,7 +41,7 @@ end
 function S.keyOn()
  if S.key == nil then
   local r = receipt("cfg")
-  if r and (r.on == 1 or r.on == 0) then S.key = r.on == 1 end
+  if r and (r.on == 1 or r.on == 0) then S.key, S.downKey = r.on == 1, r.down == 1 end
  end
  return S.key == true
 end
@@ -114,6 +114,18 @@ local function read()
 end
 local function place(x, y, z, yaw, anchor)
  return receipt(fmt("place %d %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z), round(yaw), anchor and 1 or 0))
+end
+-- Step S2 (scenarios: debug horse_here): this copy's unridden horse to x,y,z mm / yaw mrad. The seat runs' order (b)
+-- began by a rock wall: the recall did not move a horse M1's final had placed (79287a27 / 1c2a6b0a). Refused while
+-- either player rides it (the partner's track here; native: ridden / pending).
+function S.here(x, y, z, yaw)
+ if not S.on() then return false, "off" end
+ if S.track or S.localRides() then return false, "ridden" end
+ local r = place(x, y, z, yaw, false)
+ local ok = r and r.ready == true
+ local why = ok and "ok" or tostring(r and r.reason or "receipt")
+ log(fmt("step=here;placed=%d;reason=%s;x=%d;y=%d;z=%d", ok and 1 or 0, why, round(x / 10), round(y / 10), round(z / 10)))
+ return ok == true, why
 end
 -- Rider side: 20 Hz while this copy's player rides record 0, one final reliable pose after the dismount.
 function S.send(t)
@@ -247,6 +259,28 @@ if type(T) == "table" and type(T.blocked) == "function" then
   if S.busy() then return 3 end
  end
 end
+-- Step S3, only with world_horse_down_off (fixland4: nothing new at the defaults): the RideHorse ride records of both
+-- bodies (native logs them change-only: horse_drive=ride_rec) at RREC_MS, and a downed rider of the shared horse gets
+-- off (getoff: the stock get-off's next state 3), at most GETOFF_TRIES requests GETOFF_MS apart while it stays downed
+-- and mounted (the downed cycle's ACTION mask hides its E).
+local RREC_MS, GETOFF_MS, GETOFF_TRIES = 250, 500, 6
+S.GETOFF_MS, S.GETOFF_TRIES = GETOFF_MS, GETOFF_TRIES
+local function selfDown()
+ local d = W.downed
+ local r = type(d) == "table" and type(d.records) == "table" and d.records[W.role] or nil
+ return type(r) == "table" and r.down == true
+end
+function S.rideTick(t)
+ if not S.downKey then return end
+ if t >= (S.rrecAt or 0) then S.rrecAt = t + RREC_MS; receipt(fmt("rrec %d %d", W.mission, W.epoch)) end
+ if not (S.downKey and selfDown() and S.localRides()) then S.getoffN = nil; return end
+ S.getoffN = S.getoffN or 0
+ if S.getoffN >= GETOFF_TRIES or t < (S.getoffAt or 0) then return end
+ S.getoffN, S.getoffAt = S.getoffN + 1, t + GETOFF_MS
+ local r = receipt(fmt("getoff %d %d", W.mission, W.epoch))
+ log(fmt("step=getoff;n=%d;ok=%d;reason=%s;", S.getoffN, r and r.ready == true and 1 or 0,
+  r and tostring(r.ready == true and r.st or r.reason) or "receipt"))
+end
 local tick = W.tick
 function W.tick(...)
  if tick then tick(...) end
@@ -265,6 +299,7 @@ function W.tick(...)
   if type(C) == "table" and type(C.HOLD) == "table" and not C.HOLD.HORSE then C.HOLD.HORSE = true end
   S.send(t)
   S.apply(t)
+  S.rideTick(t)
  end)
  if not ok then log("step=error;" .. tostring(err)); pcall(S.reset, "error") end
 end

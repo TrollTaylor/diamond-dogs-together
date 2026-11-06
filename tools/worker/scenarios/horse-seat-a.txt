@@ -1,0 +1,183 @@
+# Step S part 1 (horse plan M3/M4 seat holds at the defaults): NO horse key named (world_horse_share / world_horse_pillion
+# on with the gun profile, world_horse_shot off: pillion_status requires shot=0). (a) the host drives from the boot spot:
+# the host's first E at the unridden horse mounts it, the guest's E claims the rear seat, walk / trot / gallop frames on
+# both screens, the guest hops off, the host's E (400 ms) gets the host off, the guest's first E at the unridden horse
+# mounts it. Parts: horse-seat-a.txt (lab) / horse-seat-play-a.txt (play), horse-seat-b.txt, horse-down.txt (lab).
+# Lines: world_lua=event=horse_pillion; step=seated / seat_pin (lag, dy) / unseated / driver_e / driver_e_off /
+# track_wait; native partner_pillion=seat / stats / end. NEVER: crash_probe=av, step=two_drivers, step=error.
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-S
+#     -ScenarioPath tools/worker/scenarios/horse-seat-a.txt,tools/worker/scenarios/horse-seat-b.txt,
+#     tools/worker/scenarios/horse-down.txt -Mode lab -WanSim bad -PartnerProfile native -NativeStage gun
+#     -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
+logmark both
+both debug godmode 1
+host debug clear_enemies 100
+# The guest's D-Horse first (run d26aaf70: after the host's, the guest's buddy sync refused it, second_ride_unavailable).
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run pillion_status
+host require pillion;state=off;key=1;.*mode=6;
+guest run pillion_status
+guest require pillion;state=off;key=1;.*mode=6;
+# --- (a) the host drives, first since M3c attempt 4 (runs 93b59ae4 / 85a49831 / e284fb1c: (a) after (b) started where
+# (b)'s gallop had coasted into rock, or a recalled horse arrived facing the rock south of the boot spot: step=stall;
+# from the boot spot the first ride goes north into open ground, as (b) did in every run). The host's first E at the
+# unridden horse mounts it.
+logmark both
+host run goto_horse
+wait 1500
+both capture h3-before
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+waitlog guest 'partner_mount=show; mount=horse;' 10
+# The guest walks away from the ridden horse (past the 2.8 m release of the pillion ride hold; placebehind needs the host's
+# position, refused while it rides: run 763f071d): its E reaches the game unmasked.
+guest run goto_horse
+wait 1500
+guest hold s 900
+wait 1500
+logmark both
+guest press e 150
+wait 1200
+waitlog guest 'world_lua=event=horse_pillion; step=e_free; dist_cm=[0-9]+; hold=0; masked=0;' 4
+guest capture h3-e-free
+# Beside it (goto_horse: 1.6 m) the ride hold masks the stock mount and E claims the rear seat; the host rides at once.
+guest run goto_horse
+wait 1500
+waitlog guest 'world_lua=event=horse_hold; step=action_masked;' 5
+logmark both
+guest press e 150
+waitlog guest 'world_lua=event=horse_pillion; step=claim; seat=1;' 5
+waitlog host 'world_lua=event=horse_pillion; step=grant; seat=1;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=seated; seat=1; how=grant; token=[0-9]+; mode=6;' 5
+waitlog host 'partner_pillion=seat;' 5
+guest run horse_status
+guest require localMounted=0
+wait 1500
+guest capture h3-idle-guest
+host capture h3-idle-host
+guest mouse 1200 0
+host mouse 1200 0
+wait 600
+guest capture h3-idle-side-guest
+host capture h3-idle-side-host
+guest mouse -1200 0
+host mouse -1200 0
+wait 600
+host hold w 1500 nowait
+guest burst h3-walk-guest 3 250
+host hold w 1500 nowait
+host burst h3-walk-host 3 250
+host hold w 1500 nowait
+guest burst h3-trot-guest 3 250
+host hold w 1500 nowait
+host burst h3-trot-host 3 250
+host hold w+shift 1500 nowait
+guest burst h3-gallop-guest 4 200
+host hold w+shift 1500 nowait
+host burst h3-gallop-host 4 200
+host hold w+shift 1500 nowait
+guest burst h3-gallop3-guest 4 200
+host hold w+shift 1500 nowait
+host burst h3-gallop3-host 4 200
+host hold w+shift+a 1500 nowait
+guest burst h3-gallop2-guest 3 250
+host hold w+shift+a 1500 nowait
+host burst h3-gallop2-host 3 250
+host release
+guest burst h3-gallopfree-guest 3 300
+host burst h3-gallopfree-host 3 300
+wait 3000
+guest capture h3-stopped-guest
+host capture h3-stopped-host
+guest mouse 1200 0
+host mouse 1200 0
+wait 600
+guest capture h3-stopped-side-guest
+host capture h3-stopped-side-host
+guest mouse -1200 0
+host mouse -1200 0
+waitlog host 'world_lua=event=horse_pillion; step=first_move; ms=' 5
+waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
+waitlog host 'partner_pillion=stats;' 5
+# Step S2: a deliberate stop against rock (play 79287a27 (b): body 1 STANDING on the rump after the horse stalled at a
+# rock wall, the overlay still playing). The driver gallops on (rock walls stand west / north-west of this ride) until the
+# horse stalls (step=stall: ride keys held, under 0.3 m in 2 s); frames on both screens of the push and the stop, side on;
+# partner_pillion=stats now logs body 1's act / stance / upper act, the overlay phase, its DM record and the seat grace.
+logmark both
+host hold w+shift 1500 nowait
+guest burst s2a-rock1-guest 3 400
+host hold w+shift 1500 nowait
+host burst s2a-rock1-host 3 400
+host hold w+shift 1500 nowait
+guest burst s2a-rock2-guest 3 400
+host hold w+shift 1500 nowait
+host burst s2a-rock2-host 3 400
+host hold w 1500 nowait
+guest burst s2a-rock3-guest 3 400
+host hold w 1500 nowait
+host burst s2a-rock3-host 3 400
+waitlog host 'world_lua=event=horse_pillion; step=stall;' 3
+host release
+wait 1500
+guest capture s2a-rock-stop-guest
+host capture s2a-rock-stop-host
+guest mouse 1200 0
+host mouse 1200 0
+wait 600
+guest capture s2a-rock-side-guest
+host capture s2a-rock-side-host
+guest mouse -1200 0
+host mouse -1200 0
+wait 600
+host burst s2a-rock-after-host 3 500
+waitlog host 'partner_pillion=stats; xz_cm=[0-9]+; dy_cm=-?[0-9]+; n=[0-9]+; act=' 5
+# Step S: the passenger hops off with E held (after a release); the driver's E (held 400 ms, M4b's note on 1a7c5d0e)
+# then gets the driver off (step=driver_e / driver_e_off on the driver's copy).
+logmark both
+guest hold e 500
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
+waitlog host 'partner_pillion=end;' 5
+wait 1500
+guest run horse_status
+guest require localMounted=0
+guest capture s-hopped-off-guest
+host capture s-hopped-off-host
+host press e 400
+waitlog host 'world_lua=event=horse_pillion; step=driver_e_off;' 5
+wait 2500
+host run horse_status
+host require localMounted=0
+waitlog guest 'world_lua=event=horse_share; step=final; placed=1;' 8
+guest capture s-both-off-guest
+host capture s-both-off-host
+# The guest's first E at the unridden horse mounts it.
+wait 3000
+logmark both
+guest run goto_horse
+wait 1500
+guest capture h3-guest-before-mount
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+guest capture h3-guest-mounts
+host capture h3-guest-mounts-host
+guest press e 400
+wait 3000
+guest run horse_status
+guest require localMounted=0
+both capture h3-end

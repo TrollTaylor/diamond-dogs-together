@@ -461,6 +461,10 @@ public:
     // kGrantLifeMs ago. Cleared at unpair,
     // local mission start/end, link session and host epoch changes.
     bool FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const noexcept;
+    // Enemy round 13 track A (quiet_place, docs/world-sync-design.md 7.31): the newest (cur) and the one before (prev, may
+    // be invalid) correction grant of guard `ent` by pop time, the same epoch and life as FindGrant: the owner copy's
+    // track. False when the guard has no correction grant.
+    bool EntGrants(std::uint32_t ent, std::uint64_t now_ms, Grant& cur, Grant& prev) const noexcept;
     // Enemy sync M4: the newest (cur) and the one before (prev, may be invalid) SOLDIER_SNAP of `slot` in the current paired
     // epoch; false when none. Cleared with the grants.
     bool SnapPair(std::uint16_t slot, Snap& cur, Snap& prev) const noexcept;
