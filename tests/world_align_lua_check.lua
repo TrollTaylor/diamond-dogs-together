@@ -1821,6 +1821,11 @@ if arg[7] and arg[8] then
     ticks(t, 80)
     check(logged(t, 'event=readback;ent=3000000001;src=place;at=500;') and not logged(t, 'event=readback_fix;'),
         'far without place_reach: read back and logged only')
+    -- Enemy round 12 track A (design 7.31): a far message correction's read-backs give the x/z distance to the owner copy
+    -- too (dho_m / oage_ms, as a quiet move's), so the default path's walkers can be compared with quiet_place's.
+    check(logged(t, 'event=readback;ent=3000000001;src=place;at=2000;') and logged(t, ';src=place;at=2000;ms=') and
+        logged(t, 'src=place;at=500;') and logged(t, ';far_m=100;dxz_m=3.00;dho_m='),
+        'far: the message correction is read back against the owner copy too (dho_m)')
     end
     end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.

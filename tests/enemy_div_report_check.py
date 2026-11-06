@@ -153,6 +153,16 @@ check(hq['warps'] == 1 and hq['moved'] == 1 and hq['why'] == {'walk': 1, 'stance
       hq['walk_owner_2s'] == {'read': 1, 'within_3m': 1, 'walkers': 1} and
       hq['walk_owner_10s'] == {'read': 1, 'within_3m': 0, 'walkers': 1} and r7['quiet'] == r3['quiet'],
       'round 12: the host\'s quiet M3 placements, their reasons and the walkers\' owner rows (host_quiet)')
+# Enemy round 12 track A: the default (message) corrections' 2 s read-backs against the owner copy (src=place dho_m), per
+# side, so a no-key run's far walkers compare with quiet_place's walk_owner_2s.
+guest8 = guest3 + [
+    'world_lua=event=readback; ent=1926520947; src=place; at=500; ms=500; dy_m=0.00; held=1; far_m=80; dxz_m=0.20; dho_m=0.30; oage_ms=200; t_ms=1500',
+    'world_lua=event=readback; ent=1926520947; src=place; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=2.10; dho_m=4.20; oage_ms=300; t_ms=3000',
+    'world_lua=event=readback; ent=1740692850; src=place; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=1.10; dho_m=1.20; oage_ms=300; t_ms=3000',
+    'world_lua=event=readback; ent=1740692850; src=place; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=1.10; t_ms=3500',
+]
+check(rep.analyse(host2, guest8)['place_owner_2s']['guest'] == {'read': 2, 'within_3m': 1, 'guards': 2},
+      'round 12: the message corrections\' 2 s read-backs against the owner copy (place_owner_2s)')
 # Enemy flip A-vert (user decision D-A10, design 7.27): drive_sink is information only; the gate row is "vert left under":
 # a copy more than 1.5 m under its owner copy for more than 2 s after the owner copy was level in y for 1 s (per guard,
 # with the time), from the native world_drive lines (no t_ms: the last t_ms before each).
