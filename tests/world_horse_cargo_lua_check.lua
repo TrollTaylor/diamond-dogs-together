@@ -140,6 +140,15 @@ check(f.C.state == "loading" and f.logged("event=horse_cargo;step=loading;seat=2
 f = fixture(); f.role = 0; f.hold("E", 600)
 check(f.C.state == "off" and not f.called("010"), "not carrying: another E use, nothing")
 check(not f.logged("step=near"), "M2h: not carrying: no step=near")
+check(not f.logged("step=refuse;why=carry") and not f.logged("step=load_e"), "M2j: not carrying at the E: no load line")
+-- M2j (lab 01d9924e (c): carrying at the horse, step=near e=1, no step=loading and no line; play 403e46a2 (b): the
+-- flank warp ended the guest's carry): an E begun while carrying that ends under 450 ms logs step=load_e (held_ms), and
+-- one whose carry ended by 450 ms logs step=refuse;why=carry.
+f = fixture(); f.role = 1; f.hold("E", 200); f.tick(50)
+check(f.C.state == "off" and f.logged("step=load_e;held_ms="), "M2j: a short E while carrying: step=load_e")
+f = fixture(); f.role = 1; f.holdE(true); f.tick(50); f.role = 0
+for _ = 1, 10 do f.now = f.now + 50; f.holdE(true); f.tick(50) end
+check(f.C.state == "off" and f.logged("step=refuse;why=carry"), "M2j: the carry ended during the E: step=refuse;why=carry")
 -- M2h (play 72e6269a: the carrier held E 900 ms at the horse, no step=loading and no refusal line): carrying within reach
 -- of the horse logs the raw E read and the mount state at most once a second.
 f = fixture(); f.role = 1; f.tick(50)

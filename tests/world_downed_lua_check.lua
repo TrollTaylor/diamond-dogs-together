@@ -422,6 +422,35 @@ for _, actorHost in ipairs({true, false}) do
     end
 end
 end
+-- M2j (lab 01d9924e (a), the carrier reviving: held in the 1 s samples 371.5-373.5 s, then at 374.9 s the victim's
+-- record 534 ms old, mask 0 and no revive_late line, so the hold was already zeroed before a late tick could drain it:
+-- a host loop gap over 500 ms resets the hold in D.tick (loop_gap), a stall is no release by the player): with
+-- world_horse_cargo named a loop gap drains the hold as a late status does; at the defaults it still resets. Either way
+-- a hold under way that is reset or drained there logs one step=revive_reset line (why, progress, gap, drain).
+for _, cargoKey in ipairs({false, true}) do
+    local host, guest = pair()
+    if cargoKey then host.W.horseCargo = {keyOn = function() return true end} end
+    local tag = ' (cargo key ' .. tostring(cargoKey) .. ')'
+    down(guest); host.native.held = true
+    for _ = 1, 20 do step(host, guest, 100) end
+    check(host.D.progress >= 1500 and not guest.revived, 'loop gap: partial progress first' .. tag)
+    -- The host's loop stalls 600 ms; the guest keeps ticking and its statuses arrive after the stall.
+    for _ = 1, 6 do guest.now = guest.now + 100; guest.D.tick(guest.now) end
+    host.now = host.now + 600
+    host.D.tick(host.now); pump(guest, host); pump(host, guest)
+    for _ = 1, 2 do step(host, guest, 100) end
+    local resets = 0
+    for _, l in ipairs(host.logs) do if l:find('step=revive_reset;why=loop_gap', 1, true) then resets = resets + 1 end end
+    check(resets == 1, 'one step=revive_reset;why=loop_gap line' .. tag .. ': ' .. resets)
+    if cargoKey then
+        check(host.D.progress >= 900 and not guest.revived, 'a loop gap drains the hold instead of restarting it' .. tag .. ': ' .. host.D.progress)
+        local n = 0
+        while not guest.revived and n < 25 do step(host, guest, 100); n = n + 1 end
+        check(guest.revived == 1 and n <= 20, 'the same reviver completes from the remainder after a loop gap: ' .. n)
+    else
+        check(host.D.progress <= 400 and not guest.revived, 'at the defaults a loop gap still restarts the hold' .. tag .. ': ' .. host.D.progress)
+    end
+end
 -- Unchanged: a release of several ticks with no late status still restarts the hold (MGO drain only for one tick).
 a, b = pair(); down(b); a.native.held = true
 for _ = 1, 20 do step(a, b, 100) end
