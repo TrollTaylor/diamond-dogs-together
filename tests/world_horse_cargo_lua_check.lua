@@ -192,11 +192,12 @@ check(f.C.RISE_MM == 450 and f.C.GROUND_MM == 1350, "body 1 0.45 m over the cens
 check(f.C.RIDE_RISE_MM == 150, "riding: body 1 0.15 m over the rider")
 f.horse.x, f.horse.yaw = 102000, 1571
 f.mounted = true
-f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 2.5
+-- M2h: the rider sits 0.4 m over the census root (runs a53a243a / 990d2530 step=pin: py - hy 0.39-0.40 m).
+f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 3.4
 f.tick(50)
 w = f.lastWarp(1)
 check(math.abs(w.x - (102.1 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3 and
- math.abs(w.y - (2.5 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
+ math.abs(w.y - (3.4 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
 check(f.logged("step=pin;how=rider;mounted=1"), "the pin stats line names the rider anchor")
 check(f.logged(";hyaw=1571;byaw=3142;t_ms=") or f.logged(";hyaw=1571;byaw=3142"), "M2h: the pin stats line carries hyaw and byaw")
 check(math.abs(w.rotY - (1.571 + math.pi / 2)) < 2e-3, "riding: body 1 a quarter turn from the horse's yaw")
@@ -212,6 +213,20 @@ f.env.vars.playerPosX = 104.4
 f.tick(50)
 w = f.lastWarp(1)
 check(math.abs(w.x - (104.4 - f.C.RIDE_BACK_MM / 1000)) < 1e-3, "a 2 m jump between ticks is no motion: no lead")
+-- M2h (lab 990d2530: right after the mount the rider's own position stood 0.97 m under the census root, step=pin py_cm 33751
+-- hy_cm 33848, and body 1 went 0.15 m over it, by the ground): a rider not yet up in the saddle (under the census root) holds
+-- body 1 on the census cargo point.
+f.env.vars.playerPosY = 2.9
+f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.x - (102.0 - f.C.BACK_MM / 1000)) < 1e-3 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-3 and
+ math.abs(w.z - 300.0) < 1e-2, "M2h: riding but under the census root (not seated yet): body 1 on the census cargo point")
+f.env.vars.playerPosY = 3.4
+f.tick(50)
+w = f.lastWarp(1)
+check(math.abs(w.y - (3.4 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "M2h: seated again: the rider anchor")
+f.tick(2100)
+check(f.logged(";bx_cm=") and f.logged(";px_cm="), "M2h: the pin stats line carries the target's and the rider's x,z")
 f.env.vars.playerPosX, f.env.vars.playerPosY = 100, 2
 local keeps = f.count(6)
 for i = 1, 22 do f.tick(50) end
