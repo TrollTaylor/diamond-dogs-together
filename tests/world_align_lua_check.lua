@@ -1442,6 +1442,32 @@ if arg[7] and arg[8] then
     check(#ss.drives == n1 and not ss.W.snapDriving(ENT1, ss.now), 'M4: a stale stream backs the guard off')
     ticks(ss, 10)
     check(#ss.drives > n1, 'M4: and tries again after 500 ms')
+    -- Enemy harden (design 7.30): a guard seated in a vehicle on this copy (GetVehicleGameObjectId, the placements'
+    -- vehicle_local) is never driven: no xz step and no vert snap would pull him out of the seat (f256bf29: 25605's two
+    -- riders drove past the guest 12 m off, its riders streamed and driven); on foot again he is driven.
+    ;(function()
+        local sv = guestFix(180)
+        sv.W.snapOn = true
+        sv.positions[1] = {0, 1.8, 20.0}
+        sv.vehicles = {[1] = 77}
+        ticks(sv, 10)
+        local function drivesOf(c, slot)
+            local n = 0
+            for _, s in ipairs(c.drives or {}) do if s:find(" -- " .. slot .. " ", 1, true) then n = n + 1 end end
+            return n
+        end
+        check(drivesOf(sv, 1) == 0 and not sv.W.snapDriving(ENT1, sv.now) and logCount(sv, 'event=snap_seated;ent=3000000001;id=1;on=1') == 1,
+            'M4: a guard seated in a vehicle here is never driven (one snap_seated line)')
+        sv.vehicles = {}
+        ticks(sv, 20)
+        check(drivesOf(sv, 1) > 0 and logCount(sv, 'event=snap_seated;ent=3000000001;id=1;on=0') == 1, 'M4: out of the vehicle he is driven again')
+        sv.vehicles = {[1] = 77}
+        local n2 = drivesOf(sv, 1)
+        ticks(sv, 20)
+        check(drivesOf(sv, 1) <= n2 + 8 and logCount(sv, 'event=snap_seated;ent=3000000001;id=1;on=1') == 2, 'M4: seated again: left alone within 250 ms')
+        ticks(sv, 300)
+        check(logged(sv, 'event=snap_stats;') and logged(sv, ';seated='), 'M4: snap_stats counts the seated skips')
+    end)()
     -- Enemy gaps: a driven copy 1.5 m under its owner for 2 s logs event=drive_sink once (v: its y minus the target's, cm).
     local sk = guestFix(180)
     sk.W.snapOn = true
