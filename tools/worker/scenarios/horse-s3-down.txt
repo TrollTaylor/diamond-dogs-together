@@ -1,0 +1,174 @@
+# Step S3 part 3 (lab and play, after the (b) and (a) parts): the rider downed by a GUARD while riding, NO horse key
+# named. Both players go where S2's (b) ended (c1982534: host 878.8 / 1734.2, guest 879.5 / 1733.1; spawn_enemy here
+# warped a guard 5.1 / 5.4 m from the host there in c1982534 / 186c02d8), then horse-down-guard.txt from its start:
+# (c2) the guest rides behind the host and is downed by the guard (godmode off once seated), revived; (c1) the guest
+# drives and is downed on the horse (godmode off just before the host makes the guard hostile), E, revived.
+logmark both
+both debug godmode 1
+host debug teleport 878.8 322.9 1734.2 -5
+guest debug teleport 880.6 322.6 1733.0 -5
+wait 4000
+logmark both
+both debug godmode 1
+host run spawn_enemy here come
+host expect ^guard_here;ent=
+wait 2000
+host run enemy info nearest
+host expect ^enemy_info;ent=
+guest run horse_here
+guest require horse_here;ok
+host run horse_here
+host require horse_here;ok
+wait 4000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+both capture s2c-guard-near
+# --- (c2) the host drives, the guest behind is downed by the guard.
+logmark both
+host run goto_horse
+wait 2500
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+guest run goto_horse
+wait 1500
+guest hold s 900
+wait 1200
+guest run goto_horse
+wait 1500
+logmark both
+guest press e 150
+waitlog guest 'world_lua=event=horse_pillion; step=seated; seat=1; how=grant; token=[0-9]+; mode=6;' 5
+waitlog host 'partner_pillion=seat;' 5
+guest debug godmode 0
+wait 500
+guest run status
+guest expect ^status;.*god=0;.*life=
+both capture s2c2-seated
+host mouse 1200 0
+wait 400
+host burst s2c2-shot-host 4 1000
+guest burst s2c2-shot-guest 4 1000
+waitlog guest 'world_lua=event=downed; step=entered;' 40
+both capture s2c2-down
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger_downed;' 5
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1;' 5
+wait 1500
+guest run horse_status
+guest expect localMounted=0
+guest run downed_status
+guest expect down=1
+both capture s2c2-down-1s
+wait 2000
+both capture s2c2-down-3s
+host press e 400
+waitlog host 'world_lua=event=horse_pillion; step=driver_e_off;' 5
+wait 2500
+host run horse_status
+host expect localMounted=0
+host run enemy ignore nearest
+host expect ^enemy_ignore;ent=
+host debug goto_carry
+wait 1500
+both capture s2c2-before-revive
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest expect down=0
+both capture s2c2-revived
+# --- (c1) the guest drives (its first E at the unridden horse mounts it) and is downed on the horse by the guard.
+logmark both
+both debug godmode 1
+host run enemy goto nearest 10
+guest run enemy goto nearest 10
+wait 4000
+guest run horse_here
+guest expect horse_here;ok
+host run horse_here
+host expect horse_here;ok
+wait 4000
+logmark both
+guest run goto_horse
+wait 2500
+stance guest stand
+guest debug godmode 0
+wait 500
+guest run status
+guest expect ^status;.*god=0;.*life=
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+host run goto_horse
+wait 1200
+host hold s 900
+host release
+wait 800
+host run enemy notice nearest
+host run enemy come nearest
+host expect ^enemy_come;ent=
+host mouse 1200 0
+both capture s2c1-before
+host burst s2c1-shot-host 4 1000
+guest burst s2c1-shot-guest 4 1000
+waitlog guest 'world_lua=event=downed; step=entered;' 40
+both capture s2c1-down
+host run enemy ignore nearest
+host expect ^enemy_ignore;ent=
+wait 1500
+guest run horse_status
+guest expect localMounted=0
+both capture s2c1-down-1s
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+both capture s2c1-down-4s
+wait 4000
+guest run horse_status
+guest expect localMounted=0
+guest run downed_status
+guest expect down=1
+both capture s2c1-down-8s
+logmark both
+guest press e 400
+wait 2500
+guest run horse_status
+guest expect localMounted=0
+both capture s2c1-after-e
+host debug goto_carry
+wait 1500
+both capture s2c1-before-revive
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest expect down=0
+both capture s2c1-revived
