@@ -886,6 +886,11 @@ end
 -- <= 180 to <= 280 (green: 260; the crews' first 60 s of lines) and named the whole host line in the count-change check.
 -- Land fix (review): the hold and the offset window only with lrrp_follow named (cfg 1); at the defaults (the gun
 -- profile, 30010) the 0.15.3 owner decision and offset filter (the last checks of this block; red at 20509a91).
+-- Enemy round 12 B (review): the 60 s total and the count-change line as they stand fail at the old world_lrrp.lua
+-- (261432af: 802 lines; the count-change check too) and pass now; the cut kinds get their own bound from the design rates
+-- (230). The offset window runs at the defaults too (the lead fix lands with lrrp_follow); a step up is logged
+-- (step=off: rise_ms, lag0_ms = how far the 0.15.3 filter would lag) and the follow line carries ah / ah0 (the lead used
+-- and the 0.15.3 filter's, ms), so a run can show the cause. The hold stays named-only.
 do
     local function after(c, k, pat) local n = 0 for i = k + 1, #c.logs do if c.logs[i]:find(pat, 1, true) then n = n + 1 end end return n end
     local function placedOf(t, id) local r = {} for _, p in ipairs(t.placed) do if p.id == id then r[#r + 1] = p end end return r end
@@ -904,6 +909,8 @@ do
     check(h:count('event=lrrp;step=host;id=25604;') <= 3, 'flood: an empty parked truck every 30 s (' .. h:count('event=lrrp;step=host;id=25604;') .. ')')
     local all = h:count('event=lrrp;')
     check(all <= 280, 'flood: the host\'s lrrp lines of 60 s, 3 trucks, the crews\' first 60 s logged (' .. all .. '; was 802)')
+    local cut = h:count('event=lrrp;step=host;') + h:count('event=lrrp;step=riders;') + h:count('event=lrrp;step=crew;')
+    check(cut <= 235, 'flood: the cut kinds of 60 s at the design rates: host 2 Hz moving 120, 5 s manned 12, 30 s empty 2-3; riders 30 + 6; crews 2 x 30 = 230 (' .. cut .. ')')
     -- 25603's crew gets out: a host line at once; the crew in one line per truck every 2 s for 60 s.
     local k0 = #h.logs
     h.pool[25603].riders = nil
@@ -970,16 +977,31 @@ do
     local p = placedOf(g, 25602)
     local lead0 = p[#p].x - tr.b.x
     check(lead0 >= 1700 and lead0 <= 2300, 'offset: steady, the copy is placed ahead by the sample\'s age (' .. lead0 .. ' mm)')
+    check(g:count('event=lrrp;step=off;') == 0, 'offset: no step=off line while the offset is steady')
     s(300, 1300)
     for _ = 1, 30 do s(100, 100) end
     p = placedOf(g, 25602)
     local lead1 = p[#p].x - tr.b.x
     check(math.abs(lead1 - lead0) <= 300, 'offset: 3 s after the host\'s clock fell 1 s behind, the lead is back (' .. lead1 .. ' mm, was ' .. lead0 .. ')')
+    local function offLine(c)
+        local l0 = nil
+        for _, l in ipairs(c.logs) do if l:find('event=lrrp;step=off;id=25602;', 1, true) then l0 = l0 and 'twice' or l end end
+        return l0, tonumber((l0 or ''):match(';rise_ms=(%-?%d+);')), tonumber((l0 or ''):match(';lag0_ms=(%-?%d+)'))
+    end
+    local function lastAhead(c)
+        local last = ''
+        for _, l in ipairs(c.logs) do if l:find('event=lrrp;step=follow;id=25602;', 1, true) then last = l end end
+        return tonumber(last:match(';ah=(%-?%d+);')), tonumber(last:match(';ah0=(%-?%d+)'))
+    end
+    local ol, rise, lag0 = offLine(g)
+    check(ol and ol ~= 'twice' and rise == 1000 and lag0 and lag0 >= 500, 'offset: the step up is logged once (step=off; rise_ms=1000, the 0.15.3 filter lagging 500 ms+) (' .. tostring(ol) .. ')')
+    local ah, ah0 = lastAhead(g)
+    check(ah and ah <= 300 and ah0 == 400, 'offset: the follow line carries the lead used (ah) and the 0.15.3 filter\'s (ah0, still at its 400 ms cap 3 s after the step) (' .. tostring(ah) .. ', ' .. tostring(ah0) .. ')')
 
-    -- Land fix (review, design 7.32): at the defaults (lrrp_follow by the gun profile, 30010) neither the hold nor the
-    -- offset window runs. The hold keeps the host's copy the brain and host copies do not perceive the guest
+    -- Land fix (review, design 7.32): at the defaults (lrrp_follow by the gun profile, 30010) the hold does not run
+    -- (round 12 B: the offset window does, below). The hold keeps the host's copy the brain and host copies do not perceive the guest
     -- (soldier_perceive is off): fc141dc1's crew got out 25-27 m from the guest, so it could leave the guest less seen
-    -- than 0.15.3 (the user's decision). The window has no game run yet. Both stay named-only (lrrp_follow=1).
+    -- than 0.15.3 (the user's decision, D-B11): named-only (lrrp_follow=1).
     seen = {}
     local P2 = {own = {}, ownerOf = function(hh) seen[#seen + 1] = hh; return 1 end}
     h = Fixture('host', {lrrpDefault = true, mission = 30010, place = P2})
@@ -1003,6 +1025,8 @@ do
     for _ = 1, 30 do s(100, 100) end
     p = placedOf(g, 25602)
     local d1 = p[#p].x - tr.b.x
-    check(d0 >= 1700 and d0 <= 2300 and d1 >= 3000, 'offset: at the defaults the 0.15.3 filter (the window is named-only; ' .. d0 .. ' then ' .. d1 .. ' mm)')
+    check(d0 >= 1700 and d0 <= 2300 and math.abs(d1 - d0) <= 300, 'offset: at the defaults (30010, the gun profile) the window too: 3 s after the step the lead is back (' .. d0 .. ' then ' .. d1 .. ' mm)')
+    ol, rise = offLine(g)
+    check(ol and ol ~= 'twice' and rise == 1000, 'offset: at the defaults the step up is logged once (step=off) (' .. tostring(ol) .. ')')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')
