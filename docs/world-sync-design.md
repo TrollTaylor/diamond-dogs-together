@@ -1527,18 +1527,25 @@ only); [I] inferred; [U] unknown.
     `ah` below it after a `step=off` would show the cause. `step=off` also fires for trucks at rest (one sample per
     window), so it marks a step only for a moving truck.
   - Test honesty (review): the 60 s total (<= 280) and the count-change line fail at the old world_lrrp.lua (261432af:
-    802) and pass now; a cut-kinds bound from the design rates (230; old 772). The red step checks said rise 1000; the
+    802) and pass now; a cut-kinds check `cut <= 235` (the design rates sum to 230, the 30 s empty line 2-3 a minute;
+    the message says 230; old 772). The red step checks said rise 1000; the
     fixture's step sample first dips the offset 200 ms, so 1200 (said in the green commit).
   - Runs [O] (all at code 5a0ffb36, `-WanSim bad`, gun profile, research build): `da5ecb1d` (join + crew10, no key):
     moving truck p90 0.75 m (25605 0.95, 25606 0.57; 187), crews 20-40 s p90 2.55 / 2.48 m, get-outs matched, 0 origin
     jumps (the host's one `step=origin` line for 25606 at (-1687.5, 976.3), the spot where `86d6045f`'s host stopped
-    streaming it: an origin read), 0 latches / faults / game overs, host lrrp 114 / min (`86d6045f` 331), guest 149 /
-    min (293), 0 `log_cap`; its max 18.76 m is the gate's interpolation across the host's own 25605 moving ~25 m off and
+    streaming it; that that stop was an origin read is [I]), 0 latches / faults / game overs, host lrrp 114 / min
+    (`86d6045f` 331: about a third), guest 149 / min (293: about half), 0 `log_cap` (`86d6045f` 0 too: not proof of the
+    cut); not gate rows, the D-B10 limits as in 0.15.3: 25605's pairing defer 61-64 s (jump at exactly `near_m=400.0`;
+    seated crews p90 465 m apart), 25602/3/4/7's far rest crews 2 against 0 for about 22 s (24 unseats); its max 18.76 m is the gate's interpolation across the host's own 25605 moving ~25 m off and
     back within 1.6 s (643-757 m from the guest's player) [U cause]. `67f2b138` (`lrrp_follow=1`): p90 0.64 m, crews p90
-    2.56-4.76 m, 2 `crew_hold` lines and no hand-over due (the hold changed nothing [I]). `8be4db27` (Africa,
+    2.56-4.76 m, 2 `crew_hold` lines and no hand-over due (the hold changed nothing [I]); notice toward the guest is
+    untested (the join scenario's `enemy ignore` restricts 25605's crew's notice on both copies, 25606's crew got out
+    ~2.4 km away: 0 against 0 by construction). `8be4db27` (Africa,
     `lrrp_follow=1`): p90 0.52 m, crews p90 1.77 / 0.14 m, the run in ALERT from before the pairing, `guard_fell` 3 (Masa
-    guards, no crew) [I] not from the trucks. No run had an offset step while a truck moved (ah0 - ah under 50 ms in all
-    but one moving line): the lead fix is on without a regression, its effect and cause [I].
+    guards, no crew) [I] not from the trucks. No `step=off` (a rise of 100 ms+) fell on a moving truck; three moving
+    follow lines had ah0 - ah of 50 ms+ (`da5ecb1d` 25605 191 / 125 and 180 / 125, `67f2b138` 25606 177 / 115: rises
+    under the threshold), the rest under 50 ms: the lead fix is on without a regression and without a shown benefit
+    (p90 0.75 m against 0.53-1.13 m in earlier no-key runs), its effect and cause [I].
   - Next: an offset step on a moving truck (the cause); a calm Africa run and a `lrrp_follow=0` control for `guard_fell`
     (D-B12); the host-side truck excursion of `da5ecb1d`; item 5.
 
