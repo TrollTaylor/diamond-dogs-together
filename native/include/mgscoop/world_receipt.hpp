@@ -105,7 +105,8 @@ bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::ui
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id, bool& quiet) noexcept;
 bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept;
-// FM1: ACT_V1 "<t|m|r|s|q> <slot> <goId>": slot 1..512 and goId 0..65535 (s: both 0). Outputs only on success.
+// FM1: ACT_V1 "<t|m|r|s|q|w> <slot> <goId>": slot 1..512 and goId 0..65535 (s: both 0). Outputs only on success.
+// Round 13 C (D-FM3 (b)): w - the puppet's and his owner copy's spots are outside the guest's view (soldier_act SetOffView).
 bool ParseAct(const char* source, std::size_t size, char& op, std::uint16_t& slot, std::uint32_t& go_id) noexcept;
 // FM1 probe: ACT_V1 "p <x_mm> <y_mm> <z_mm>" (|v| <= 100000000): the local player's position (Lua's vars), for the
 // census distances (run 0a271c10: the debug snapshot never published one to the hook). Outputs only on success.

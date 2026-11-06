@@ -342,8 +342,11 @@ bool GlideEntry(const float (&self)[3], const float (&owner)[3], float (&entry)[
     return true;
 }
 
-bool OffViewFresh(std::uint64_t, std::uint64_t) noexcept { return false; }  // round 13 C red stub
-bool GlideOn(bool plan, bool walk, bool have_self, bool) noexcept { return plan && walk && have_self; }  // round 13 C red stub
+bool OffViewFresh(std::uint64_t stamp_ms, std::uint64_t now_ms) noexcept {
+    return stamp_ms != 0 && now_ms >= stamp_ms && now_ms - stamp_ms <= kOffViewMs;
+}
+
+bool GlideOn(bool plan, bool walk, bool have_self, bool off_view) noexcept { return plan && walk && have_self && !off_view; }
 
 bool TakeWarps(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept {
     if (host_request[0x61] == 1u || !have) return false;  // a walk glides; unknown positions: the unpack lends his own
@@ -593,6 +596,8 @@ struct Watch {
 };
 Watch g_watch[kMaxSoldiers]{};
 std::uint64_t g_glideLogAt[kMaxSoldiers]{};
+// Round 13 C (D-FM3 (b)): the last ACT_V1 w per guard (OffViewFresh): his and his owner copy's spots outside the guest's view.
+std::atomic<std::uint64_t> g_offViewAt[kMaxSoldiers]{};
 float g_cornerLast[kMaxSoldiers][3]{};
 std::atomic<std::uint32_t> g_cGlide{0}, g_cRelWatch{0}, g_cCorner{0};
 std::atomic<float> g_ownPos[kMaxSoldiers][3]{};  // each realized non-puppet guard's own position (OwnDests), for TakeNear
@@ -1196,7 +1201,8 @@ struct FakeTable {
 };
 alignas(16) unsigned char g_fakeEntries[kMaxSoldiers][0x18]{};
 FakeTable g_fake{0, &g_fakeEntries[0][0], kMaxSoldiers, 0};
-bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70], const float (&at)[3], bool first) noexcept {
+bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70], const float (&at)[3], bool first,
+                       bool off_view) noexcept {
     const std::uintptr_t r = Record(v, i);
     const std::uintptr_t slotTable = v.s + c::s_netpos;
     std::uintptr_t table = 0;
@@ -1216,8 +1222,10 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
     if (!std::isfinite(ownYaw)) ownYaw = 0.0f;
     // Round 11 C (act_plan): a walk's entry lies within kGlideM of this copy (GlideEntry): the unpack's warp never moves him;
     // the plan and the catch-up gait (from the owner copy's real position `at`) bring him onto the host copy's walk.
+    // Round 13 C (D-FM3 (b)): not while Lua's ACT_V1 w says both spots are outside the guest's view (off_view): then the
+    // unpack's 15 m warp puts a far copy on the owner copy's spot (soldier_act_warp15 off=1).
     float lent[3] = {at[0], at[1], at[2]};
-    const bool glide = plan && w[0x61] == 1u && haveSelf && GlideEntry(self, at, lent);
+    const bool glide = GlideOn(plan, w[0x61] == 1u, haveSelf, off_view) && GlideEntry(self, at, lent);
     const bool warp = haveSelf && Warp15(self, lent);
     unsigned char saved[0x18]{}, entry[0x18]{};
     PrefillEntry(entry, lent, plan ? EntryYaw(w, ownYaw) : 0.0f);
@@ -1284,9 +1292,9 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
             char line[400]{};
             const int n = std::snprintf(line, sizeof(line),
                 "soldier_act_warp15; t=%llu; idx=%u; first=%u; d_m=%.1f; p=%.2f,%.2f,%.2f; at=%.2f,%.2f,%.2f; after=%.2f,%.2f,%.2f; "
-                "moved_m=%.1f; yaw=%.3f; plan=%u\r\n",
+                "moved_m=%.1f; yaw=%.3f; plan=%u; off=%u\r\n",
                 static_cast<unsigned long long>(NowMs()), i, first ? 1u : 0u, Dist(self, at), self[0], self[1], self[2], at[0], at[1], at[2],
-                after[0], after[1], after[2], Dist(self, after), plan ? EntryYaw(w, ownYaw) : 0.0f, plan ? 1u : 0u);
+                after[0], after[1], after[2], Dist(self, after), plan ? EntryYaw(w, ownYaw) : 0.0f, plan ? 1u : 0u, off_view ? 1u : 0u);
             if (n > 0) Emit(line);
         }
         return true;
@@ -1345,7 +1353,8 @@ void OwnDests(const View& v, std::uint64_t now) noexcept {
 }
 // Round 9 track C (act_plan, design 7.26): whether a due re-apply of guard i's walk is held (PlanHold): the request is the
 // planned one but for a destination moved within 1 m, our plan still holds his slot, no 15 m warp, no gait change.
-bool HoldPlanned(const View& v, unsigned i, const unsigned char (&w)[0x70], const unsigned char (&planned)[0x70], const float (&at)[3]) noexcept {
+bool HoldPlanned(const View& v, unsigned i, const unsigned char (&w)[0x70], const unsigned char (&planned)[0x70], const float (&at)[3],
+                 bool off_view) noexcept {
     if (i >= kMaxSoldiers || !g_planHave[i] || w[0x61] != 1u || planned[0x61] != 1u) return false;
     const std::uintptr_t r = Record(v, i);
     std::uint16_t r19c = 0xffff;
@@ -1360,8 +1369,9 @@ bool HoldPlanned(const View& v, unsigned i, const unsigned char (&w)[0x70], cons
     if (!PartialHolds(g_planPartial[i], self, g_planEnd[i])) return false;  // round 10 C: near a partial path's end
     std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
     const unsigned now = (bits >> 1) & 7u, want = GaitCatchUp(AheadM(self, at, dest), g_wireGait[i]);
-    float lent[3]{};
-    GlideEntry(self, at, lent);  // round 11 C: a walk's entry glides, so the unpack would not warp him
+    float lent[3] = {at[0], at[1], at[2]};
+    // Round 11 C: a walk's entry glides, so the unpack would not warp him; round 13 C: off view it does not (no hold).
+    if (!off_view) GlideEntry(self, at, lent);
     return PlanHold(false, RequestChangedFar(planned, w), live, Warp15(self, lent), now, want);
 }
 void MirrorRx(const View& v, std::uint64_t now) noexcept {
@@ -1401,8 +1411,9 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
             const bool first = !a.valid || a.gen != gen;
             const bool changed = !first && newReq && RequestChanged(w, a.req);
             const bool moving = !first && haveOwner && a.have_owner && OwnerMoved(a.owner, owner);
+            const bool offView = i < kMaxSoldiers && OffViewFresh(g_offViewAt[i].load(std::memory_order_relaxed), now);  // round 13 C
             if (ReapplyDue(first, changed, moving, now >= a.at ? now - a.at : 0) && !first &&
-                g_planOn.load(std::memory_order_relaxed) && HoldPlanned(v, i, w, a.req, haveOwner ? owner : own)) {
+                g_planOn.load(std::memory_order_relaxed) && HoldPlanned(v, i, w, a.req, haveOwner ? owner : own, offView)) {
                 // Round 9 C: held (no unpack, no restart, no new plan); the planned request stays the one compared.
                 g_cPlanHold.fetch_add(1, std::memory_order_relaxed);
                 a.at = now;
@@ -1410,7 +1421,7 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
                 if (haveOwner) std::memcpy(a.owner, owner, sizeof(owner));
             } else if (ReapplyDue(first, changed, moving, now >= a.at ? now - a.at : 0)) {
                 g_cDue.fetch_add(1, std::memory_order_relaxed);
-                if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own, first)) {
+                if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own, first, offView)) {
                     g_cApplied.fetch_add(1, std::memory_order_relaxed);
                     if (!first && !changed && moving) g_cReapply.fetch_add(1, std::memory_order_relaxed);
                     std::memcpy(a.req, w, sizeof(w));
@@ -2107,6 +2118,7 @@ bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) 
     if (idx >= kMaxSoldiers) return false;
     if (!on || !g_actOn.load()) {
         g_mirAt[idx].store(0, std::memory_order_relaxed);
+        g_offViewAt[idx].store(0, std::memory_order_relaxed);  // round 13 C
         g_mirGen[idx].fetch_add(1, std::memory_order_relaxed);
         soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), false);
         AcquireSRWLockExclusive(&g_actLock);
@@ -2145,7 +2157,9 @@ bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) 
     return fresh;
 }
 
-void SetOffView(unsigned, std::uint64_t) noexcept {}  // round 13 C red stub
+void SetOffView(unsigned idx, std::uint64_t now_ms) noexcept {
+    if (idx < kMaxSoldiers) g_offViewAt[idx].store(now_ms ? now_ms : 1, std::memory_order_relaxed);
+}
 
 std::atomic<bool> g_paused{false};
 void SetPaused(bool paused) noexcept { g_paused.store(paused); if (paused) ReleaseAll(); }
@@ -2184,7 +2198,7 @@ bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept {
 }
 
 void ReleaseAll() noexcept {
-    for (unsigned i = 0; i < kMaxSoldiers; ++i) { g_mirAt[i].store(0); g_txAt[i].store(0); g_mirGen[i].fetch_add(1); }
+    for (unsigned i = 0; i < kMaxSoldiers; ++i) { g_mirAt[i].store(0); g_txAt[i].store(0); g_mirGen[i].fetch_add(1); g_offViewAt[i].store(0); }
     soldier_authority::ClearMirrored();
     AcquireSRWLockExclusive(&g_actLock);
     for (auto& m : g_mail) m = Mail{};

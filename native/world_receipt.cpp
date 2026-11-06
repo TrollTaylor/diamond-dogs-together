@@ -182,7 +182,7 @@ bool ParseAct(const char* source, std::size_t size, char& op, std::uint16_t& slo
     const char* end = source + size;
     if (p >= end) return false;
     const char o = *p++;
-    if (o != 't' && o != 'm' && o != 'r' && o != 's' && o != 'q') return false;
+    if (o != 't' && o != 'm' && o != 'r' && o != 's' && o != 'q' && o != 'w') return false;  // w: round 13 C (D-FM3 (b))
     std::int64_t v[2]{};
     for (unsigned i = 0; i < 2; ++i) {
         if (p >= end || *p != ' ') return false;

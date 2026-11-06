@@ -3262,6 +3262,7 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
 // ACT_V1 (FM1, the far mirror; docs/world-sync-design.md 7.15, lua/coop/world_mirror.lua): soldier_act on, play or lab,
 // 30010 / 30020 / 30050. t <slot> <goId>: the owner registers a guard to send (the hook packs him, soldier_act.hpp);
 // s 0 0: the owner sends the staged parts; q <slot> <goId>: is a candidate's stream fresh (f=1; nothing armed);
+// w <slot> <goId> (round 13 C): his and his owner copy's spots are outside the guest's view (the walk may warp, 1 s);
 // m <slot> <goId>: this copy mirrors a puppet (the newest SOLDIER_ACT goes to the
 // hook's mailbox; f=1 when fresh); r <slot> <goId>: releases him. Reply {f=,tx=,rx=,ap=,od=,sh=,mi=,fd=} (the counters,
 // sh the local player's shots, fd the dropped puppet shots) or {refused="<reason>"}.
@@ -3319,6 +3320,13 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
             if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply), owner_mm)) return refuse("format");
             return debug_reply;
         }
+    }
+    else if (op == 'w') {
+        // Round 13 C (D-FM3 (b), the user's decision): this puppet's and his owner copy's spots are outside the guest's view
+        // now (Lua's camera cone): for 1 s a walk's apply skips the glide, so the unpack's 15 m warp may move him.
+        if (host) return refuse("role");
+        if (sa::Paused()) return refuse("paused");
+        sa::SetOffView(go & 0x1ffu, now);
     }
     else sa::SetMirror(go & 0x1ffu, slot, false, now);
     if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");

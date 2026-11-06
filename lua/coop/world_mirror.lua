@@ -32,7 +32,9 @@ do
         -- realized out to 212 m (host) and 400 m (guest).
         -- FM1 retry, run 94a7bf2a: the guest's own copies hit it from up to 173.9 m in ALERT (guard 16; guard 13 from
         -- 150.6 m) -> 1.5 x 173.9 = 261 m.
-        M.R = {[0] = 80, [1] = 80, [2] = 261, [3] = 261}
+        -- Round 13 C: R(caution) 90 m: a guard first went for the host at 54.3 / 58.7 m in caution (run 4735fee5; 1.5 x 58.7 =
+        -- 88 m). Calm stays 80 m until a calm first notice is measured.
+        M.R = {[0] = 80, [1] = 90, [2] = 261, [3] = 261}
         -- RANGE 300 m: the ALERT watch point (beyond R(ALERT) + 15 m of the fight) is ~255 m from it (FM1 retry).
         M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 300, 15000, 1500, 12
         M.MISSIONS = {[30010] = true, [30020] = true, [30050] = true}
@@ -139,11 +141,41 @@ do
             L("event=mirror_apart;ent=%.0f;apart_m=%.1f", h, a / 1000)
             M.set(h, en, false, "apart")
         end
+        -- Round 13 C (the user's decision D-FM3 (b)): a puppet may be warped onto his owner copy's spot only while both spots
+        -- are outside this player's view: the M-series camera cone (world_place_guest.lua P.seen, 100 degrees) with no
+        -- distance cut (binoculars and scopes look along the camera's yaw). After each m: ACT_V1 w while both are out (native
+        -- skips the glide for 1 s, so the unpack's 15 m warp may move him); event=mirror_view when the verdict changes.
+        M.CONE = 50
+        function M.cone(px, pz, yaw, x, z)
+            local dx, dz = x - px, z - pz
+            if dx * dx + dz * dz < 1000000 then return true end
+            local a = (math.deg(math.atan2(dx, dz)) - yaw + 180) % 360 - 180
+            return math.abs(a) <= M.CONE
+        end
+        function M.view(h, p, en, r)
+            if not p or M.pp[h] ~= p or type(r) ~= "table" or type(r.ox) ~= "number" or type(r.oz) ~= "number" then return end
+            local px, pz, yaw
+            if type(P.view) == "function" then px, pz, yaw = P.view() end
+            local x, _, z = pos(en.id)
+            if not px or not x then return end
+            local off = not M.cone(px, pz, yaw, x, z) and not M.cone(px, pz, yaw, r.ox, r.oz)
+            if off then act("w", p.slot or S.slotOf(h) or 0, en.id) end
+            if off ~= p.off then
+                p.off = off
+                L("event=mirror_view;ent=%.0f;view=%s;apart_m=%.1f;yaw=%.0f", h, off and "off" or "on", flat(x, z, r.ox, r.oz) / 1000, yaw)
+            end
+        end
         function M.guest(now)
             local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
             local list = W.entOrder
             if type(px) ~= "number" or type(pz) ~= "number" or type(list) ~= "table" or #list == 0 then return end
             px, pz = px * 1000, pz * 1000
+            -- Round 13 C: this player's camera every 2 s while a puppet lives (the jump row: could a player see it).
+            if next(M.pp) and now - (M.camAt or -1e9) >= 2000 and type(P.view) == "function" then
+                M.camAt = now
+                local _, _, yaw = P.view()
+                L("event=mirror_cam;x=%.1f;z=%.1f;yaw=%.0f", px / 1000, pz / 1000, yaw or 0)
+            end
             local quiet = not (M.shotAt and now - M.shotAt < M.SHOT_MS)
             -- Round 12 C (D-FM1 (a)): the calm limit ends on any CP at EVASION / ALERT on this PC, not only the guard's own
             -- (an LRRP crew whose CP stayed calm fought in CP 557's ALERT and was taken at 97-117 m, runs 516e3ef7 / 4735fee5).
@@ -180,6 +212,7 @@ do
                     if r.refused then M.set(due, W.ent[due], false, r.refused)
                     elseif r.f == 1 then dp.fresh = now end
                     M.apart(due, dp, W.ent[due], r, now)
+                    M.view(due, dp, W.ent[due], r)
                 end
             end
             for _ = 1, math.min(M.SCAN, #list) do
@@ -208,7 +241,7 @@ do
                             if type(r) == "table" and r.refused then why = r.refused
                             elseif type(r) == "table" and r.f == 1 then p.fresh = now
                             elseif now - p.fresh >= M.STALE_MS then why = "stale" end
-                            if not why then M.apart(h, p, en, r, now) end
+                            if not why then M.apart(h, p, en, r, now); M.view(h, p, en, r) end
                         end
                         if why and M.pp[h] then M.set(h, en, false, why, d, R) end
                     elseif not why and d > (R + M.ENTER) * 1000 and not (rise and now - rise < M.SHOT_MS) and
@@ -217,7 +250,8 @@ do
                         M.shotCheck(r, now)
                         if type(r) == "table" and r.f == 1 and not (M.shotAt and now - M.shotAt < M.SHOT_MS) then
                             M.set(h, en, true, "far", d, R)
-                            act("m", slot, en.id)  -- arm the mailbox, the hook's apply and the fire drop now
+                            local r2 = act("m", slot, en.id)  -- arm the mailbox, the hook's apply and the fire drop now
+                            M.view(h, M.pp[h], en, r2)        -- round 13 C: the take may warp him while both spots are unseen
                         elseif type(r) == "table" and r.refused then
                             M.n.refused = M.n.refused + 1
                             M.why[r.refused] = (M.why[r.refused] or 0) + 1
