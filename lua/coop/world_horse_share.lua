@@ -259,9 +259,10 @@ if type(T) == "table" and type(T.blocked) == "function" then
   if S.busy() then return 3 end
  end
 end
--- Step S3: the RideHorse ride records of both bodies (native logs them change-only: horse_drive=ride_rec) at RREC_MS; with
--- world_horse_down_off a downed rider of the shared horse gets off (getoff: the stock get-off's next state 3), at most
--- GETOFF_TRIES requests GETOFF_MS apart while it stays downed and mounted (the downed cycle's ACTION mask hides its E).
+-- Step S3, only with world_horse_down_off (fixland4: nothing new at the defaults): the RideHorse ride records of both
+-- bodies (native logs them change-only: horse_drive=ride_rec) at RREC_MS, and a downed rider of the shared horse gets
+-- off (getoff: the stock get-off's next state 3), at most GETOFF_TRIES requests GETOFF_MS apart while it stays downed
+-- and mounted (the downed cycle's ACTION mask hides its E).
 local RREC_MS, GETOFF_MS, GETOFF_TRIES = 250, 500, 6
 S.GETOFF_MS, S.GETOFF_TRIES = GETOFF_MS, GETOFF_TRIES
 local function selfDown()
@@ -270,6 +271,7 @@ local function selfDown()
  return type(r) == "table" and r.down == true
 end
 function S.rideTick(t)
+ if not S.downKey then return end
  if t >= (S.rrecAt or 0) then S.rrecAt = t + RREC_MS; receipt(fmt("rrec %d %d", W.mission, W.epoch)) end
  if not (S.downKey and selfDown() and S.localRides()) then S.getoffN = nil; return end
  S.getoffN = S.getoffN or 0

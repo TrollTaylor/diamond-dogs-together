@@ -174,9 +174,10 @@ bool ReadAnim(const State& state, Anim& out) noexcept;
 // 0x17 knock, 0x18 / 0x19 hand sign Go / Stop; the gesture sender). Zeros and
 // false when unreadable.
 bool ReadUpper(const State& state, std::uint8_t (&out)[2]) noexcept;
-// Step S3 (logs only): the motion records ReadAnim hashes for instance 0, read twice as long so instance 1's part is
-// in them: *(Q+0x1D8) 0x80 bytes (0x40 per id, coop_carry's request stride), *(Q+0x1E0) 0x40, *(Q+0x1F8) 0x40 (the
-// instance-1 stride of the last two is not known). False and zeros when unreadable.
+// Step S3 (logs only): the motion records ReadAnim hashes for instance 0: *(Q+0x1D8) 0x80 bytes (0x40 per id,
+// coop_carry's request stride, so +0x40 is body 1's part), *(Q+0x1E0) 0x40 and *(Q+0x1F8) 0x40 from offset 0 (their
+// instance-1 stride is not known, so these are instance 0's part unless it is under 0x40). False and zeros when
+// unreadable.
 bool ReadMotionRaw(const State& state, unsigned char (&d8)[0x80], unsigned char (&e0)[0x40], unsigned char (&f8)[0x40]) noexcept;
 std::uint32_t MotionHash(const unsigned char* bytes, std::size_t size) noexcept;
 // The sync form of slot `index` (stance/speed clamped to 0..3; flags valid).

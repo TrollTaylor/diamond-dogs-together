@@ -7376,6 +7376,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.horse_seat_holds = lab.world_horse_pillion && lab.world_horse_share;
     // M2h: the recon leaves body 1 to the horse cargo's hold with world_horse_cargo (off unless named, its gate not passed).
     d.settings.horse_cargo = lab.world_horse_cargo && lab.world_horse_share;
+    // Step S3: the motion-record log with world_horse_down_off (off unless named; fixland4: nothing new at the defaults).
+    d.settings.horse_down_off = lab.world_horse_down_off && lab.world_horse_share;
     // G5 (docs/native-puppet.md "Ride hides"): lab only, default off (lab_config forces it off in play).
     d.settings.unrealize_all = lab.partner_native_unrealize_all;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
@@ -8571,9 +8573,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                        static_cast<unsigned long long>(dm.rec18), unsigned(dm.rec1a0), unsigned(dm.rec248), m.pillion_grace_n,
                        m.pillion_pose ? 1u : 0u);
         }
-        // Step S3 (logs only): body 1's part of the motion records ReadAnim hashes for instance 0 (the standing pose
-        // changes nothing logged so far), as raw hex whenever their hash changed, at most 120 lines a process.
-        if (m.pillion_err_n) {
+        // Step S3 (logs only, with world_horse_down_off): the motion records ReadAnim hashes for instance 0 - body 1's
+        // part of *(Q+0x1D8) (+0x40, coop_carry's request stride) and the first 0x40 bytes of *(Q+0x1E0) / *(Q+0x1F8)
+        // (instance 0's part unless their stride is under 0x40: not known to be body 1's) - as raw hex whenever their
+        // hash changed, at most 120 lines a process.
+        if (horse_drive::MotionLog(set.horse_down_off, m.pillion_err_n)) {
             static std::uint32_t mg_last = 0;
             static unsigned mg_lines = 0;
             unsigned char d8[0x80]{}, e0[0x40]{}, f8[0x40]{};

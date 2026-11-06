@@ -72,6 +72,9 @@ inline constexpr std::uint16_t kGetOffAct = 122;
 constexpr bool AnchorNote(bool cargo, bool act_valid, std::uint16_t act) noexcept {
     return !(cargo && act_valid && act == kGetOffAct);
 }
+// Step S3's motion-record log (partner_pillion=mg, logs only) in a 1 s window with seat-error samples, only with
+// world_horse_down_off (Settings.horse_down_off; fixland4: nothing new at the defaults).
+constexpr bool MotionLog(bool down_off, unsigned err_n) noexcept { return down_off && err_n != 0; }
 
 enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox, rrec, getoff };
 struct Request {
