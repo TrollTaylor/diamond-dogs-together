@@ -1327,6 +1327,81 @@ Round `wp/horse` step S3 (markers [O] / [I] / [U]; slim archives with the full s
   log body 1's position each tick around the 5-6 m seat-error windows and the overlay's DM state then, and try the DM
   replay after such a window.
 
+## 20. M2j round: a downed partner on the horse at the code head - both orders through the revive, the link drop; the victim's own walk / trot frames (not passed)
+
+Round `wp/horse` M2j (world_horse_cargo named, off unless named; markers [O] / [I] / [U]; slim archives with the full
+session observer logs `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).
+- **Round 7's leftover jobs** (ran on the tree of `2044e31d` + the S3 scenarios, no S3 code): lab `3a86c82f` passed
+  `horse-cargo.txt` (ride 134 m, take-down at 89210,172784 on both copies, revive grant) and `horse-cargo-b.txt` (128
+  m, 88148,173392, the host up again); its (c) failed only expectations: with the guest's (the victim's) world off its
+  cargo ended by the context hook (`why=context; from=partner; placed=1`, 3 cm from the host's point) and world_downed
+  reset it (`reason=restored`), so a `stream_lost` on the victim's copy cannot happen that way. Play `7c1de731`: (a)
+  passed (145 m); (b) never downed the host: the guest's hits on body 1 did 0 native damage (`downed_damage
+  damage=0.0`, lab 942.0), as in `2a41c416` and `49a1c525` (b), each after a teammate revive of the guest in (a);
+  `c62e2ce6` (b), with no revive in (a), did 942 [O logs]. Cause [U].
+- **New defect, fixed:** `3a86c82f` (a) frames `host-h2-stays` / `-stays2` (the carrier's screen after the dismount by a
+  rock wall) show body 1 lying flat in the air over the horse [O]; `step=pin how=ground`: the census root stood only
+  0.15 m over the carrier's ground there, so the 0.8 m low edge of the on-foot window moved body 1 to the carrier's
+  ground + 1.35 m, 0.75 m over the census cargo point [O log, cause I]. `cb33c317` red / `3d0e9549` green: on foot
+  within 3 m the census cargo point is corrected only when it is more than 2.0 m over the carrier's ground (run
+  `7359e4d2`); no low edge (`5a92c73f` had drawn it 0.38 m high the same way). Since then every carrier stays frame
+  shows body 1 lying across the horse's back (`01d9924e`, `00c966c1`, `619d982c`, `f7871604`) [O], `how=census` [O].
+- **The anchor during the get-off** (`3d0e9549`, `horse_drive::AnchorNote`): with Settings.horse_cargo the rider body
+  anchors no horse place while body 1 plays act 122 (the get-off, which holds a shown ride), so the stream pose places
+  the horse while the carrier gets off; line `horse_drive=anchor_hold; on=0|1`. Live [O]: `on=1` at every act-122 edge
+  on the victim's copy (2-3 per session); after the dismount no victim_pin window over 50 cm in the 5 sessions with it. One window
+  with `drop_cm=185` came at a ride START (lab `01d9924e` (b), host's copy, `src=placed`), not after the dismount [O];
+  cause [U] (one sample of body 0 under a target that had just moved up, or a real drop: no frame then).
+- **The revive** (`5272714c` red / `6b5518fa` green): lab `01d9924e` (a): `revive_near` `held=1` in the 1 Hz samples
+  371.5-373.5 s, then `age_ms=534; mask=0; held=0` and no `revive_late` line, so the hold had been zeroed before a late
+  tick could drain it; candidate [I]: a host loop gap over 500 ms (D.tick's `loop_gap` reset). With world_horse_cargo a
+  loop gap now drains the hold as a late status does; any reset of a hold under way there logs
+  `step=revive_reset;why=..;progress=..;gap_ms=..;drain=0|1` (at the defaults the reset is unchanged, the line is new).
+  Never seen live: no `revive_reset` in the later runs. The scenarios hold E about 7.5 s.
+- **The load E** (`6b5518fa`): an E begun while carrying that ends under 450 ms logs `step=load_e`, one whose carry
+  ended by then `step=refuse;why=carry` (lab `01d9924e` (c) and play `403e46a2` (b) logged nothing at the failed
+  loads). Play `403e46a2` (b): the flank warp during the pickup act 27 ended the guest's carry (`coop_carry=tx;
+  event=2` right after the warp) [O]; the scenarios now wait 2 s after the pickup. Neither line seen live yet.
+- **Scenarios:** (c) `host worldtrigger world=0` (the carrier's world off: carrier `why=context`, the victim's copy,
+  world on, `why=stream_lost`); play session `horse-cargo-play-b1.txt` ((b) first, with the boot: the guest's rifle
+  downed the host in both play runs) + `horse-cargo-play-a2.txt`; `horse-cargo-drop1.txt`: (c) alone from the boot (as
+  the third part it failed twice before the link drop: the load E in `01d9924e`, the pickup R in `00c966c1`).
+- **Hidden runs** (`-WanSim bad`, gun profile, research build, afgh-ledge; logs both copies, frames looked at):
+  - Attempt 1 (code `3d0e9549`): lab `01d9924e` (a) through the take-down, the revive reset (above); (b) passed; (c) no
+    load. Play `403e46a2`: (b) no load (the carry ended at the flank warp), (a) passed (162 m, revive grant).
+  - Attempt 2 (code `6b5518fa`, the code head): lab `00c966c1` (a) **passed** (load, a0_once, ride `path_cm=14109`,
+    take-down at 90211,172475 on both copies, revive `step=grant`), (b) **passed** (130 m, 89572,172069 both, the host
+    up again); victim CRAWL in 17 / 17 windows, worst drop 12 / 36 cm; 0 `partner_recon=place` inside the hold; (c) the
+    pickup R started nothing. Play `619d982c` (b) **passed** (124 m, 88934,171763 both, the host up again) and (a)
+    **passed** (135 m, 89220 / 89221,172778, revive grant); one recon place (`reason=teleport`) 13 lines after
+    partner_recon's own `cargo_hold; on=0`, the take-down's lay-down. 0 `Unconscious` / `horse_hit` lines on any copy.
+    The play host logs dropped Lua lines (`world=log_cap`: 954 lines, 1270 Lua lines in (b)): the host's downed
+    `step=grant` line of (b) is lost; its `require down=0` passed.
+  - Attempt 3 (code `6b5518fa`): lab `f7871604` (c) alone **passed**: load, a walk / trot ride, the dismount (body 1 on
+    the horse on both screens), then the carrier's world off: carrier `why=context; placed=1` at 81118,165080, victim
+    `why=stream_lost; placed=1` at 81147,165089 (0.3 m), the victim still down (`state=wounded`); frames
+    `host-h2c-dropped-side` and `guest-h2c-dropped-side` both show them lying on the ground beside the horse [O].
+  - Frames looked at (attempt 2, both orders, lab and play): the carrier's screen shows the body across the horse at
+    the load, walk, trot, gallop, gallop4, the stop, both stays frames, and the revived partner standing [O]; on the
+    victim's own screen the horse is in view at the gallop, the stop and both stays frames, but NOT at the walk, the
+    trot or the load (`guest-h2-ride-walk-victim`, `-trot-victim`, `host-h2b-ride-walk-victim`, `-trot-victim` in
+    `00c966c1` and `619d982c`, and `guest-h2p-walk` / `-trot` in `f7871604`: the body lying in the air with the rider's
+    head below it, the horse out of the frame) [O]; logs at those moments: body 0 held at the cargo point, CRAWL [O].
+- **Gate not passed, by its frame rule only:** everything else holds at the code head `6b5518fa`: both carrier orders
+  in lab and play through the ride (124-141 m), the dismount, the take-down at the same spot on both copies and the
+  revive; the link drop lays them down at the same spot on both screens, still down; no horse fell; 0 recon places
+  inside the hold. Missing: frames from the victim's own copy that show the horse at the walk and the trot. Three
+  attempts used; world_horse_cargo stays off unless named; no default change.
+- **Never seen live:** the loop-gap drain (`revive_reset`), `load_e` / `refuse;why=carry`, a late-status drain
+  (`revive_late`), a 2 m drop after the dismount with the anchor held (none in 5 sessions; one 185 cm sample at a ride
+  start).
+- **Next:** on the victim's copy turn the camera along the horse before the walk and the trot captures (as the load
+  frame's `mouse 600 150` turn, then a little down) or add a side capture per gait, so the horse is in the frame; or
+  the user accepts the carrier-screen frames plus the victim's gallop / stop / stays frames and the logs for the walk
+  and the trot. Then the flip (lab_config `world_horse_cargo = gun`, red / green) and one lab + play run with the key
+  not named that includes an ordinary revive: with the key on by default the late-status and loop-gap drains reach
+  every revive.
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed

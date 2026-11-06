@@ -1,3 +1,35 @@
+## November 6, 2026: horse round M2j - putting a downed partner on the horse now works in tests in both orders, lab and play, through the ride, the take-down, the revive and a link drop; still off unless named, because the downed player's own screen never showed the horse at the walk and the trot (`wp/horse`)
+
+**Players get:** nothing new and no default changed (world_horse_cargo stays off unless named). In the tests with it
+named, at the code head `6b5518fa`, both orders (the host carrying the guest and the guest carrying the host) went all
+the way in lab and in the play rehearsal under a bad network: load the downed partner on the horse, ride 124-141 m at
+walk, trot and gallop, get off, take them down (laid at the same spot on both screens), revive them; when the
+carrier's link went off the downed partner was laid on the ground beside the horse on both screens and stayed down.
+What blocks the flip: on the downed player's own screen the horse was out of the frame at the walk and the trot (their
+camera looks over their own body), so the gate's "frames that show the horse at each gait on both screens" is not met.
+docs/mounts.md section 20.
+
+- **Code** (all behind world_horse_cargo except one log line): `cb33c317` red / `3d0e9549` green - after the dismount
+  body 1 on the carrier's screen uses the horse's own height unless it is over 2 m high (lab `3a86c82f`: by a rock wall
+  the old 0.8 m low edge drew it lying in the air over the horse; every later stays frame shows it on the horse), and
+  the rider body anchors no horse place during the get-off act 122 (`horse_drive=anchor_hold`); `5272714c` red /
+  `6b5518fa` green - a host loop gap over 500 ms drains a revive under way instead of zeroing it (lab `01d9924e` (a)),
+  a new `step=revive_reset` line for any such reset (at the defaults the reset itself is unchanged), and the load E's
+  `step=load_e` / `step=refuse;why=carry` lines. Scenarios: (c) turns the carrier's world off; play runs (b) first
+  (after a teammate revive in play the guest's hits did 0 damage, cause unknown); the revive E is 7.5 s; 2 s after the
+  pickup; (c) alone from the boot (`horse-cargo-drop1.txt`). Full CTest 355/355 at `6b5518fa`; every `--check` passes
+  except the known base four.
+- **Runs:** round 7's leftover jobs (pre-S3 code) lab `3a86c82f` / play `7c1de731`; attempt 1 lab `01d9924e` / play
+  `403e46a2`; attempt 2 (code head) lab `00c966c1` (a) and (b) passed, play `619d982c` (b) and (a) passed; attempt 3
+  lab `f7871604` (c) passed (carrier `why=context`, victim `why=stream_lost`, laid 0.3 m apart, still down; frames
+  `host-` / `guest-h2c-dropped-side`). 0 `Unconscious` / `horse_hit`; 0 recon places inside the hold (one at the
+  lay-down, after the recon's release); the play host logs dropped 1270 Lua lines in (b) (`world=log_cap`), the host's
+  downed grant line among them.
+- **Never seen live:** the loop-gap drain, the late-status drain, `load_e` / `refuse;why=carry`, a 2 m drop after a
+  dismount with the anchor held (one 185 cm sample at a ride start, `01d9924e`). Next: aim the downed player's camera
+  along the horse for the walk and trot frames (or a user decision to accept the carrier's frames and the logs there),
+  then the flip and one lab + play run with the key not named, with an ordinary revive. Nothing pushed.
+
 ## November 6, 2026: horse step S3 - riding behind your partner: the "standing from the moment they sit down" comes from the test's horse placement, not from what players do; a downed rider's get-off built (off unless named, not seen live); nothing turned on (`wp/horse`)
 
 **Players get:** nothing new and no default changed. What changed is what we know: the rear rider standing on the
