@@ -1,8 +1,10 @@
-## November 6, 2026: enemy round 12 track A - at the radio spot the default correction put the outpost on caution again while `quiet_place`'s quiet move of the same guard at the same moment left it calm; but walking guards it moves walk on along their own route (13-15 of 31-35 within 3 m of the host's copy 2 s later): the gate failed, nothing turned on, a user decision is asked (`wp/enemy-m7`, not pushed)
+## November 6, 2026: enemy round 12 track A - at the radio spot the default correction was followed by the outpost's caution again while `quiet_place`'s quiet move of the same guard at the same moment left it calm; but far walking guards it moves walk on along their own route and followed the host's copies worse than the default correction did (2 s later 16 of 27 and 13 of 31 within 3 m, up to 17 m), and a guard standing on a ledge walked off it on the guest's screen after each such move: the gate failed, nothing turned on, a user decision is asked (`wp/enemy-m7`, not pushed)
 
 Design 7.31, protocol 47. Markers: [O] seen in a log line, a frame or the code, [I] inferred, [U] unknown. Merged dev
-7d23eddc (8a989be1); red bb1da3a0 / green 34f7a4fd (on-screen and M3), red 88c2c2db / green (see below: the baseline's
-owner distance).
+7d23eddc (8a989be1); red bb1da3a0 / green 34f7a4fd (on-screen and M3), red 88c2c2db / green 922b5875 (the baseline's
+owner distance). Land step: the review's corrections below (marked "review"); e9ef56fa (test only) binds the
+`src=place` `dho_m` check to the 2 s read-back line itself again (922b5875 had loosened it to any line; red with the
+old world_readback.lua, green now); dev 1a9d7381 (the horse round) merged in, whose code the three runs did not have.
 
 - **What players get**: nothing new; the defaults behave as 0.15.3. `quiet_place` stays off unless named.
 - **Built** (native, no Lua change, no CFG bit, no wire change; only with `quiet_place=1`): every correction of a soldier
@@ -22,13 +24,17 @@ owner distance).
     `world_place` or `world_drive` line in the host's log); the host's own guards 246 / 15 stood 5.5-11 m from the
     host's player, a patrol truck passed 16-19 m away just before. [I] the host's player was seen (the walker part
     puts the host on their path).
-  - FAIL the walker rows: at 2 s 15 of 35 read-backs within 3 m of the owner copy (246 5.7-10.4 m, 15 3.5-7.0 m, a
-    truck rider 9.5-12.4 m); at 10 s 1 read (the next move re-arms within 10 s). [O] the re-plan sends a walker to his
-    own brain's destination (246: 444, 2137 while the host's copy walked south to z 2090) and only a guard's first
-    move re-plans (after it his slot holds our plan's handle: `step=none`).
-  - FAIL `guard_sank` 1 (the report's count of `place_sink` lines): 2929558510 2.48 m under his target 2 s after
-    seq 42 with `owner_dy_m=-2.48`, his owner copy's newest sample as much lower ([I] he walked down as his owner did,
-    not a sink); his 5 s read-backs after three moves were 5.8 m under (no owner height in that line) [U].
+  - FAIL the walker rows (review: enemy_div_report's count; gate12's 15 of 35 reused one read-back for several moves):
+    at 2 s 16 of 27 within 3 m of the owner copy (4 walkers; 14 of 23 before the host's ALERT, 2 of 4 after; 246
+    5.7-10.4 m, 15 3.5-7.0 m, a truck rider 9.5-12.4 m); at 10 s 1 read (the next move re-arms within 10 s). [O] the
+    re-plan sends a walker to his own brain's destination (246: 444, 2137 while the host's copy walked south to z 2090).
+    Review: not only a guard's first move re-plans; he is re-planned again each time his brain has dropped our plan's
+    handle (`mode 0`, `r19c=0xffff`): 246 at seq 53 and 143, 15 at seq 57 and 146.
+  - FAIL `guard_sank` 1, a real sink (review: the earlier [I] "walked down as his owner did" read `owner_dy_m`
+    backwards; it is the copy's y minus the owner sample's, so -2.48 is 2.48 m under it). [O] 2929558510's host copy
+    stood still on a ledge at y 275.97 (host census) while on the guest each quiet move re-planned him toward his own
+    brain's destination (365.77, 2132.34) and he walked off the ledge (y 273.97 2 s after seq 42, 5.8 m under at 5 s
+    after three moves); the next correction moved him back up (14 quiet moves of him). A `quiet_place` artifact.
   - n/a guest place error p90 (no guard within 60 m of the guest); part 1's radio-spot correction of 246 was refused
     `far` (not exercised); the on-screen and M3 quiet paths were not exercised (0 `view=on`, 0 host placements).
   - Passed: 0 latches / faults / Game Overs, `plans_lost` 0, 0 log_cap drops.
@@ -36,11 +42,16 @@ owner distance).
   result, so a baseline of the defaults, not a flip proof; both copies in gameplay and connected):
   - [O] the false caution again at the defaults: 246's off-screen set-transform correction (39.4 m, `leaf=typed`) at
     t=410244360; 47 s later the guest's outpost changed phase, the guest asked for CAUTION (`req_phase`) and the host
-    applied it (`src=req`). Frame guest q246-c (1.3 s before that line): the subtitle "Soviet CP: Entering alert
-    status" on the guest's screen; host q246-c at the same moment: none. [I] 246's startle (no census without the key).
-  - [O] the far message corrections' 2 s read-backs (new `dho_m`): 12 of 17 within 3 m of the owner copy (6 guards;
-    other guards than the quiet run's, so not a like-for-like walker row). Later the host's own copies went to ALERT
-    (`src=host`) in the walker part, as in c66b10b6.
+    applied it (`src=req`). Frame guest q246-c (t=410290031, 1.3 s before that line): the subtitle "Soviet CP: Entering
+    alert status" on the guest's screen. Review: the host's q246-c was taken at 410289953, 1.5 s before the host applied
+    the caution (410291453), and the host's next frame came 35 s later, so whether the host's screen showed it is [U]
+    (not "the guest's screen only"); the guest's q246-b is black apart from the HUD. [I] 246's startle (the obs line
+    says `att=none`; no census without the key).
+  - [O] the far message corrections' 2 s read-backs (new `dho_m`): 12 of 17 within 3 m of the owner copy (6 guards).
+    Review: 3 of the 6 (1926520947, 2305481811, 3970963356) were also among f87fc7b3's 5 walkers; after the host's
+    ALERT the message kept the truck crew 2305481811 / 3970963356 within 3 m at 2 s in 5 of 7 checks, the quiet move in
+    f87fc7b3 in 0 of 12: [O] for these far walkers the defaults followed the host's copies better than `quiet_place`.
+    Later the host's own copies went to ALERT (`src=host`) in the walker part, as in c66b10b6.
   - Report: 28 of 30 corrections applied (2 `vehicle_local`), place error p50 2.75 / p90 10.8 m over 6 samples (FAIL
     rows at the defaults), 0 latches / faults / Game Overs / place_sink. Audited CTest of the job: 340/340.
 - **Run f87fc7b3** (job 20261106-092026-519-977c34, named again at the same head 16967d8d: `quiet_place=1,
@@ -50,18 +61,25 @@ owner distance).
     / 5 / 10 s; [O census] his kinds for 30 s: 1 only; no guest phase change in the whole part (81 s). Frames q246-c
     (44 s after; the baseline's subtitle came 46 s after its correction) and q246-d (81 s) on both: calm, no subtitle.
   - [O] 60 quiet moves in all (49 of walkers, 0 messages, 0 `view=on`, 0 host placements), no kind 13 after any; the
-    host's own ALERT in the walker part again (no mod move on the host). FAIL the walker rows: 2 s 13 of 31 within 3 m
-    (5 walkers), 10 s 2 of 3 (3 walkers). Passed: 0 latches / faults / Game Overs / place_sink, `plans_lost` 0, 0
-    log_cap; n/a place error p90 (no guard within 60 m of the guest).
-- **Decision asked (D-A12)**: turn `quiet_place` on for the guest's off-screen corrections (the scope all three runs
-  measured), accepting that a far walking guard it moves can walk 3-12 m off the host's copy before his next
-  correction (off the guest's screen), with the on-screen and M3 quiet paths kept on the message until a run covers
-  them? Until answered it stays off unless named.
-- **Next**: a walker's two copies with different routes cannot meet by a quiet move alone. Try re-planning a moved
-  walker toward the owner copy (its sample position plus speed) instead of his own brain's destination, and re-plan
-  every move (over our own earlier plan's handle); give the radio spot's correction a run where it is not refused
-  `far`; exercise `view=on` and the host's M3 placements (a guard within 60 m of the guest; a guard the guest owns).
-  Then the named run again, the flip, the no-key run.
+    host's own ALERT in the walker part again (no mod move on the host; review: here host 246 / 15 stood 11.8-16.3 m
+    from the host's player, the host's frame w246-e shows "Fire in the hole!"; the trigger [I]). FAIL the walker rows:
+    2 s 13 of 31 within 3 m (5 walkers; 7 of 10 before the ALERT, 6 of 21 after; worst 17.0 m, 3970963356 9 of 9 over
+    3 m), 10 s 2 of 3 (3 walkers; worst 36.8 m, 2305481811). Review: the ledge guard 2929558510 walked off his ledge
+    again after his quiet moves (10; 5.8 m under his owner copy at 5 s, `held=0`, t=412015722) with no `place_sink`
+    line. Passed: 0 latches / faults / Game Overs, `plans_lost` 0, 0 log_cap; n/a place error p90 (no guard within 60 m
+    of the guest). The harness passed; the session ended `Forced=True` (stage `terminated`, host exit 1223).
+- **Decision asked (D-A12, corrected by the review)**: turn `quiet_place` on for the guest's off-screen corrections?
+  For: [O] at the radio spot its quiet move left the outpost calm, where the default correction was followed 47 s
+  later by the guest's caution ([I] his startle). Against: [O] far walking guards it moved followed their host's copies
+  worse than the default correction (2 s later 16 of 27 and 13 of 31 within 3 m, up to 17 m at 2 s and 37 m at 10 s;
+  the same truck crew 0 of 12 against 5 of 7 with the message), and a guard standing on a ledge walked off it on the
+  guest's screen after each of its moves (about 6 m down) until the next correction. Not measured: every quiet move
+  was 62-119 m from the guest, so the off-screen corrections within 60 m (which the defaults make) and the on-screen
+  and M3 paths were never run with it. Recommendation: not yet. Until answered it stays off unless named.
+- **Next**: re-plan a moved walker toward the owner copy (its sample position plus speed) instead of his own brain's
+  destination, and not at all while the owner copy stands still (the ledge guard); give the radio spot's correction a
+  run where it is not refused `far`; exercise a guard within 60 m of the guest, `view=on` and the host's M3
+  placements. Then the named run again, the flip, the no-key run.
 
 ## November 5, 2026: enemy round 11 track A - a likely cause of the false radio report found [I] (the set-transform handler posts action 0xa6 naming this PC's player for every normal guard; no run has tested it); `quiet_place` now moves walkers too and re-plans them; NO RUN: the queue waited on the C: floor, nothing turned on (`wp/enemy-m7`, not pushed)
 
