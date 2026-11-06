@@ -166,13 +166,15 @@ do
  g=F();refused=nil;g.W.host=true;g.W.companion={live=function()return true end,refuse=function(p)refused=p end}
  ok2,msg2=g:run("horse_spawn");check(refused==nil,"the host summons")
 end
--- Step S2: horse_here places this copy's unridden horse 4 m right of the player through world_horse_share's S.here.
+-- Step S2: horse_here places this copy's unridden horse 4 m right of the player through world_horse_share's S.here,
+-- its census root 0.6 m over the player's feet (lab 41ae2b4c: placed at the feet, the root read 0.67 m higher and goto_horse
+-- warped the host into a fall; 2a41c416: root 0.54 m over a player beside it).
 do
  local h=F();local got;h.pose={805,340.5,1636.5,-60}
  h.W.horseShare={here=function(x,y,z,yaw)got={x,y,z,yaw};return true,"ok" end}
  local ok2,msg2=h:run("horse_here")
  local r=-60*math.pi/180
- check(ok2 and msg2=="horse_here;ok" and got and math.abs(got[1]-(805+4*math.cos(r))*1000)<1 and math.abs(got[2]-340500)<1 and
+ check(ok2 and msg2=="horse_here;ok" and got and math.abs(got[1]-(805+4*math.cos(r))*1000)<1 and math.abs(got[2]-341100)<1 and
   math.abs(got[3]-(1636.5-4*math.sin(r))*1000)<1 and math.abs(got[4]+1047.2)<0.1 and h.calls==0,"S2: horse_here places 4 m right, no recall")
  h.W.horseShare={here=function()return false,"ridden" end}
  ok2,msg2=h:run("horse_here");check(not ok2 and msg2=="horse_here;ridden","S2: horse_here passes the refusal")
