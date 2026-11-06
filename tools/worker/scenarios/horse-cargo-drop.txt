@@ -65,8 +65,8 @@ guest require cargo;state=cargo
 # M2g attempt 3 (39fff762: the victim's own frames showed the horse only at the load): the victim's camera looks down a
 # little so their frames show the horse under the body.
 # M2h (a53a243a / 39fff762: the victim's frames showed the horse at the load only; c62e2ce6 with mouse 400 300 looked
-# straight down on the body): the camera turned a quarter and raised.
-guest mouse 600 -200
+# straight down on the body; 990d2530 with 600 -200 level with it, the horse below the frame): turned, a little down.
+guest mouse 600 80
 wait 400
 both capture h2c-loaded
 guest run cargo_status

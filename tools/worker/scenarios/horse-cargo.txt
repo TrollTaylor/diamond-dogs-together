@@ -111,8 +111,8 @@ wait 1500
 # M2g attempt 3 (39fff762: the victim's own frames showed the horse only at the load): the victim's camera looks down a
 # little so their frames show the horse under the body.
 # M2h (a53a243a / 39fff762: the victim's frames showed the horse at the load only; c62e2ce6 with mouse 400 300 looked
-# straight down on the body): the camera turned a quarter and raised.
-guest mouse 600 -200
+# straight down on the body; 990d2530 with 600 -200 level with it, the horse below the frame): turned, a little down.
+guest mouse 600 80
 wait 400
 both capture h2-loaded
 # The host's first E mounts the loaded horse.
@@ -149,6 +149,9 @@ wait 300
 host capture h2-ride-gallop4
 guest capture h2-ride-gallop4-victim
 wait 600
+host hold w+shift 1500
+host hold w+shift 1500
+# M2h (lab 990d2530 (a): path_cm 3738, under the 50 m of the gate): two more gallop holds.
 host hold w+shift 1500
 host hold w+shift 1500
 host release
