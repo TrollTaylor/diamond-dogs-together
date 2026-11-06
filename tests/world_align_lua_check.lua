@@ -1901,7 +1901,7 @@ if arg[7] and arg[8] then
     do
     local mg = guestFix(0)
     mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
-    mg.W.handlers[92]({1, 6})                               -- the partner's ACT_CAPS (round 6)
+    mg.W.handlers[92]({1, 7})                               -- the partner's ACT_CAPS (round 6)
     -- R(ALERT) is 1.5 x the farthest ALERT hit (122.4 m on the host, run 3bc7280b) = 184 m, not capped: 12 copies stayed
     -- realized out to 212 m (host) and 400 m (guest), so no realize radius was measured (skeptic of 7b709720).
     -- FM1 retry (run 94a7bf2a): the guest's own copies hit it from up to 173.9 m in ALERT (guard 16), so R(ALERT) is
@@ -1969,7 +1969,7 @@ if arg[7] and arg[8] then
     -- The host side: its own NORMAL guard within 250 m of the guest and beyond R - 10 m is registered; nearer ones not.
     local mh = followFixture(true)
     mh.W.snapOn, mh.W.actOn, mh.W.mission = true, true, 30010
-    mh.W.handlers[92]({1, 6})
+    mh.W.handlers[92]({1, 7})
     mh.positions[900] = {0, 0, 0}
     mh.positions[1] = {0, 1.8, 100.0}
     mh.positions[2] = {0, 1.8, 30.0}
@@ -1983,7 +1983,7 @@ if arg[7] and arg[8] then
     check((function()
         local ma = guestFix(0)
         ma.W.snapOn, ma.W.actOn, ma.W.mission = true, true, 30010
-        ma.W.handlers[92]({1, 6})
+        ma.W.handlers[92]({1, 7})
         ma.positions[1] = {0, 1.8, 100.0}
         ma.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
         ticks(ma, 70)
@@ -2003,7 +2003,7 @@ if arg[7] and arg[8] then
     check((function()  -- its own function: the main chunk is at Lua's 200-local limit
         local mr = followFixture(true)
         mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
-        mr.W.handlers[92]({1, 6})
+        mr.W.handlers[92]({1, 7})
         mr.positions[900] = {0, 0, 0}
         mr.positions[1] = {0, 1.8, 280.0}
         mr.positions[2] = {0, 1.8, 320.0}
@@ -2021,7 +2021,7 @@ if arg[7] and arg[8] then
     end
     local mr = guestFix(0)
     mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
-    mr.W.handlers[92]({1, 6})
+    mr.W.handlers[92]({1, 7})
     mr.positions[1] = {0, 1.8, 100.0}
     ticks(mr, 4)
     check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet (setup)')
@@ -2094,19 +2094,29 @@ if arg[7] and arg[8] then
         ticks(oh, 60)
         check(n(oh, ' -- t ') == 0 and n(oh, ' -- s ') == 0, 'FM1 round 6: an old partner: the host registers and sends nothing')
         local capsTx = 0
-        for _, t in ipairs(oh.tx) do if t.op == 92 and t.v[1] == 1 and t.v[2] == 6 then capsTx = capsTx + 1 end end
-        check(capsTx == 1, 'FM1 round 6: a PC with soldier_act announces ACT_CAPS {1, 6} once while paired')
-        og.W.handlers[92]({1, 6})
+        for _, t in ipairs(oh.tx) do if t.op == 92 and t.v[1] == 1 and t.v[2] == 7 then capsTx = capsTx + 1 end end
+        check(capsTx == 1, 'FM1 round 12: a PC with soldier_act announces ACT_CAPS {1, 7} (revision 7) once while paired')
+        -- Round 12 C (design 7.33, D-FM2): act_plan follows the gun profile with the far mirror, and its walk destination
+        -- (the host copy's next path point) is revision 7's: a revision 6 partner (soldier_act named without act_plan, as
+        -- 0.15.3 has it) takes and gives no puppet.
+        og.W.handlers[92]({3, 6})
         ticks(og, 8)
-        check(og.W.mirror.pp[3000000001] ~= nil and logged(og, 'event=mirror_peer;caps=1;rev=6'),
+        check(next(og.W.mirror.pp) == nil and n(og, ' -- m ') == 0 and logged(og, 'event=mirror_peer;caps=3;rev=6'),
+            'FM1 round 12: a revision 6 partner (no act_plan) takes no puppet')
+        oh.W.handlers[92]({3, 6})
+        ticks(oh, 8)
+        check(n(oh, ' -- t ') == 0 and n(oh, ' -- s ') == 0, 'FM1 round 12: a revision 6 partner: the host registers and sends nothing')
+        og.W.handlers[92]({1, 7})
+        ticks(og, 8)
+        check(og.W.mirror.pp[3000000001] ~= nil and logged(og, 'event=mirror_peer;caps=1;rev=7'),
             'FM1 round 6: after the partner\'s ACT_CAPS: a puppet')
-        oh.W.handlers[92]({1, 6})
+        oh.W.handlers[92]({1, 7})
         ticks(oh, 8)
         check(n(oh, ' -- t 1 1') >= 1 and n(oh, ' -- s ') >= 1, 'FM1 round 6: after the partner\'s ACT_CAPS: the host sends')
         og.W.handlers[92]({0, 6})
         ticks(og, 2)
         check(logged(og, 'on=0;why=peer') and next(og.W.mirror.pp) == nil, 'FM1 round 6: a partner without the mirror releases every puppet')
-        og.W.handlers[92]({1, 6})
+        og.W.handlers[92]({1, 7})
         for _, f in ipairs(og.W.unpairedHooks) do f(1) end
         check(og.W.mirror.peer == nil, 'FM1 round 6: unpaired forgets the partner\'s caps')
         local ow = guestFix(0)
@@ -2114,14 +2124,14 @@ if arg[7] and arg[8] then
         ticks(ow, 60)
         local quiet = true
         for _, t in ipairs(ow.tx) do if t.op == 92 then quiet = false end end
-        check(quiet, 'FM1 round 6: without soldier_act nothing is announced (the defaults send nothing new)')
+        check(quiet, 'FM1 round 6: without soldier_act nothing is announced')
     end)()
     -- FM1 round 6 (4): the phase lever (soldier_act=calm, native's ACT_V1 p reply pl=1) mirrors only in calm / caution;
     -- without it (pl=0, the current behaviour) an ALERT puppet beyond R(ALERT) + 15 m stays.
     ;(function()
         local pl = guestFix(0)
         pl.W.snapOn, pl.W.actOn, pl.W.mission = true, true, 30010
-        pl.W.handlers[92]({1, 6})
+        pl.W.handlers[92]({1, 7})
         pl.positions[1] = {0, 1.8, 280.0}
         ticks(pl, 8)
         check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever: a puppet at 280 m in calm (setup)')
@@ -2143,7 +2153,7 @@ if arg[7] and arg[8] then
     ;(function()
         local rv = guestFix(0)
         rv.W.snapOn, rv.W.actOn, rv.W.mission = true, true, 30010
-        rv.W.handlers[92]({1, 6})
+        rv.W.handlers[92]({1, 7})
         rv.vehicles = {[1] = 77}
         rv.positions[1] = {0, 1.8, 120.0}
         ticks(rv, 40)
@@ -2157,7 +2167,7 @@ if arg[7] and arg[8] then
             'riders: a puppet who mounts is released')
         local hv = followFixture(true)
         hv.W.snapOn, hv.W.actOn, hv.W.mission = true, true, 30010
-        hv.W.handlers[92]({1, 6})
+        hv.W.handlers[92]({1, 7})
         hv.positions[900] = {0, 0, 0}
         hv.positions[1] = {0, 1.8, 100.0}
         hv.vehicles = {[1] = 77}
@@ -2171,7 +2181,7 @@ if arg[7] and arg[8] then
     ;(function()
         local mw = guestFix(0)
         mw.W.snapOn, mw.W.actOn, mw.W.mission = true, true, 30010
-        mw.W.handlers[92]({1, 6})
+        mw.W.handlers[92]({1, 7})
         mw.positions[1] = {0, 1.8, 100.0}
         mw.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
         ticks(mw, 70)
