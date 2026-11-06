@@ -225,6 +225,19 @@ void TestRideKindShows() {
     Check(hd::AnchorUsable(stream, near) && !hd::AnchorUsable(stream, far), "an anchor within 1.5 m of the stream only");
 }
 
+// M2j (lab 2a41c416 guest, the M2i round: one victim_pin window with body 0 2.03 m under its target just after the
+// carrier got off; body 1 on the victim's copy played the get-off act 122 until about 1 s after the final, and 122 holds
+// a shown ride, so each anchored place put the horse under the body getting off, up to kAnchorMaxM from the stream):
+// with world_horse_cargo the rider body anchors nothing during act 122 (the stream pose places the horse); every other
+// act, an invalid sample and the defaults anchor as before.
+void TestAnchorHold() {
+    Check(hd::kGetOffAct == 122, "the get-off act is 122");
+    Check(!hd::AnchorNote(true, true, 122), "cargo key, act 122: no anchor");
+    Check(hd::AnchorNote(false, true, 122), "defaults, act 122: anchors as before");
+    Check(hd::AnchorNote(true, true, 121) && hd::AnchorNote(true, false, 122) && hd::AnchorNote(true, true, 1),
+          "cargo key, the seated act, an invalid sample or a foot act: anchors as before");
+}
+
 void TestVisibility() {
     Check(rw::HorseRider(true, true, 121, false, false) && !rw::HorseRider(false, true, 121, false, false) && !rw::HorseRider(true, false, 121, false, false),
           "act 121 with a fresh placed horse and a valid act");
@@ -697,6 +710,7 @@ int main() {
     TestShared();
     TestVisibility();
     TestRideKindShows();
+    TestAnchorHold();
     TestLabKey();
     TestCargoKey();
     TestPillion();
