@@ -1349,6 +1349,55 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   change; then one
   named run, the flip per D-FM1 (a) and the no-key run.
 
+#### 7.30 Enemy harden: seated guards and the soft follow, the origin truck pose, the parked-truck re-placement loop (no key, no CFG bit, no wire change)
+
+- **Why** (the joint review of the merged defaults, `drive_vert` D-A10 and `lrrp_follow` D-B10; runs `f256bf29`, `fc141dc1`):
+  1. Seated guards were reachable by the soft follow [O]/[I]: a rider is NORMAL (life 0, state 0), the owner's
+     `S.produce` streams him (no vehicle check; GetPosition is his seat), and neither `S.drive` nor native `DriveReceipt` /
+     `sw::Warp` checks a vehicle (only the pinned chain's stance 1-4). In `f256bf29`, `139a1440`, `ffd0248d`, `801cd90b`
+     and `68491f7f` 25605's two riders drove past the guest's player about 12 m off (the host's `partner_body` against its
+     riders lines) at about 8 m/s; in `f256bf29`'s 10 s window of that pass the guest's native drive counted 86 steps (6-30
+     in the windows before) while its riders stayed seated (rl 2, seat positions with the truck) [I]. No per-guard drive
+     line exists to tie the steps to the riders [U].
+  2. `LF.frame` took an x = 0, z = 0 pose of the guest's copy of 25606 as a sample: `step=jump; d_m=1949.5` (the host's
+     truck's distance to the map origin) and a placement [O]. world_snap.lua's readers drop that pose.
+  3. Rest trucks 0.8-3.4 km from both players whose crew still sat on the guest's copy were placed 77-89 times in about
+     20 s (`f256bf29` 25603/25604/25607, `fc141dc1` 25602/25603), 1-2 times in `139a1440` / `ffd0248d` [O]: each was 1-3 m
+     off again many times a second (one `settle` line each, so never 3 m+) while its crew sat (the placements stopped when
+     the crew left), ForceStop having been sent once, at the first frame. The only code difference between `139a1440` and
+     the joint runs is the `drive_vert` default, which acts within 60 m (160 m with reach) of a player, so the moving trucks
+     are this copy's own AI driving against ForceStop at random times [I] (2 of 4 rest trucks per joint run, 0 of 8 in the
+     two lrrp-only runs). The unseat counts (32 / 38 vs 24) follow how long the crews sat: in all four runs every far crew
+     got out at one moment (17.9 / 21.7 / 25.2 / 28.2 s after `step=on`), 1.5-5.4 s after its last command whatever the
+     number of commands [O], so the commands did not set that clock [I].
+  4. `fc141dc1`'s 25605 crew: the host's got out at t=381257255, the host handed both to the guest 3.4 s later
+     (`event=owner; why=near; dh 118-124 m, dq 25-27 m`), the host's copies then took M3 placements, and the copies stood
+     6.3-8.4 m apart 20-40 s after the get-out [O].
+- **Built** (Lua only; red first):
+  - `world_snap.lua` `S.drive`: a guard seated in a vehicle on this copy (`GetVehicleGameObjectId`, the placements'
+    `vehicle_local` read, at most every 250 ms per guard: `S.seatedHere`, kept in world_snap.lua because world_place.lua
+    has 157 bytes left of the 32000-byte chunk limit) is never driven: no xz step and no `drive_vert` snap reaches him.
+    `event=snap_seated;ent;id;on` per change; `seated=` counts the skips in `snap_stats`.
+  - `world_lrrp.lua` `pose()`: an x = 0, z = 0 pose is no sample on the host's stream, the guest's frame and the crew lines.
+  - `world_lrrp.lua` rest pin: a rest truck 1 m+ off again after its placement gets ForceStop again (`step=restop`, at
+    most once a second; logged 5 times, then every 20th); 400 m+ from this player it is put back at most once a second,
+    nearer at once as before; a held truck logs `settle` only when it is placed. `UnsetRelativeVehicle` at most 3 times per
+    guard and rest spell, then `step=unseat_hold` once.
+- **Proposal, not built** (item 4): hold M3 for an LRRP crew member for about 10 s after his get-out on the host (the host's
+  crew lines know the get-out; `P.ownerOf` would keep `want = 0` until then), so the host's copy stays his brain while the
+  guest's follows the host's travel step and the soft follow; the guest takes him once his walk has settled.
+  world_place.lua has 157 bytes left of the chunk limit, so the hold would be a hook from world_lrrp.lua (a `W.crewOutAt` map
+  read by a wrapped `P.ownerOf`).
+- **Seen** (`86d6045f`, no key; docs/STATUS.md 2026-11-05 enemy harden): 25605's riders (ids 1200 / 1201) were seated in
+  the guest's drive band for 15-19 s, 249 skips, native drive steps +7 / +0 in the two 10 s windows of the pass (`f256bf29`
+  +86), 0 vert / sink / relay lines; 0 origin jumps; unseats 24 + 8 holds (the lrrp-only runs' 24); 25602 and 25603 were
+  again driven by their own crews (1-12 m between the once-a-second placements, 17 each; `restop` did not stop them),
+  25604 / 25607 2 / 1. Crews 20-40 s after the get-out p90 2.46 / 2.67 m; get-outs matched. Moving truck p90 1.10 m
+  (25606 1.38 m, the copy ahead along its track) fails the 1 m row; the moving path is unchanged but for the origin check.
+- **Next**: why 25606's copy led by 1-2 m in one 29 s stretch [U]; a far parked truck its own crew drives against
+  ForceStop (a stop that holds, or a get-out that works: none of the commands did, the crews leave together 18-29 s after
+  the start); the M3 crew hold above.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
