@@ -112,9 +112,27 @@ guest5 = guest3 + [
 ]
 q5 = rep.analyse(host2, guest5)['quiet']
 check(q5['why'] == {'moving': 1, 'ok': 1, 'walk': 1} and q5['walk_moves'] == 1 and q5['plans'] == {'cancel_plan': 1} and
-      q5['plans_started'] == 1 and q5['walk_owner_2s'] == {'read': 1, 'within_3m': 1} and
-      q5['walk_owner_10s'] == {'read': 1, 'within_3m': 0},
+      q5['plans_started'] == 1 and q5['walk_owner_2s'] == {'read': 1, 'within_3m': 1, 'walkers': 1} and
+      q5['walk_owner_10s'] == {'read': 1, 'within_3m': 0, 'walkers': 1} and q5['plans_lost'] == 0,
       'round 11: quiet moves of walkers, their re-plans and the owner rows at 2 s and 10 s')
+# Enemy round 11 track A, as the review checked it: a later quiet=ok move of the same guard is not a walker move (the move's
+# own warp line names its kind, not the guard), a cancelled slot whose plan did not start is a lost plan (per guard), and
+# the owner rows count the walkers read.
+guest6 = guest5 + [
+    'world_place=warp; seq=11; kind=3; ent=667680985; go=1061; age_ms=0; r=0; h=1; leaf=quiet; refused=none; quiet=ok',
+    'world_place=quiet; go=1061; seq=11; moved=1; bias=1; err_m=0.00; dy_m=0.00',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=500; ms=500; dy_m=0.00; held=1; far_m=80; dxz_m=0.20; dho_m=0.30; oage_ms=200; t_ms=21500',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=0.30; dho_m=9.00; oage_ms=300; t_ms=23000',
+    'world_place=quiet_plan; go=1062; seq=12; idx=37; mode=1; r19c=0xffff; r19e=0x006e; slot=0xdf31ba77279e; slot_h=0x0002; '
+    'fol=1; step=cancel_plan; started=0; handle=0xffff; p=1.00,2.00,3.00; dest=4.00,2.00,3.00',
+    'world_place=quiet_plan; go=1063; seq=13; idx=37; mode=1; r19c=0xffff; r19e=0x006e; slot=0xdf31ba77279e; slot_h=0x0003; '
+    'fol=1; step=cancel_plan; started=0; handle=0xffff; p=1.00,2.00,3.00; dest=4.00,2.00,3.00',
+]
+q6 = rep.analyse(host2, guest6)['quiet']
+check(q6['walk_moves'] == 1 and q6['walk_owner_2s'] == {'read': 1, 'within_3m': 1, 'walkers': 1} and
+      q6['walk_owner_10s'] == {'read': 1, 'within_3m': 0, 'walkers': 1} and q6['plans_lost'] == 2 and
+      q6['plans_lost_guards'] == 1,
+      'round 11 review: a later quiet=ok move of a walker is not a walker move; lost plans per guard; walkers read')
 # Enemy flip A-vert (user decision D-A10, design 7.27): drive_sink is information only; the gate row is "vert left under":
 # a copy more than 1.5 m under its owner copy for more than 2 s after the owner copy was level in y for 1 s (per guard,
 # with the time), from the native world_drive lines (no t_ms: the last t_ms before each).
