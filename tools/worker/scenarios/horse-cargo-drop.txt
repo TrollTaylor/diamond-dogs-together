@@ -65,6 +65,11 @@ wait 1500
 host hold r 900
 host release
 wait 3500
+# M2j (play 403e46a2 (b): the flank warp during the pickup act 27 ended the carry, no load): 2 s more for the
+# pickup to settle, then the carry act again.
+wait 2000
+host run coop_carry_bodies
+host expect carrybodies;b0=1,a(1|3),ps140000c
 # M2h (play 72e6269a: goto_horse put the carrier on the horse's census root, the carrier fell / landed and E 900 ms
 # gave no step=loading): the load E from the flank (horse_flank: 1.6 m beside the root, facing it).
 host run horse_flank
@@ -124,12 +129,15 @@ both capture h2c-stays2
 guest run cargo_status
 guest expect stance=CRAWL
 logmark both
-guest worldtrigger world=0
+# M2j (lab 3a86c82f (c): with the guest's (the victim's) world off its cargo ended by the context hook, why=context,
+# placed=1 at the host's point within 3 cm, and world_downed reset the guest, reason=restored, so the victim stood up on
+# its own screen; a stream_lost on the victim's copy needs the victim's world on): the carrier's (the host's) world goes
+# off. The host's copy ends by its context (why=context, body 1 laid beside the horse); the victim's copy, its world on,
+# loses the carrier's KEEP stream (why=stream_lost) and lays body 0 down at the same spot, still down.
+host worldtrigger world=0
 wait 6000
-waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=stream_lost; side=carrier;' 10
-# M2i: the victim's own copy lays body 0 down too (its KEEP stream ends: why=stream_lost on the cargo side), beside the
-# horse on both screens, still down.
-waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=stream_lost; side=cargo;' 10
+waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=context; side=carrier; placed=1;' 10
+waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=stream_lost; side=cargo; placed=1;' 10
 host run cargo_status
 host expect cargo;state=off
 guest run cargo_status

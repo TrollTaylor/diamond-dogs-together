@@ -7376,6 +7376,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.horse_seat_holds = lab.world_horse_pillion && lab.world_horse_share;
     // M2h: the recon leaves body 1 to the horse cargo's hold with world_horse_cargo (off unless named, its gate not passed).
     d.settings.horse_cargo = lab.world_horse_cargo && lab.world_horse_share;
+    // Step S3: the motion-record log with world_horse_down_off (off unless named; fixland4: nothing new at the defaults).
+    d.settings.horse_down_off = lab.world_horse_down_off && lab.world_horse_share;
     // G5 (docs/native-puppet.md "Ride hides"): lab only, default off (lab_config forces it off in play).
     d.settings.unrealize_all = lab.partner_native_unrealize_all;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
@@ -8131,8 +8133,17 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=%s; mount=horse; act=%u; valid=%u; kind=%u; live=%u; fresh=%u; "
                        "reason=shared_horse\r\n", m.visibility.horse ? "show" : "show_end", unsigned(visibility_sample.act),
                        visibility_sample.anim_valid ? 1u : 0u, unsigned(vi.kind), vi.ride_live ? 1u : 0u, vi.horse_shown ? 1u : 0u);
-        // The rider's body anchors the next horse placement (the saddle under body 1 on this screen).
-        if (m.visibility.horse && body_read && pp::Realized(st, partner::partner_index) && st.parts[1] == c::parts_loaded_state) {
+        // The rider's body anchors the next horse placement (the saddle under body 1 on this screen); with
+        // world_horse_cargo not during the get-off act 122 (M2j: horse_drive::AnchorNote), one line at each edge.
+        const bool anchor_note =
+            horse_drive::AnchorNote(set.horse_cargo, visibility_sample.anim_valid, visibility_sample.act);
+        if (m.visibility.horse && !anchor_note != m.anchor_hold) {
+            m.anchor_hold = !anchor_note;
+            EmitCapped(m.mount_cap, h, "partner_mount", "horse_drive=anchor_hold; on=%u; act=%u\r\n", m.anchor_hold ? 1u : 0u,
+                       unsigned(visibility_sample.act));
+        }
+        if (anchor_note && m.visibility.horse && body_read && pp::Realized(st, partner::partner_index) &&
+            st.parts[1] == c::parts_loaded_state) {
             const float rider[3] = {body_pos[0], body_pos[1], body_pos[2]};
             horse_drive::NoteRiderBody(rider, now);
         }
@@ -8561,6 +8572,37 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                        unsigned(dm.q18[1]), int(dm.ps2d8[1]), unsigned(dm.rec10), unsigned(dm.rec11),
                        static_cast<unsigned long long>(dm.rec18), unsigned(dm.rec1a0), unsigned(dm.rec248), m.pillion_grace_n,
                        m.pillion_pose ? 1u : 0u);
+        }
+        // Step S3 (logs only, with world_horse_down_off): the motion records ReadAnim hashes for instance 0 - body 1's
+        // part of *(Q+0x1D8) (+0x40, coop_carry's request stride) and the first 0x40 bytes of *(Q+0x1E0) / *(Q+0x1F8)
+        // (instance 0's part unless their stride is under 0x40: not known to be body 1's) - as raw hex whenever their
+        // hash changed, at most 120 lines a process.
+        if (horse_drive::MotionLog(set.horse_down_off, m.pillion_err_n)) {
+            static std::uint32_t mg_last = 0;
+            static unsigned mg_lines = 0;
+            unsigned char d8[0x80]{}, e0[0x40]{}, f8[0x40]{};
+            if (pp::ReadMotionRaw(st, d8, e0, f8)) {
+                const std::uint32_t h1 = pp::MotionHash(d8 + 0x40, 0x40), h2 = pp::MotionHash(e0, sizeof(e0)),
+                                    h3 = pp::MotionHash(f8, sizeof(f8));
+                const std::uint32_t all = h1 ^ (h2 * 31u) ^ (h3 * 131u);
+                if (all != mg_last && mg_lines < 120) {
+                    mg_last = all;
+                    ++mg_lines;
+                    char hex[3][0x81]{};
+                    const auto put = [](char* out, const unsigned char* b, std::size_t n) noexcept {
+                        static const char digits[] = "0123456789abcdef";
+                        for (std::size_t i = 0; i < n; ++i) {
+                            out[2 * i] = digits[b[i] >> 4];
+                            out[2 * i + 1] = digits[b[i] & 15u];
+                        }
+                    };
+                    put(hex[0], d8 + 0x40, 0x40);
+                    put(hex[1], e0, sizeof(e0));
+                    put(hex[2], f8, sizeof(f8));
+                    EmitFormat(h, "partner_pillion=mg; n=%u; h=%08x,%08x,%08x; d8_1=%s; e0=%s; f8=%s\r\n", mg_lines, h1, h2, h3, hex[0],
+                               hex[1], hex[2]);
+                }
+            }
         }
         m.pillion_stats_ms = now;
         m.pillion_xz_max = m.pillion_dy_max = 0.f;

@@ -1,0 +1,174 @@
+# M2j: the link drop (c) alone in a lab session, from the boot (labs 01d9924e and 00c966c1 ran it third, after (a) and (b):
+# the load E and then the pickup did not take, so the link drop was never reached; 3a86c82f, third too, loaded): the boot
+# and the first E of horse-cargo.txt, then the body of horse-cargo-drop.txt (the carrier's world goes off).
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting world_horse_cargo=1
+boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
+logmark both
+both debug godmode 1
+host debug clear_enemies 100
+host run horse_spawn
+guest run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run cargo_status
+host require cargo;state=off;key=1
+guest run cargo_status
+guest require cargo;state=off;key=1
+host run goto_horse
+wait 1500
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+host hold w 1200
+host release
+wait 1500
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+waitlog guest 'world_lua=event=horse_share; step=final; placed=1;' 8
+logmark both
+both debug godmode 1
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run cargo_status
+host require cargo;state=off;key=1
+guest run cargo_status
+guest require cargo;state=off;key=1
+# M2i (rides of 37-44 m in (a) in 990d2530 / 107977cb / 2a41c416: the horse stopped at rock walls; the recall left the
+# horse elsewhere in 3 of 6 (b) runs): both players at the boot spot facing -60 on open ground and each copy's horse 4 m
+# right of its player (horse_here, step S2: (b) rode 129-140 m from here in four runs).
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 -60
+wait 4000
+guest run horse_here
+guest require horse_here;ok
+host run horse_here
+host require horse_here;ok
+waitlog guest 'world_lua=event=horse_share; step=here; placed=1; reason=ok;' 5
+waitlog host 'world_lua=event=horse_share; step=here; placed=1; reason=ok;' 5
+wait 3000
+logmark both
+# --- (c) loaded again from the boot spot.
+host run goto_horse
+wait 1000
+placebehind guest host 8 2
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest -4 -0.7
+wait 3000
+guest debug godmode 0
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 1200
+guest run downed_status
+guest require down=1.*cause=1.*lock=1
+guest debug godmode 1
+# M2j (lab 00c966c1 (c): the R after goto_carry started no pickup, no coop_carry=search line): 1 s more first.
+host debug goto_carry
+wait 2500
+host hold r 900
+host release
+wait 3500
+# M2j (play 403e46a2 (b): the flank warp during the pickup act 27 ended the carry, no load): 2 s more for the
+# pickup to settle, then the carry act again.
+wait 2000
+host run coop_carry_bodies
+host expect carrybodies;b0=1,a(1|3),ps140000c
+# M2h (play 72e6269a: goto_horse put the carrier on the horse's census root, the carrier fell / landed and E 900 ms
+# gave no step=loading): the load E from the flank (horse_flank: 1.6 m beside the root, facing it).
+host run horse_flank
+wait 1200
+host hold e 900
+host release
+wait 3000
+host run cargo_status
+host require cargo;state=carrier
+guest run cargo_status
+guest require cargo;state=cargo
+# M2g attempt 3 (39fff762: the victim's own frames showed the horse only at the load): the victim's camera looks down a
+# little so their frames show the horse under the body.
+# M2h (a53a243a / 39fff762: the victim's frames showed the horse at the load only; c62e2ce6 with mouse 400 300 looked
+# straight down on the body; 990d2530 with 600 -200 level with it, the horse below the frame): turned, a little down.
+guest mouse 600 150
+wait 400
+both capture h2c-loaded
+guest run cargo_status
+guest expect cargo;state=cargo;.*relie=1
+# M2g attempt 3 (play 624148f9: the carrier stood at the horse's head and this E did not mount): to its flank first.
+host run horse_flank
+wait 1500
+logmark both
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+host hold w 1500 nowait
+wait 300
+guest capture h2p-walk
+host capture h2p-walk-carrier
+wait 600
+host hold w+a 1500 nowait
+wait 300
+guest capture h2p-trot
+host capture h2p-trot-carrier
+wait 600
+host release
+wait 2500
+both capture h2p-stopped
+# M2g: the dismount with cargo_relie 1 from the start (M2f ran it with the lever at 0 first): the victim stays lying.
+logmark both
+host press e 150
+wait 3000
+host run horse_status
+host expect localMounted=0
+host run cargo_status
+host expect cargo;state=carrier
+wait 1000
+both capture h2c-stays
+guest run cargo_status
+guest expect cargo;state=cargo;.*stance=CRAWL
+wait 2500
+both capture h2c-stays2
+guest run cargo_status
+guest expect stance=CRAWL
+logmark both
+# M2j (lab 3a86c82f (c): with the guest's (the victim's) world off its cargo ended by the context hook, why=context,
+# placed=1 at the host's point within 3 cm, and world_downed reset the guest, reason=restored, so the victim stood up on
+# its own screen; a stream_lost on the victim's copy needs the victim's world on): the carrier's (the host's) world goes
+# off. The host's copy ends by its context (why=context, body 1 laid beside the horse); the victim's copy, its world on,
+# loses the carrier's KEEP stream (why=stream_lost) and lays body 0 down at the same spot, still down.
+host worldtrigger world=0
+wait 6000
+waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=context; side=carrier; placed=1;' 10
+waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=stream_lost; side=cargo; placed=1;' 10
+host run cargo_status
+host expect cargo;state=off
+guest run cargo_status
+guest expect cargo;state=off
+guest run downed_status
+guest expect down=1
+host run position
+guest run position
+both capture h2c-dropped
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+both capture h2c-dropped-side
+logmark both

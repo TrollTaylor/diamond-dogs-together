@@ -84,6 +84,9 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
             !number(-1000000000, 1000000000, v[3]) || !number(-1000000000, 1000000000, v[4]) || !number(-31416, 31416, v[5]))
             return false;
+    } else if (word("rrec") || word("getoff")) {
+        r.verb = p[-1] == 'c' ? Verb::rrec : Verb::getoff;
+        if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;
     } else if (word("place")) {
         r.verb = Verb::place;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||

@@ -67,6 +67,11 @@ guest release
 wait 3500
 guest run coop_carry_bodies
 guest expect carrybodies;b0=1,a(1|3|27),ps140000c.*b1=1,a2[abc]
+# M2j (play 403e46a2 (b): the flank warp during the pickup act 27 ended the carry, no load): 2 s more for the
+# pickup to settle, then the carry act again.
+wait 2000
+guest run coop_carry_bodies
+guest expect carrybodies;b0=1,a(1|3),ps140000c
 # M2h (play 72e6269a: goto_horse put the carrier on the horse's census root, the carrier fell / landed and E 900 ms
 # gave no step=loading): the load E from the flank (horse_flank: 1.6 m beside the root, facing it).
 guest run horse_flank
@@ -100,6 +105,9 @@ guest require localMounted=1
 waitlog host 'world_lua=event=horse_share; step=placed;' 10
 # M2i: the route of step S2's (b) (walk, a left trot, straight gallops, a left gallop; 129-140 m there), no right
 # turn into the rocks.
+# M2j (3a86c82f: the victim's walk frame showed the body only, no horse): the victim's camera a little further down.
+host mouse 0 70
+wait 300
 guest hold w 1500 nowait
 wait 300
 guest capture h2b-ride-walk
@@ -137,6 +145,8 @@ guest run horse_status
 guest require localMounted=0
 guest run cargo_status
 guest require cargo;state=carrier
+# M2j (play 7c1de731 (a): the carrier's stays frames cut off the horse's back): the carrier's camera a little up.
+guest mouse 0 -80
 wait 1000
 both capture h2b-stays
 host run cargo_status
@@ -170,6 +180,11 @@ guest expect horse_here;ok
 wait 1000
 guest debug goto_carry
 wait 1500
+# M2j (lab 01d9924e (a): the 5.5 s E ended about 1 s after a reset hold resumed): E about 7.5 s.
+guest hold e 1500 nowait
+wait 1000
+guest hold e 1500 nowait
+wait 1000
 guest hold e 1500 nowait
 wait 1000
 guest hold e 1500 nowait

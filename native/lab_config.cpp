@@ -335,6 +335,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.world_horse_shot);
         if (ok) result.world_horse_shot_given = true;
     }
+    // Step S3, a rider downed while riding the shared horse gets off (lab and play, off unless named).
+    else if (Equals(key, "world_horse_down_off")) {
+        ok = ParseBool(value, result.world_horse_down_off);
+        if (ok) result.world_horse_down_off_given = true;
+    }
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
         if (ok) result.companion_host_owned_given = true;
@@ -2010,6 +2015,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // in lab and play (the M4 gate was not reached: no rear-seat shot put a guard down, and the driver's screen shows no
     // raised gun); a named 1 runs in play too.
     if (!c.world_horse_shot_given) c.world_horse_shot = false;
+    // Step S3, the downed rider's get-off (docs/mounts.md section 19): off unless named in lab and play until its gate
+    // (a rider downed while riding ends on the ground beside the horse on both screens, both orders) passes.
+    if (!c.world_horse_down_off_given) c.world_horse_down_off = false;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;

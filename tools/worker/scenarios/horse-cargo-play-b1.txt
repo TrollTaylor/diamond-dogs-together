@@ -1,0 +1,241 @@
+# M2j: part 1 of 2 of the play session, order (b) FIRST (play 2a41c416 / 49a1c525 / 7c1de731: after a teammate revive
+# of the guest in (a), the guest's hits on body 1 did 0 native damage (downed_damage damage=0.0; lab 942.0), so (b) never
+# downed the host; c62e2ce6, with no revive in (a), 942): the boot and the first E of horse-cargo-play.txt, then the (b)
+# body of horse-cargo-play-b.txt; horse-cargo-play-a2.txt follows. The cause of the 0 damage is not known.
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting world_horse_cargo=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 119
+wait 5000
+logmark both
+both debug godmode 1
+host debug clear_enemies 100
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run cargo_status
+host require cargo;state=off;key=1
+guest run cargo_status
+guest require cargo;state=off;key=1
+host run goto_horse
+wait 1500
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+host hold w 1200
+host release
+wait 1500
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+waitlog guest 'world_lua=event=horse_share; step=final; placed=1;' 8
+logmark both
+both debug godmode 1
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run cargo_status
+host require cargo;state=off;key=1
+guest run cargo_status
+guest require cargo;state=off;key=1
+# M2h (39fff762 (b): where (a) ended, by a rock wall, the stock pickup never shouldered the downed host; 5.5 s did not
+# bring a horse 200 m away): both to the boot spot on open ground, the guest's horse called first, 12 s to arrive; the
+# guest's horse must stand within about 25 m of the boot spot.
+# M2i (rides of 37-44 m in (a) in 990d2530 / 107977cb / 2a41c416: the horse stopped at rock walls; the recall left the
+# horse elsewhere in 3 of 6 (b) runs): both players at the boot spot facing -60 on open ground and each copy's horse 4 m
+# right of its player (horse_here, step S2: (b) rode 129-140 m from here in four runs).
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 -60
+wait 4000
+guest run horse_here
+guest require horse_here;ok
+host run horse_here
+host require horse_here;ok
+waitlog guest 'world_lua=event=horse_share; step=here; placed=1; reason=ok;' 5
+waitlog host 'world_lua=event=horse_share; step=here; placed=1; reason=ok;' 5
+wait 3000
+logmark both
+# --- (b) roles swapped: the guest's rifle downs the host, the guest carries them to the horse (the host grants).
+guest run goto_horse
+wait 1000
+placebehind host guest 8 2
+wait 2000
+stance host stand
+stance guest stand
+placebehind guest host -4 -0.7
+wait 3000
+host debug godmode 0
+guest press 1 120
+wait 2000
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 1200
+host run downed_status
+host require down=1.*cause=1.*lock=1
+host debug godmode 1
+guest debug goto_carry
+wait 1500
+guest hold r 900
+guest release
+wait 3500
+guest run coop_carry_bodies
+guest expect carrybodies;b0=1,a(1|3|27),ps140000c.*b1=1,a2[abc]
+# M2j (play 403e46a2 (b): the flank warp during the pickup act 27 ended the carry, no load): 2 s more for the
+# pickup to settle, then the carry act again.
+wait 2000
+guest run coop_carry_bodies
+guest expect carrybodies;b0=1,a(1|3),ps140000c
+# M2h (play 72e6269a: goto_horse put the carrier on the horse's census root, the carrier fell / landed and E 900 ms
+# gave no step=loading): the load E from the flank (horse_flank: 1.6 m beside the root, facing it).
+guest run horse_flank
+wait 1200
+guest hold e 900
+guest release
+wait 3000
+waitlog host 'world_lua=event=horse_cargo; step=grant; seat=2;' 6
+waitlog guest 'world_lua=event=horse_cargo; step=loaded; seat=2;' 6
+waitlog host 'world_lua=event=horse_cargo; step=cargo; seat=2;' 6
+guest run cargo_status
+guest require cargo;state=carrier
+host run cargo_status
+host require cargo;state=cargo
+wait 1500
+# M2g attempt 3 (39fff762: the victim's own frames showed the horse only at the load): the victim's camera looks down a
+# little so their frames show the horse under the body.
+# M2h (a53a243a / 39fff762: the victim's frames showed the horse at the load only; c62e2ce6 with mouse 400 300 looked
+# straight down on the body; 990d2530 with 600 -200 level with it, the horse below the frame): turned, a little down.
+host mouse 600 150
+wait 400
+both capture h2b-loaded
+# M2g attempt 3 (play 624148f9: the carrier stood at the horse's head and this E did not mount): to its flank first.
+guest run horse_flank
+wait 1500
+logmark both
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+# M2i: the route of step S2's (b) (walk, a left trot, straight gallops, a left gallop; 129-140 m there), no right
+# turn into the rocks.
+# M2j (3a86c82f: the victim's walk frame showed the body only, no horse): the victim's camera a little further down.
+host mouse 0 70
+wait 300
+guest hold w 1500 nowait
+wait 300
+guest capture h2b-ride-walk
+host capture h2b-ride-walk-victim
+wait 600
+guest hold w+a 1500 nowait
+wait 300
+guest capture h2b-ride-trot
+host capture h2b-ride-trot-victim
+wait 600
+guest hold w+shift 1500 nowait
+wait 300
+guest capture h2b-ride-gallop
+host capture h2b-ride-gallop-victim
+wait 600
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift 1500 nowait
+wait 300
+guest capture h2b-ride-gallop4
+host capture h2b-ride-gallop4-victim
+wait 600
+guest hold w+shift+a 1500
+guest hold w+shift+a 1500
+guest release
+wait 2500
+both capture h2b-ride-stopped
+host run downed_status
+host require down=1
+# The dismount keeps them on (lying, M2f).
+logmark both
+guest press e 150
+wait 3000
+guest run horse_status
+guest require localMounted=0
+guest run cargo_status
+guest require cargo;state=carrier
+# M2j (play 7c1de731 (a): the carrier's stays frames cut off the horse's back): the carrier's camera a little up.
+guest mouse 0 -80
+wait 1000
+both capture h2b-stays
+host run cargo_status
+host expect cargo;state=cargo;.*stance=CRAWL
+wait 2500
+both capture h2b-stays2
+host run cargo_status
+host expect stance=CRAWL
+# Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
+guest debug goto_carry
+wait 1500
+logmark both
+guest hold r 400
+guest release
+wait 2500
+waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=carrier; placed=1;' 5
+waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=cargo; placed=1;' 5
+host run cargo_status
+host require cargo;state=off
+guest run cargo_status
+guest require cargo;state=off
+host run position
+guest run position
+both capture h2b-unloaded
+host run downed_status
+host require down=1
+# M2i (lab 107977cb: E held 3.4 s in all for the 3 s revive and one status 517 ms late reset it; world_downed now drains
+# a late spell): this copy's horse 4 m away first (no mount on E right after the revive), then E held about 5.5 s.
+guest run horse_here
+guest expect horse_here;ok
+wait 1000
+guest debug goto_carry
+wait 1500
+# M2j (lab 01d9924e (a): the 5.5 s E ended about 1 s after a reset hold resumed): E about 7.5 s.
+guest hold e 1500 nowait
+wait 1000
+guest hold e 1500 nowait
+wait 1000
+guest hold e 1500 nowait
+wait 1000
+guest hold e 1500 nowait
+wait 1000
+guest hold e 1500 nowait
+wait 1000
+guest hold e 1500 nowait
+wait 1000
+guest hold e 1500 nowait
+wait 1500
+guest release
+wait 2500
+host run downed_status
+host require down=0
+both capture h2b-revived
+guest run horse_status
+guest expect localMounted=0

@@ -740,6 +740,9 @@ struct Settings {
     // on this copy (coop_carry's cargo hold, not a stock carried body 1) the reconciliation leaves it alone (pr::In
     // body_owned: no placement or correction, a neutral armed window): run a53a243a's 32 place lines beside hold1.
     bool horse_cargo;
+    // Step S3 (lab.ini world_horse_down_off with world_horse_share, off unless named): the motion-record log
+    // partner_pillion=mg (horse_drive::MotionLog); the Lua rrec poll and getoff follow the same key.
+    bool horse_down_off;
     bool ui_filter;   // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
     // a ride logs partner_ride=net_rebased (partner_native_unrealize_all, "Ride hides").
@@ -766,6 +769,7 @@ struct Mission {
     // partner_native_mount=hide: the act-rule episode (partner_mount=hide|end lines, capped).
     partner_mount_policy::Episode mount;
     LogCap mount_cap;
+    bool anchor_hold; // M2j: the rider body anchors no horse place (act 122 with world_horse_cargo; horse_drive=anchor_hold)
     // partner_native_unrealize_all (G5): the other ride hides' episode (heli, vehicle, horse kind 3;
     // partner_ride=unrealize|unrealize_end lines) and the partner_ride=net_rebased line of the
     // link-quality rebase after a ride (net_quality_rebase, below), on their own cap.

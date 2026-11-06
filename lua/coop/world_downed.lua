@@ -496,7 +496,17 @@ function D.tick(now)
   if D.sleepClock then D.sleepClock.Bind() end
   if not clockTime(now) then pauseSleepClock("clock_invalid"); resetHold(); publishHud(); return end
   if D.lastNow and (now < D.lastNow or now - D.lastNow > FRESH) then
-    pauseSleepClock(now < D.lastNow and "clock_reverse" or "loop_gap"); resetHold()
+    local why=now < D.lastNow and "clock_reverse" or "loop_gap"
+    pauseSleepClock(why)
+    -- M2j (lab 01d9924e (a): a held revive zeroed with no late line, the victim's record 534 ms old after it): a host
+    -- loop gap is no release by the player; with world_horse_cargo it drains the hold as a late status does (and logs
+    -- the reset or drain; fixland4: at the defaults no line, the reset exactly as before).
+    local keyed=lateDrain()
+    local drain=why == "loop_gap" and keyed
+    if keyed and D.holdAt and D.progress > 0 then
+      log(fmt("step=revive_reset;why=%s;progress=%d;gap_ms=%.0f;drain=%d", why, D.progress, now - D.lastNow, drain and 1 or 0))
+    end
+    if drain then D.lateAt=now; releaseHold(now) else resetHold() end
   end
   D.lastNow=now
   if not W.inGame() then partnerSleepClear(); pauseSleepClock("game_paused"); resetHold(); publishHud(); return end

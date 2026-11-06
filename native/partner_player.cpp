@@ -395,6 +395,25 @@ bool ReadAnim(const State& s, Anim& out) noexcept {
     return true;
 }
 
+bool ReadMotionRaw(const State& s, unsigned char (&d8)[0x80], unsigned char (&e0)[0x40], unsigned char (&f8)[0x40]) noexcept {
+    const Preserve preserve;
+    std::memset(d8, 0, sizeof(d8));
+    std::memset(e0, 0, sizeof(e0));
+    std::memset(f8, 0, sizeof(f8));
+    if (!s.Q) return false;
+    std::uintptr_t r1d8 = 0, r1e0 = 0, r1f8 = 0;
+    if (!ReadValue(s.Q + c::q_rec_1d8, r1d8) || !ReadValue(s.Q + c::q_rec_1e0, r1e0) || !ReadValue(s.Q + c::q_rec_1f8, r1f8) ||
+        !ReadBlock(r1d8, d8, sizeof(d8)) || !ReadBlock(r1e0, e0, sizeof(e0)) || !ReadBlock(r1f8, f8, sizeof(f8))) {
+        std::memset(d8, 0, sizeof(d8));
+        std::memset(e0, 0, sizeof(e0));
+        std::memset(f8, 0, sizeof(f8));
+        return false;
+    }
+    return true;
+}
+
+std::uint32_t MotionHash(const unsigned char* bytes, std::size_t size) noexcept { return Fnv1a(bytes, size); }
+
 bool ReadUpper(const State& s, std::uint8_t (&out)[2]) noexcept {
     const Preserve preserve;
     out[0] = out[1] = 0;

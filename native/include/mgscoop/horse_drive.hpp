@@ -38,6 +38,11 @@
 //   pbox <mission> <epoch> <x> <y> <z> <yaw>    -> {ready=true,box=true} | refusal  (M4, world_horse_shot: this copy's player
 //     sits behind the partner; the placed census root and yaw of this copy's horse, leased kBoxMs to the seated-shot hook
 //     (partner_seat_shot Class::horse): the player's own bullets start past the horse and the driver in front of them.)
+//   rrec <mission> <epoch>                      -> {ready=true,st0,st1}  (step S3: the RideHorse action's ride records of
+//     bodies 0 and 1 (native/include/mgscoop/horse_ride.hpp), logged change-only as horse_drive=ride_rec; reads only.)
+//   getoff <mission> <epoch>                    -> {ready=true,getoff=1,st} | refusal  (step S3, lab key
+//     world_horse_down_off: this copy's player rides the shared horse and is downed (Lua checks): the stock get-off's
+//     writes on body 0's ride record, next state 3; the downed cycle's ACTION mask hides the player's own E.)
 // mm / mrad. anchor 1: when the partner driver shows body 1 as a horse rider (partner_mount_policy) and its body
 // sample is fresh, the horse goes under that body (HorseUnderRider), the yaw from the stream: the rider sits in the
 // saddle on this screen whatever the two streams' delays are.
@@ -60,8 +65,18 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 // An anchored target is used only within kAnchorMaxM of the stream's (a stale or unrealized body never drags the horse).
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
+// M2j (lab 2a41c416 guest: body 0 2.03 m under its target just after the carrier got off; act 122, the get-off, holds a
+// shown ride, so each anchored place put the horse under the body getting off): with world_horse_cargo
+// (Settings.horse_cargo) the rider body anchors nothing during a valid act 122 and the stream pose places the horse.
+inline constexpr std::uint16_t kGetOffAct = 122;
+constexpr bool AnchorNote(bool cargo, bool act_valid, std::uint16_t act) noexcept {
+    return !(cargo && act_valid && act == kGetOffAct);
+}
+// Step S3's motion-record log (partner_pillion=mg, logs only) in a 1 s window with seat-error samples, only with
+// world_horse_down_off (Settings.horse_down_off; fixland4: nothing new at the defaults).
+constexpr bool MotionLog(bool down_off, unsigned err_n) noexcept { return down_off && err_n != 0; }
 
-enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox };
+enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox, rrec, getoff };
 struct Request {
     Verb verb{};
     std::uint32_t mission{}, epoch{};
