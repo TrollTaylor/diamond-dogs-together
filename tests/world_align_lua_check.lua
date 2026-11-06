@@ -2147,6 +2147,19 @@ if arg[7] and arg[8] then
         pl.W.cp[100].localPhase = 1
         ticks(pl, 40)
         check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever pl=1: a puppet again in caution')
+        -- Round 12 C (D-FM1 (a); runs 516e3ef7 / 4735fee5: LRRP crew 176 / 177, their own CP calm, fought in CP 557's ALERT
+        -- and the guest took them at 97-117 m): with the calm limit any CP at EVASION / ALERT on this PC ends the mirror.
+        local limits = logCount(pl, 'event=mirror;ent=3000000001;on=0;why=phase_limit')
+        pl.W.cp[100].localPhase = 0
+        pl.W.cp[200].localPhase = 3
+        ticks(pl, 20)
+        check(logCount(pl, 'event=mirror;ent=3000000001;on=0;why=phase_limit') == limits + 1 and pl.W.mirror.pp[3000000001] == nil,
+            'phase lever pl=1: released while another CP is in ALERT (D-FM1 (a))')
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] == nil, 'phase lever pl=1: none taken while another CP is in ALERT')
+        pl.W.cp[200].localPhase = 0
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever pl=1: a puppet again once every CP is below EVASION')
     end)()
     -- FM1 round 6 (2): riders (GetVehicleGameObjectId) are skipped by the far rule (run adecad01: two LRRP riders of another
     -- CP were puppeted at 297 m and released apart 283-285 m off); a puppet who mounts is released (why=vehicle).
