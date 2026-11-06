@@ -135,6 +135,13 @@ enum class QuietPlan : std::uint8_t { none, busy, plan, cancel_then_plan };
 QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
                           std::uint16_t slot_handle, bool slot_read) noexcept;
 const char* QuietPlanName(QuietPlan step) noexcept;
+// Enemy round 12 track A (design 7.31): which place warps ask for the quiet move (QuietCheck then decides). off_screen:
+// the guest's Lua said the guard is off its player's screen; host: the host's M3 placement (WORLD_WARP_HOST_V1);
+// correction: grant kind 3; go: the GameObjectId (type 2 = soldier).
+bool QuietAsk(bool quiet_place, bool off_screen, bool host, bool correction, std::uint32_t go) noexcept;
+// Whether the request manager hook (and its rest views) runs the quiet moves on this role: lab key, soldier_follow, and
+// for a host soldier_owner (M3).
+bool QuietHook(bool quiet_place, bool soldier_follow, bool soldier_owner, bool host) noexcept;
 // Whether idx is among the first count entries of the realized list.
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept;
 #ifdef _WIN32

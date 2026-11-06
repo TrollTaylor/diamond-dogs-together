@@ -399,6 +399,15 @@ const char* QuietPlanName(QuietPlan step) noexcept {
     return "?";
 }
 
+bool QuietAsk(bool quiet_place, bool off_screen, bool host, bool correction, std::uint32_t go) noexcept {
+    return quiet_place && off_screen && !host && correction && (go >> 9) == 2u;
+}
+
+bool QuietHook(bool quiet_place, bool soldier_follow, bool soldier_owner, bool host) noexcept {
+    (void)soldier_owner;
+    return quiet_place && soldier_follow && !host;
+}
+
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept {
     if (!list) return false;
     for (std::uint32_t k = 0; k < count; ++k)
