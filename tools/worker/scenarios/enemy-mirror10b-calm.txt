@@ -7,6 +7,10 @@
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo <built worktree> -Owner <track>
 #     -ScenarioPath tools/worker/scenarios/enemy-mirror10b-calm.txt -Mode play -WanSim bad -PartnerProfile native
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge [-LabSetting soldier_act=1,act_plan=1] -TimeoutSec 600 -Wait
+# Round 12 (design 7.33): a notice tail after the caution part: the host's CP set back to SNEAK (calm) for 20 s, the host at
+# its logged ground point (421.16, 269.2, 2084.42; 58 m from walker 15 in 689e654c, no notice in 8 s) closes on walker 15
+# in short steps (aim_ent, hold w 600 ms, then 2.5 s still): the host's first phase rise after the sneak gives one calm
+# first-notice distance (host census d of the guards) to set against the 80 m calm R (it must be >= 1.5 x the distance).
 labsetting act_census=1
 labsetting nametag=1
 titlemenu host 240
@@ -258,5 +262,87 @@ both capture c-1-b
 wait 3500
 host run act_status
 guest run act_status
+host run world_status
+guest run world_status
+logmark both
+host run cp_phase nearest sneak
+host expect ^submitted_phase;cp=[^;]+;phase=sneak;
+wait 20000
+host run teleport 421.16 269.2 2084.42 0
+wait 4000
+host run position
+host run act_status
+logmark both
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 600
+wait 2500
+host run position
+logmark both
 host run world_status
 guest run world_status
