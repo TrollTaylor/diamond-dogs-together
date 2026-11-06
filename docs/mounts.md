@@ -1289,8 +1289,23 @@ Round `wp/horse` step S3 (markers [O] / [I] / [U]; slim archives with the full s
     `goto_horse` did not mount in either run (`host require localMounted=1`), as in S2's `41ae2b4c` part 3 (cause [U];
     both are horse_here horses with a guard coming). So `getoff` never ran live; `world_horse_down_off` stays off unless
     named.
+- **Attempt 2** (lab `e3f8297d`, same code `4f55fe8d`, scenarios `horse-s3-b-called.txt` / `horse-s3-a-called.txt`: horses
+  called by `horse_spawn` only, no `horse_here`, no teleport; world_horse_down_off named for the session): order (b)
+  with a called horse - the first (b) with one in these tests - shows body 1 SEATED behind the driver at idle on the
+  driver's screen (`guest-h3b-idle-side-guest`) and STANDING on the horse's back after the gallops, when the horse had run
+  into a tree (`guest-h3b-gallop2-guest-02` the horse rearing at the trunk, `-gallopfree-guest-01` / `-03`,
+  `guest-h3b-stopped-side-guest`; contact sheet `sheets/s3-a2-b-guest.jpg`) [O frames looked at]. The stats windows of
+  that seat read the same fields seated and standing (`act=139; st=1; ov=playing; dm=1; rec18=0xf241f3bcf60b;
+  rec248=0x02; pose=1`), with two windows of 5.6 / 5.7 m seat error at n = 25 / 12 ticks during the gallops (guest part 1
+  lines 2254 / 2365) and `grace=1` in three windows; body 1's ride record stayed `st=0` [O logs]. That the standing starts
+  at such a spike (body 1 moved metres for a tick while the horse rears) is a candidate [I]. The first E at the called
+  horse mounted; the hop-off and the driver's E got both off (`driver_e_off` 3036 ms). (c1) did not down the driver:
+  `guest debug godmode 0` did not take while the guest rode (`status ... god=1`), and the guard was 321 m away
+  (`clear_enemies 100` at the start: `mode=route; why=far`), so `getoff` never ran. Part 2 stopped at the host's first E
+  (`host require localMounted=1`) on the horse where part 1 left it, by the trees [O].
 - **Gate not passed:** the rear rider stands on the driver's screen from the seating with a horse_here horse in both
-  orders, and nothing logged changes with it yet; the downed rider was not reproduced (three attempts over S2 and S3).
+  orders and, with a called horse, from the moment the horse runs into a tree or a rock; nothing logged changes with it
+  yet; the downed rider was not reproduced (four attempts over S2 and S3).
 - **Next:** start both orders with a horse the players called (the stock recall; for (b) after (a) move the players, not
   the horse: M1's final keeps the horse where (a) left it), so body 1 sits at idle, then a rock push: a seated and a
   standing window in one seat. Diff body 1's motion state there from a source other than the Q records (the motion
@@ -1298,8 +1313,11 @@ Round `wp/horse` step S3 (markers [O] / [I] / [U]; slim archives with the full s
   (the overlay's stop + re-entry after a `step=stall`) instead of `overlay_stop`, which is refused while mounted. For the
   horse_here horse, compare what `place` leaves different from a recalled horse (census record, its CS slot) with
   `horse_drive=ride_rec` of body 0. The downed rider: mount first (a recalled horse, away from the guard), then
-  `spawn_enemy here come` from the saddle is refused (debug commands while mounted), so let the passenger (on foot
-  until seated) or a third command make the guard hostile; then `getoff` live with world_horse_down_off named.
+  `spawn_enemy here come` from the saddle is refused (debug commands while mounted), so let the player on foot make the
+  guard hostile with no `clear_enemies` before it, and turn the rider's godmode off BEFORE the rider mounts (attempt 2:
+  `debug godmode 0` did not take while riding); then `getoff` live with world_horse_down_off named. For the standing:
+  log body 1's position each tick around the 5-6 m seat-error windows and the overlay's DM state then, and try the DM
+  replay after such a window.
 
 ## Risks
 

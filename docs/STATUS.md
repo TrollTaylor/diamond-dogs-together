@@ -2,7 +2,8 @@
 
 **Players get:** nothing new and no default changed. What changed is what we know: the rear rider standing on the
 horse's back from the moment they sit down was seen only in tests where a lab command (`horse_here`) had placed the
-horse; with a horse that was called the usual way the rear rider sits until the horse is pushed into a rock wall [I].
+horse; with a horse that was called the usual way the rear rider sat until the horse ran into a tree (seen once, lab `e3f8297d`)
+or a rock (S2).
 The README's limit now says that. A fix for a rider downed while riding (they get off as with E) is in, but off unless
 named (`world_horse_down_off`) and never seen working: the test never got the rider downed on the horse.
 docs/mounts.md section 19.
@@ -26,6 +27,11 @@ docs/mounts.md section 19.
   tried. Every first E at an unridden horse mounted; the driver's E after the hop-off got the driver off in (b) lab /
   play and (a) play. Part 3: the guard was warped 5.2 / 5.1 m from the host (no cliff), but the host's E at the
   horse_here horse did not mount in either run, so no rider was downed on the horse (cause [U]).
+- **Attempt 2** (lab `e3f8297d`, called horses only): (b) with a called horse sat at idle on the driver's screen and
+  stood after the horse ran into a tree (`guest-h3b-idle-side-guest`, `guest-h3b-stopped-side-guest`, looked at); the
+  stats fields stayed the same; two 5.6 / 5.7 m seat-error windows during the gallops. (c1) did not down the driver
+  (`debug godmode 0` did not take while riding; the guard was 321 m away after `clear_enemies`); part 2 stopped at the
+  host's first E by the trees. Full CTest 355/355 at `4f55fe8d`.
 - **M2i's two leftover queue jobs** ran on this worktree before the S3 code (world_horse_cargo named by their scenarios):
   lab `3a86c82f` passed `horse-cargo.txt` and `horse-cargo-b.txt` (the drop part failed: no `stream_lost` unload, the
   victim not down); play `7c1de731` part 2 failed (the host was never downed). Not read further this step.
