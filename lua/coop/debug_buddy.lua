@@ -191,12 +191,12 @@ do
    return ok and type(line)=="string" and #line<=160,ok and line or "cargo_status_refused"
   end
   if (cmd=="walker_spawn" or cmd=="walker_status") and #a==1 then return walker(cmd,id) end
-  -- Step S2 (scenarios): this copy's unridden horse placed 4 m right of the player (world_horse_share S.here).
+  -- Step S2 (scenarios): this copy's unridden horse 4 m right of the player, its root 0.6 m over the feet (S.here).
   if cmd=="horse_here" and #a==1 then
    local H,p=get(get(e,"MgsCoopWorld"),"horseShare"),A.pose()
    if type(get(H,"here"))~="function" then return false,"horse_here_unavailable" end
    local r=((p[4]+180)%360-180)*math.pi/180
-   local ok,yes,why=pcall(H.here,(p[1]+4*math.cos(r))*1000,p[2]*1000,(p[3]-4*math.sin(r))*1000,r*1000)
+   local ok,yes,why=pcall(H.here,(p[1]+4*math.cos(r))*1000,(p[2]+.6)*1000,(p[3]-4*math.sin(r))*1000,r*1000)
    return ok and yes==true,"horse_here;"..(ok and tostring(why) or "error")
   end
   if #a~=1 or (cmd~="horse_spawn" and cmd~="horse_status") then return false,"horse_args" end
