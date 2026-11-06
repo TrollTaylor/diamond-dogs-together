@@ -510,6 +510,17 @@ int main() {
         Check(sa::GlideOn(true, true, true, false) && !sa::GlideOn(true, true, true, true) && !sa::GlideOn(false, true, true, false) &&
                   !sa::GlideOn(true, false, true, false) && !sa::GlideOn(true, true, false, false),
               "off view: a walk glides only while one of the spots may be seen");
+        Check(sa::TakeNoWarp(false, false) && !sa::TakeNoWarp(true, false) && sa::TakeNoWarp(true, true),
+              "off view: a take that opens with a warp waits unless both spots are unseen (1fb060aa guard 18)");
+        {
+            float ref[3] = {0.0f, 0.0f, 0.0f};
+            std::uint64_t refAt = 0;
+            const float a[3] = {10.0f, 1.0f, 10.0f}, a2[3] = {10.3f, 1.0f, 10.2f}, b[3] = {11.0f, 1.0f, 10.0f};
+            Check(!sa::OwnerStill(a, ref, refAt, 1000) && refAt == 1000 && !sa::OwnerStill(a2, ref, refAt, 2900) &&
+                      sa::OwnerStill(a2, ref, refAt, 3000) && !sa::OwnerStill(b, ref, refAt, 3100) && refAt == 3100 &&
+                      !sa::OwnerStill(b, ref, refAt, 5099) && sa::OwnerStill(b, ref, refAt, 5100),
+                  "owner still: within 0.5 m (flat) of one spot for 2 s; a move restarts the clock (1fb060aa guard 246)");
+        }
         Check(sa::ReleaseFreeze(1, 0x0062, 0xffff, 0, 0xffff, false, 12.0f) &&
                   sa::ReleaseFreeze(1, 0x0062, 0xffff, 0x2c505bab2efcull, 0xffff, false, 12.0f),
               "watch: a brain re-target with no path (689e654c guard 15)");

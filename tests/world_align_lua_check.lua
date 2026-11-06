@@ -70,6 +70,7 @@ local function fixture(host, level, mb)
             c.acts = c.acts or {}
             c.acts[#c.acts + 1] = source
             if source:find("-- p ", 1, true) then return c.pReply or {p = 1} end
+            if c.actFn then return c.actFn(source) end
             return c.actReply or {f = 1, sh = c.shots or 0}
         end
         c.receipts[#c.receipts + 1] = source
@@ -2199,6 +2200,31 @@ if arg[7] and arg[8] then
         vw.positions[1] = {0, 1.8, 250.0}                     -- the copy 250 m ahead: in view (no distance cut)
         ticks(vw, 8)
         check(nW() == w0 and vw.W.mirror.pp[3000000001] ~= nil, 'D-FM3: the copy in view at 250 m: no w')
+    end)()
+    -- Round 13 C (run 1fb060aa: guard 18's take waited on near_wait - his host copy stood 44.8 m away - and came 11 s later in
+    -- view as a 35.9 m glide): a candidate refused with the q reply's owner position, both spots off view: ACT_V1 w, then q
+    -- again (native lets that take open with the warp); one spot in view: no w, he waits.
+    ;(function()
+        local function cand(oz)
+            local c = guestFix(0)
+            c.W.snapOn, c.W.actOn, c.W.mission = true, true, 30010
+            c.W.handlers[92]({1, 7})
+            c.positions[1] = {0, 1.8, -120.0}
+            c.actFn = function(src)
+                if src:find(' -- w ', 1, true) then c.wAt = #c.acts; return {f = 0, sh = 0} end
+                if src:find(' -- q ', 1, true) then return {f = c.wAt and 1 or 0, sh = 0, ox = 30000, oy = 1800, oz = oz} end
+                return {f = 1, sh = 0, ox = 30000, oy = 1800, oz = oz}
+            end
+            ticks(c, 8)
+            return c
+        end
+        local off = cand(-150000)
+        local firstM
+        for k, s in ipairs(off.acts) do if s:find(' -- m 1 1', 1, true) then firstM = firstM or k end end
+        check(off.W.mirror.pp[3000000001] ~= nil and off.wAt and firstM and off.wAt < firstM,
+            'D-FM3 take: a waiting candidate with both spots off view: w, then q again, then taken')
+        local on = cand(150000)
+        check(on.W.mirror.pp[3000000001] == nil and not on.wAt, 'D-FM3 take: his owner copy in view: no w, not taken')
     end)()
     -- FM1 round 6 (2): riders (GetVehicleGameObjectId) are skipped by the far rule (run adecad01: two LRRP riders of another
     -- CP were puppeted at 297 m and released apart 283-285 m off); a puppet who mounts is released (why=vehicle).

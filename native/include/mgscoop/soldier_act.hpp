@@ -289,6 +289,18 @@ bool CornerTarget(const float (*points)[3], unsigned count, const float (&self)[
 inline constexpr std::uint64_t kOffViewMs = 1000;
 bool OffViewFresh(std::uint64_t stamp_ms, std::uint64_t now_ms) noexcept;
 bool GlideOn(bool plan, bool walk, bool have_self, bool off_view) noexcept;
+// Round 13 C (run 1fb060aa: guard 18's host copy stood 44.8 m from his guest copy at pairing, so his take waited on
+// near_wait and came 11 s later in the guest's view as a 35.9 m glide): TakeNoWarp - a take that would open with the
+// unpack's warp (TakeWarps) is allowed while the off-view stamp is fresh (Lua sends ACT_V1 w for a candidate too, from the
+// q reply's owner position, then asks q again).
+bool TakeNoWarp(bool take_warps, bool off_view) noexcept;
+// Round 13 C (1fb060aa: guard 246's host copy stood 78 s with a walk request and a follower path while his puppet walked
+// the corner target 12.7 m ahead and waited there; the place error counted 12.7 -> 0.7 m as the host copy then walked up):
+// with act_plan the host sends a walk's destination as the host copy's own position while he has stayed within
+// kOwnerStillM (flat) of one spot for kOwnerStillMs. OwnerStill keeps that spot and its time per guard (ref, ref_at).
+inline constexpr float kOwnerStillM = 0.5f;
+inline constexpr std::uint64_t kOwnerStillMs = 2000;
+bool OwnerStill(const float (&self)[3], float (&ref)[3], std::uint64_t& ref_at, std::uint64_t now_ms) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;

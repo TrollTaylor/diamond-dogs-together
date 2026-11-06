@@ -348,6 +348,9 @@ bool OffViewFresh(std::uint64_t stamp_ms, std::uint64_t now_ms) noexcept {
 
 bool GlideOn(bool plan, bool walk, bool have_self, bool off_view) noexcept { return plan && walk && have_self && !off_view; }
 
+bool TakeNoWarp(bool take_warps, bool) noexcept { return !take_warps; }  // round 13 C red 2 stub
+bool OwnerStill(const float (&)[3], float (&)[3], std::uint64_t&, std::uint64_t) noexcept { return false; }  // red 2 stub
+
 bool TakeWarps(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept {
     if (host_request[0x61] == 1u || !have) return false;  // a walk glides; unknown positions: the unpack lends his own
     return Warp15(self, owner);
