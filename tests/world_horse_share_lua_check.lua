@@ -292,12 +292,16 @@ do
  ok, why = g.S.here(1, 2, 3, 0)
  check(not ok and why == "pins" and g.logged("step=here;placed=0;reason=pins"), "S2: a native refusal is returned and logged")
 end
--- Step S3: the ride records are polled (rrec, native logs them); with world_horse_down_off a downed rider of the shared
--- horse asks native for the stock get-off (getoff) at most 6 times 500 ms apart while it stays downed and mounted.
+-- Step S3: with world_horse_down_off the ride records are polled (rrec, native logs them) and a downed rider of the
+-- shared horse asks native for the stock get-off (getoff) at most 6 times 500 ms apart while it stays downed and
+-- mounted. fixland4 (review: no run without a horse key at the S3 code): at the defaults no rrec poll at all.
 do
  local g = fixture()
  for _ = 1, 12 do g.tick(100) end
- check((g.rrecs or 0) >= 4 and (g.rrecs or 0) <= 6, "S3: rrec every 250 ms")
+ check((g.rrecs or 0) == 0, "S3: world_horse_down_off not named: no rrec poll (nothing new at the defaults)")
+ local r = fixture({down = true})
+ for _ = 1, 12 do r.tick(100) end
+ check((r.rrecs or 0) >= 4 and (r.rrecs or 0) <= 6, "S3: world_horse_down_off named: rrec every 250 ms")
  g.W.role = 2
  g.W.downed = {records = {[2] = {down = true}}}
  g.rides = true

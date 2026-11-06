@@ -426,7 +426,8 @@ end
 -- record 534 ms old, mask 0 and no revive_late line, so the hold was already zeroed before a late tick could drain it:
 -- a host loop gap over 500 ms resets the hold in D.tick (loop_gap), a stall is no release by the player): with
 -- world_horse_cargo named a loop gap drains the hold as a late status does; at the defaults it still resets. Either way
--- a hold under way that is reset or drained there logs one step=revive_reset line (why, progress, gap, drain).
+-- with the key a hold under way that is reset or drained there logs one step=revive_reset line (why, progress, gap,
+-- drain); fixland4 (review: no run without a horse key at this code): at the defaults no line, exactly as before.
 for _, cargoKey in ipairs({false, true}) do
     local host, guest = pair()
     if cargoKey then host.W.horseCargo = {keyOn = function() return true end} end
@@ -441,7 +442,7 @@ for _, cargoKey in ipairs({false, true}) do
     for _ = 1, 2 do step(host, guest, 100) end
     local resets = 0
     for _, l in ipairs(host.logs) do if l:find('step=revive_reset;why=loop_gap', 1, true) then resets = resets + 1 end end
-    check(resets == 1, 'one step=revive_reset;why=loop_gap line' .. tag .. ': ' .. resets)
+    check(resets == (cargoKey and 1 or 0), (cargoKey and 'one' or 'no') .. ' step=revive_reset;why=loop_gap line' .. tag .. ': ' .. resets)
     if cargoKey then
         check(host.D.progress >= 900 and not guest.revived, 'a loop gap drains the hold instead of restarting it' .. tag .. ': ' .. host.D.progress)
         local n = 0

@@ -238,6 +238,14 @@ void TestAnchorHold() {
           "cargo key, the seated act, an invalid sample or a foot act: anchors as before");
 }
 
+// fixland4 (review of S3: the motion-record log partner_pillion=mg ran at the defaults with no run naming no horse key):
+// the log comes only with world_horse_down_off (Settings.horse_down_off) and a seat-error window, as the S3 lab runs did.
+void TestMotionLogKey() {
+    Check(!hd::MotionLog(false, 3), "defaults, a seat-error window: no motion-record log");
+    Check(hd::MotionLog(true, 3), "world_horse_down_off, a seat-error window: logged");
+    Check(!hd::MotionLog(true, 0) && !hd::MotionLog(false, 0), "no seat-error window: nothing");
+}
+
 void TestVisibility() {
     Check(rw::HorseRider(true, true, 121, false, false) && !rw::HorseRider(false, true, 121, false, false) && !rw::HorseRider(true, false, 121, false, false),
           "act 121 with a fresh placed horse and a valid act");
@@ -711,6 +719,7 @@ int main() {
     TestVisibility();
     TestRideKindShows();
     TestAnchorHold();
+    TestMotionLogKey();
     TestLabKey();
     TestCargoKey();
     TestPillion();
