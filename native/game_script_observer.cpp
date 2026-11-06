@@ -5464,9 +5464,17 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
         if(const char* why=hd::HoldRefusal(hs)) return refuse(why);
         const auto& b0=bodies.k[0];const auto& bh=bodies.k[kb];
         // Warp's resets on request, only while body 0's and body 1's objects share their class and slot (ApplyTransform's guard).
-        const bool wantC=(q.reset&2)!=0,wantA=(q.reset&1)!=0;
+        const bool wantC=(q.reset&2)!=0;bool wantA=(q.reset&1)!=0;
         if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=c1.c0_vt || b0.c090!=c1.c090)) return refuse("reset");
         if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=c1.a0_vt || b0.a080!=c1.a080)) return refuse("reset");
+        // M2i (frames 2a41c416 / c62e2ce6 h2-loaded: body 1 along the horse, upper body raised, at the load): with
+        // world_horse_cargo a hold1 run adds Warp's A0 reset once, 1 s into the run, while its class guard holds (else skipped).
+        static hd::HoldRun hold1Run{};
+        if(kb==1 && labc.world_horse_cargo && hd::HoldRunA0(hold1Run,GetTickCount64()) && !wantA) {
+            const bool a0=bh.a0 && hd::A0Usable(classOf(b0),c1);
+            LogFormat("horse_drive=a0_once; body=1; applied=%u\r\n",a0?1u:0u);
+            wantA=a0;
+        }
         // BODY0 round: the write watch (bit 2) and pin (bit 3) on body 0's transform (native/include/mgscoop/horse_body_watch.hpp),
         // set up before hold0's own write (its trap is order 0; the pin target is what it writes).
         namespace hbw=mgscoop::horse_body_watch;
