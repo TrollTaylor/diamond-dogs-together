@@ -7,7 +7,9 @@
 #include <cstring>
 #include "mgscoop/horse_body_watch.hpp"
 #include "mgscoop/horse_drive.hpp"
+#include "mgscoop/horse_ride.hpp"
 #include "../native/horse_drive_contract.hpp"
+#include "../native/horse_ride_contract.hpp"
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
 #include "mgscoop/partner_seat_shot.hpp"
@@ -616,6 +618,70 @@ void TestBodyWatch() {
           "Target: centre, foot and foot y as T.vt+0x58 writes them");
 }
 
+// Step S3: the RideHorse ride record (rrec, logs) and the forced get-off of this copy's downed rider (getoff, lab key
+// world_horse_down_off: off unless named until its gate).
+void TestRideRecord() {
+    namespace hr = mgscoop::horse_ride;
+    namespace rc = mgscoop::horse_ride_contract;
+    hd::Request q{};
+    Check(hd::Parse("rrec 30010 7", 12, q) && q.verb == hd::Verb::rrec && q.mission == 30010 && q.epoch == 7, "S3: rrec <mission> <epoch>");
+    Check(hd::Parse("getoff 30020 9", 14, q) && q.verb == hd::Verb::getoff && q.mission == 30020 && q.epoch == 9,
+          "S3: getoff <mission> <epoch>");
+    Check(!hd::Parse("getoff 30010", 12, q) && !hd::Parse("getoff 30010 0", 14, q) && !hd::Parse("rrec 30050 1", 12, q) &&
+              !hd::Parse("getoff 30010 7 1", 16, q) && !hd::Parse("getoffx 30010 7", 15, q),
+          "S3: rrec / getoff take exactly a free-roam mission and an epoch");
+    hr::Rec r{};
+    Check(std::strcmp(hr::GetOffRefusal(r), "unread") == 0, "S3: an unread record is never written");
+    r.ok = true;
+    Check(std::strcmp(hr::GetOffRefusal(r), "idle") == 0, "S3: state 0 (not riding) is refused");
+    for (unsigned s : {1u, 2u, 3u, 4u, 20u, 21u, 28u, 30u}) {
+        r.state = static_cast<std::uint8_t>(s);
+        Check(std::strcmp(hr::GetOffRefusal(r), "state") == 0, "S3: get on (1, 2), get off (3), 4 and 20..28 have no get-off check");
+    }
+    for (unsigned s : {5u, 6u, 7u, 8u, 9u, 10u, 15u, 19u, 29u}) {
+        r.state = static_cast<std::uint8_t>(s);
+        Check(hr::GetOffRefusal(r) == nullptr, "S3: the states whose update runs the stock get-off check 0x14122F3F0 are written");
+    }
+    r.state = hr::kRideState;
+    r.next = hr::kGetOffState;
+    Check(std::strcmp(hr::GetOffRefusal(r), "pending") == 0, "S3: a next state already set (the stock get-off) is left alone");
+    hr::Rec a{}, b{};
+    Check(!hr::Changed(a, b), "S3: equal records log nothing");
+    b.ok = true;
+    Check(hr::Changed(a, b), "S3: the first read logs");
+    a = b;
+    b.state = 5;
+    Check(hr::Changed(a, b), "S3: a state change logs");
+    a = b;
+    b.forced = 1;
+    Check(hr::Changed(a, b), "S3: the forced get-off flag (+0x16E) logs");
+    a = b;
+    b.rec = 0x1234;
+    Check(!hr::Changed(a, b), "S3: the record address alone does not log");
+    Check(rc::record_size == 0x2b0 && rc::rec_next == 0x11 && rc::rec_again == 0x235 && rc::getoff_state == hr::kGetOffState &&
+              rc::getoff_select == 6 && rc::ride_vtable == 0x23cb600 && rc::block_actions == 0x190 && rc::block_action_slots == 0x8a,
+          "S3: the contract's record layout and the stock get-off's values (0x141236BA3..0x141236BB8)");
+    Check(hr::kGetOffTries == 6 && hr::kGetOffGapMs == 500, "S3: Lua's getoff retries");
+    const auto lab = [](const char* text) {
+        mgscoop::LabConfig c{};
+        (void)mgscoop::ParseLabConfig(text, std::strlen(text), c);
+        return c;
+    };
+    const auto def = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
+    const auto on = lab("enabled=1\nrole=guest\nworld_horse_down_off=1\n");
+    const auto off = lab("enabled=1\nrole=guest\npartner_native_profile=gun\nworld_horse_down_off=0\n");
+    const auto bad = lab("enabled=1\nrole=host\nworld_horse_down_off=2\n");
+    Check(!def.world_horse_down_off && !def.world_horse_down_off_given && def.world_horse_pillion,
+          "S3: world_horse_down_off is off unless named, also with the gun profile (gate not passed)");
+    Check(on.world_horse_down_off && on.world_horse_down_off_given && on.unknown_keys == 0 && on.invalid_values == 0, "S3: a named 1");
+    Check(!off.world_horse_down_off && off.world_horse_down_off_given, "S3: a named 0");
+    Check(!bad.world_horse_down_off && bad.invalid_values == 1, "S3: an invalid value stays off");
+    const auto playOn = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                            "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
+                            "world_horse_down_off=1\n");
+    Check(playOn.mode == mgscoop::LabMode::play && playOn.world_horse_down_off && playOn.play_refused == 0, "S3: a named 1 runs in play");
+}
+
 } // namespace
 
 int main() {
@@ -638,6 +704,7 @@ int main() {
     TestShotKey();
     TestAimSeat();
     TestSeatErr();
+    TestRideRecord();
     std::printf("%u horse drive checks passed: call-enter matrix, saddle anchor, receipt grammar, refusals, shared state, "
                 "shared-horse rider visibility, lab key\n",
                 checks);
