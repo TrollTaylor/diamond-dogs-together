@@ -1217,6 +1217,90 @@ Round `wp/horse` fixland3 (no hidden run; markers [O] / [I] / [U]).
   revive on both copies), the late-status drain, the A0 reset at the load, the cargo boot-spot route in (a). A rider
   downed while riding can still stay on the horse (not fixed; README).
 
+## 19. Step S3: the standing rear rider (order test, body 1's records), the downed rider's get-off (world_horse_down_off)
+
+Round `wp/horse` step S3 (markers [O] / [I] / [U]; slim archives with the full session observer logs
+`%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).
+- **Seat entries compared (old runs):** the overlay's request / play lines, the native mode, body 1's act at the play
+  and the remote act at the (b) seating are the same in the seated round-6 run `79287a27` and the standing S2 runs (for
+  example `c1982534` (b): `native=active`, `body_act=25` (a fall), `remote_act=3`, `rec18=0x0; code_match=0` at the
+  confirm, as in `79287a27`); so are the native gun / aim / support lines after it [O logs]. A candidate that fits every
+  run so far [I]: the standing begins at the first rock push on a copy and stays. S2's (b) ran after (a)'s deliberate
+  rock push (added in S2), and round 6's (b) ran after an (a) without one and sat until its own stall.
+- **Order test** (`horse-s3-b-first.txt` / `horse-s3-play-b-first.txt`, then `horse-s3-a-after.txt`): (b) first in the
+  session from the boot spot (horse_here on both copies), frames at idle / walk / trot / gallop, the rock push, then a
+  DM replay of stateRideOnIdle while body 1 may stand (`overlay_stop` on the driver's copy, then the seat holds'
+  re-entry plays it again), the hop-off and the driver's E; then (a) from the boot spot, whose host copy's body 1 was the
+  drawn driver through (b)'s rock push, with a replay at idle and after its own rock push.
+- **RideHorse ride records** (static [I], Ghidra comments at `0x14122B610` and `0x14122DA20`): the action's
+  constructor `0x14122B610` sets the vtables `0x1423CB600` (obj), `0x1423CB680` (obj+0x10, what the factory
+  `0x14122CF80` returns) and `0x1423CB6B0` (obj+0x30, the per-player event dispatcher `0x14122DEF0`); obj+8 is the
+  player block (block+0x138 = P), obj+0x38 an id node (+0x24 the base id), obj+0x68 the records (0x2B0 each). The block
+  constructor (`0x1409BAC80`) clears two 0x45-slot arrays at block+0x190 / +0x3B8 (its actions). The per-player update
+  `0x14122DA20` runs `0x14122DDA0`, which enters the record's next state (+0x11) when it is set and differs from +0x10
+  (or +0x235 is set); state 3 (`0x141236100`) is the get-off (act 0x7A, a side pick, its motion through vt+0x190). The
+  stock get-off in ride state 5 (`0x141236B8D`) writes sub+0x82 = 6 (when sub+0x7C names the rider), +0x11 = 3 and
+  +0x235 = 0. Fifteen ride states call the get-off check `0x14122F3F0` (5, 6/7, 8, 9, 10..19, 29).
+- **Code** (`e838d134` red: horse_drive_tests did not compile, world_horse_share_lua_check failed check 67 /
+  `4f55fe8d` green; contract `tools/generate_horse_ride_contract.py`, `tools/horse_ride_sites.json`, 4 sites and 3 slots,
+  its own refusal `ride_pins` so a miss never touches the shared horse's pins):
+  - `MGS_COOP_HORSE_DRIVE_V1 rrec` (world_horse_share's Lua, 4 Hz on both copies): both bodies' ride records (the action
+    found in each body's block by its vtable), logged change-only as `horse_drive=ride_rec; body; ok; why; st; nx; again;
+    sub; rider; sel; forced; id` (reads only, at the defaults).
+  - `getoff` (lab key `world_horse_down_off`, off unless named, with world_horse_share): when this copy's player rides
+    the shared horse (census rider 0) and world_downed has it down, world_horse_share asks up to 6 times 500 ms apart;
+    native re-reads body 0's record, refuses unread / idle / a state without the stock get-off check / a next state
+    already set, and writes the stock get-off's three bytes; lines `horse_drive=getoff; ok; why; st; nx; rider; sel; id`
+    and `event=horse_share; step=getoff; n; ok; reason`. The rear-seat passenger downed while seated is laid off by
+    world_horse_pillion's `stop("passenger_downed")` as before (no native mount).
+  - `partner_pillion=mg` (logs only): on the driver's copy, next to the stats window, body 1's part of the motion
+    records ReadAnim hashes for instance 0 (`*(Q+0x1D8)` + 0x40 (0x40 bytes), `*(Q+0x1E0)` and `*(Q+0x1F8)` 0x40 bytes each,
+    their instance-1 stride not known) as raw hex whenever their hash changes (120 lines a process).
+- **Hidden runs** (attempt 1, code head `4f55fe8d`, no horse key named except `world_horse_down_off` in part 3's
+  labsetting, which applies to the whole session but acts only on a rider downed while riding, so parts 1 and 2 ran as
+  with no key [I]; `-WanSim bad`, the gun profile, research build, afgh-ledge). The first submission (lab `6e2677`, play
+  `911a74`) ended in both preflights on `worker_session_tests` (the new key was missing from Start-WorkerSession's
+  allow-list; no game ran, not counted). Lab `a37b0a4a` and play `cc2e94c6`:
+  - **The standing is not carried over from a rock push**: with (b) first in the session, before any rock push, the
+    driver's screen shows body 1 STANDING on the rump from the seating (lab and play `guest-h3b-idle-side-guest`), and in
+    (a) after it the host's screen shows the same (lab and play `host-h3-idle-side-host`) [O frames looked at]. What every
+    standing-from-the-seating run shares (S2's four (b) runs and these four): the horse was put beside the players by
+    the lab command `horse_here` (the `place` verb). Where the horse came by the stock call (S2's (a): `c1982534`
+    `host-h3-idle-side-host`, looked at again: seated) or stood where it was left (`79287a27` (b)), body 1 sat at idle and
+    stood only from a rock push or stall on [O frames]. So the standing from the seating comes with a horse placed by
+    `horse_here` [I], a lab command players do not have; players get a horse by calling it, so on their screens the rear
+    rider [I] sits until the horse is pushed into a rock wall (S2: `41ae2b4c` / `b228d163` (a), `79287a27` (b)). No run
+    used 0.15.3's code (no seat holds): the holds were on in every one of these runs, and they logged acting once
+    (`186c02d8`, `grace=2`) where the others stood with `grace=0` (section 16), so that the holds play no part is [I].
+  - **Body 1's ride record stays idle**: `horse_drive=ride_rec; body=1` reads `st=0; sub=0` once and never changes on
+    either copy in either run (one line per process), while body 0's follows the ride (2 get on, 5 idle, 9 / 10 / 11 /
+    16 / 18 / 19 the gaits and turns, 3 the get-off with `sel=6`, 0 after) [O logs, lab `a37b0a4a` guest part 1 lines
+    1960-3864 and host part 2 lines 506-2784]. So the RideHorse action never runs on body 1, and the standing is not its doing [I].
+  - **Body 1's Q records carry no motion state**: one `partner_pillion=mg` line per process, the same bytes in all four
+    (`h=66a3906b,9868c3e1,f0631ba4`: a pointer and zeros in each record), never changing through the seat, the gaits and
+    the rock push [O logs]. Where the motion graph keeps the displayed node is still [U].
+  - **The DM replay was not tried**: `overlay_stop` is refused while the driver rides (`on_foot`, debug_player) on both
+    copies, so no frame shows a replay [O].
+  - Every first E at an unridden horse mounted (the guest's in (b), the host's in (a)); the driver's E after the hop-off
+    got the driver off in (b) lab / play (`driver_e_off` 2469 / 3470 ms) and in (a) play (2502 ms); in lab (a) the
+    passenger's hop-off E did not take and the host's E got both off (`why=driver_off`) [O logs].
+  - **The downed rider: not reproduced** (part 3, where S2's (b) ended): `spawn_enemy here come` warped a guard 5.2 / 5.1 m
+    from the host (lab / play; no cliff this time), `horse_here` placed both horses, and then the host's E after
+    `goto_horse` did not mount in either run (`host require localMounted=1`), as in S2's `41ae2b4c` part 3 (cause [U];
+    both are horse_here horses with a guard coming). So `getoff` never ran live; `world_horse_down_off` stays off unless
+    named.
+- **Gate not passed:** the rear rider stands on the driver's screen from the seating with a horse_here horse in both
+  orders, and nothing logged changes with it yet; the downed rider was not reproduced (three attempts over S2 and S3).
+- **Next:** start both orders with a horse the players called (the stock recall; for (b) after (a) move the players, not
+  the horse: M1's final keeps the horse where (a) left it), so body 1 sits at idle, then a rock push: a seated and a
+  standing window in one seat. Diff body 1's motion state there from a source other than the Q records (the motion
+  controller that `0x141230B30(ctl, idx, 0, node)` plays nodes on, per index), and trigger the DM replay by a lab key
+  (the overlay's stop + re-entry after a `step=stall`) instead of `overlay_stop`, which is refused while mounted. For the
+  horse_here horse, compare what `place` leaves different from a recalled horse (census record, its CS slot) with
+  `horse_drive=ride_rec` of body 0. The downed rider: mount first (a recalled horse, away from the guard), then
+  `spawn_enemy here come` from the saddle is refused (debug commands while mounted), so let the passenger (on foot
+  until seated) or a third command make the guard hostile; then `getoff` live with world_horse_down_off named.
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed

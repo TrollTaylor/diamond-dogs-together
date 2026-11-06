@@ -1,3 +1,37 @@
+## November 6, 2026: horse step S3 - riding behind your partner: the "standing from the moment they sit down" comes from the test's horse placement, not from what players do; a downed rider's get-off built (off unless named, not seen live); nothing turned on (`wp/horse`)
+
+**Players get:** nothing new and no default changed. What changed is what we know: the rear rider standing on the
+horse's back from the moment they sit down was seen only in tests where a lab command (`horse_here`) had placed the
+horse; with a horse that was called the usual way the rear rider sits until the horse is pushed into a rock wall [I].
+The README's limit now says that. A fix for a rider downed while riding (they get off as with E) is in, but off unless
+named (`world_horse_down_off`) and never seen working: the test never got the rider downed on the horse.
+docs/mounts.md section 19.
+
+- **Code:** merge `2044e31d` (dev `1a9d7381`). `c3af725f` scenarios (`horse-s3-b-first.txt` / `horse-s3-play-b-first.txt`,
+  `horse-s3-a-after.txt`, `horse-s3-down.txt`). `e838d134` red (horse_drive_tests did not compile; world_horse_share_lua_check
+  failed check 67) / `4f55fe8d` green: `MGS_COOP_HORSE_DRIVE_V1 rrec` (both bodies' RideHorse ride records, logged
+  change-only as `horse_drive=ride_rec`; the action found in each player block by its vtable `0x1423CB600`), `getoff`
+  (lab key `world_horse_down_off`, off unless named: this copy's downed rider of the shared horse gets the stock
+  get-off's writes, next state 3), its own contract `tools/generate_horse_ride_contract.py` (4 sites, 3 slots), and the
+  log `partner_pillion=mg` (body 1's part of the Q+0x1D8 / 0x1E0 / 0x1F8 records). horse_drive_tests 217,
+  world_horse_share_lua_check 74; the full CTest: see below.
+- **Runs** (lab `a37b0a4a`, play `cc2e94c6`; the first submission `6e2677` / `911a74` died in both preflights on
+  `worker_session_tests`, the new key missing from Start-WorkerSession's allow-list, no game ran): with (b) first in the
+  session and (a) after it, both with `horse_here` horses, body 1 stood on the rump from the seating on the driver's
+  screen in all four (frames looked at: `guest-h3b-idle-side-guest`, `host-h3-idle-side-host` in both runs), so the
+  standing is not carried over from a rock push; S2's (a) with a called horse sat at idle (`c1982534`
+  `host-h3-idle-side-host` looked at again). Body 1's ride record stayed idle (`st=0`) on both copies while body 0's
+  followed the ride (2, 5, 9..19, 3 with `sel=6`, 0) [O logs]; body 1's Q records are a pointer and zeros, the same on
+  all four copies and never changing [O]. `overlay_stop` is refused while mounted (`on_foot`), so the DM replay was not
+  tried. Every first E at an unridden horse mounted; the driver's E after the hop-off got the driver off in (b) lab /
+  play and (a) play. Part 3: the guard was warped 5.2 / 5.1 m from the host (no cliff), but the host's E at the
+  horse_here horse did not mount in either run, so no rider was downed on the horse (cause [U]).
+- **M2i's two leftover queue jobs** ran on this worktree before the S3 code (world_horse_cargo named by their scenarios):
+  lab `3a86c82f` passed `horse-cargo.txt` and `horse-cargo-b.txt` (the drop part failed: no `stream_lost` unload, the
+  victim not down); play `7c1de731` part 2 failed (the host was never downed). Not read further this step.
+- **Never seen live:** `getoff` (a rider downed while riding, the get-off, the revive), the passenger's
+  `stop(passenger_downed)`, a DM replay while standing. world_horse_down_off stays off unless named; no default change.
+  Nothing pushed.
 ## November 5, 2026: horse fixland3 - the review's corrections before the land: the late-status revive fix is back to off unless the downed-partner horse option is named; notes corrected (`wp/horse`)
 
 **Players get:** nothing new; riding behind your partner works as in 0.15.3 (on by default). The README now also says
