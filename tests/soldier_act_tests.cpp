@@ -560,17 +560,21 @@ int main() {
               "rest: the round 11 reason names");
         // The re-plan after a quiet move of a walker: only his own brain's walk (dest mode 1, the request started, no
         // request-manager handle), his brain's live planner slot cancelled first; a slot busy with another request: none.
-        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0xdf31ba77279eull, 0x0001) == sa::QuietPlan::cancel_then_plan,
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0xdf31ba77279eull, 0x0001, true) == sa::QuietPlan::cancel_then_plan,
               "quiet plan: a walker whose brain holds a live plan: cancel it, then plan from the new spot");
-        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0, 0xffff) == sa::QuietPlan::plan, "quiet plan: an empty slot: plan");
-        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, sa::kMoveHash, 0x0003) == sa::QuietPlan::plan,
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0, 0xffff, true) == sa::QuietPlan::plan, "quiet plan: an empty slot: plan");
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, sa::kMoveHash, 0x0003, true) == sa::QuietPlan::plan,
               "quiet plan: our own move type in the slot: plan (the planner replaces it)");
-        Check(sa::QuietPlanChoose(0, 0xffff, 0x006c, 0, 0xffff) == sa::QuietPlan::none, "quiet plan: standing (dest mode 0): none");
-        Check(sa::QuietPlanChoose(2, 0xffff, 0x006e, 0, 0xffff) == sa::QuietPlan::none, "quiet plan: a route node walk: none");
-        Check(sa::QuietPlanChoose(1, 0x0004, 0x006e, 0, 0xffff) == sa::QuietPlan::none, "quiet plan: a request-manager handle: none");
-        Check(sa::QuietPlanChoose(1, 0xffff, 0x006c, 0, 0xffff) == sa::QuietPlan::none, "quiet plan: the walk not started: none");
-        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0x1234ull, 0xffff) == sa::QuietPlan::busy,
+        Check(sa::QuietPlanChoose(0, 0xffff, 0x006c, 0, 0xffff, true) == sa::QuietPlan::none, "quiet plan: standing (dest mode 0): none");
+        Check(sa::QuietPlanChoose(2, 0xffff, 0x006e, 0, 0xffff, true) == sa::QuietPlan::none, "quiet plan: a route node walk: none");
+        Check(sa::QuietPlanChoose(1, 0x0004, 0x006e, 0, 0xffff, true) == sa::QuietPlan::none, "quiet plan: a request-manager handle: none");
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006c, 0, 0xffff, true) == sa::QuietPlan::none, "quiet plan: the walk not started: none");
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0x1234ull, 0xffff, true) == sa::QuietPlan::busy,
               "quiet plan: another request type with no handle: busy");
+        // The review: a planner slot that could not be read is no empty slot: no plan, no cancel.
+        Check(sa::QuietPlanChoose(1, 0xffff, 0x006e, 0, 0xffff, false) == sa::QuietPlan::none &&
+                  sa::QuietPlanChoose(1, 0xffff, 0x006e, 0xdf31ba77279eull, 0x0001, false) == sa::QuietPlan::none,
+              "quiet plan: an unread planner slot: none (no plan, no cancel)");
         Check(std::strcmp(sa::QuietPlanName(sa::QuietPlan::cancel_then_plan), "cancel_plan") == 0 &&
                   std::strcmp(sa::QuietPlanName(sa::QuietPlan::none), "none") == 0,
               "quiet plan: the step names");

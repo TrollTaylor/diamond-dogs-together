@@ -130,9 +130,10 @@ const char* QuietWhyName(QuietWhy why) noexcept;
 // Enemy round 11 track A (design 7.31): after a quiet move of a walker, his re-plan from where he now stands to his own
 // brain's destination R+0x80 (the shadow plan 0x1413725f0 of act_plan): only for a started walk (dest mode 1,
 // PlanGate); his brain's live slot of another type is cancelled first (PlanSlot); another type with no handle: busy.
+// slot_read: whether his planner slot was read at all (the review: an unread slot is no empty slot): none if not.
 enum class QuietPlan : std::uint8_t { none, busy, plan, cancel_then_plan };
 QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
-                          std::uint16_t slot_handle) noexcept;
+                          std::uint16_t slot_handle, bool slot_read) noexcept;
 const char* QuietPlanName(QuietPlan step) noexcept;
 // Whether idx is among the first count entries of the realized list.
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept;
