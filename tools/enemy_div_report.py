@@ -302,26 +302,48 @@ def analyse(host, guest):
     # Enemy round 11 track A (design 7.31): walkers' quiet moves (quiet=walk), their re-plans (world_place=quiet_plan step,
     # started) and the owner rows: per walker move (its next at=500 read-back starts it) the 2 s / 10 s read-backs' x/z
     # distance to the owner copy (dho_m) within 3 m.
-    walk_ents = set(f.get('ent') for f in qw if f.get('quiet') == 'walk')
+    # As the review checked it: a move is a walker's when its own quiet warp line (the guard's last one before its at=500
+    # read-back) says quiet=walk, so a later quiet=ok move of the same guard is not counted; a cancelled slot whose plan
+    # did not start (step=cancel_plan, started=0) is a lost plan (his brain's walk cancelled, none in its place).
     plans = {}
-    started = 0
+    started, lost, lost_idx = 0, 0, set()
     for l in guest:
         if l.startswith('world_place=quiet_plan'):
             f = fields(l)
             plans[f.get('step')] = plans.get(f.get('step'), 0) + 1
             started += 1 if f.get('started') == '1' else 0
+            if f.get('step') == 'cancel_plan' and f.get('started') != '1':
+                lost += 1
+                lost_idx.add(f.get('idx'))
+    kind, wm, wcur = {}, [], {}
+    for l in guest:
+        if l.startswith('world_place=warp') and 'leaf=quiet' in l:
+            f = fields(l)
+            kind[f.get('ent')] = f.get('quiet')
+        elif 'event=readback' in l and 'src=quiet' in l:
+            f = fields(l)
+            e, at = f.get('ent'), f.get('at')
+            if at == '500':
+                wcur.pop(e, None)
+                if kind.get(e) == 'walk':
+                    wcur[e] = {'500': f}
+                    wm.append(wcur[e])
+            elif e in wcur:
+                wcur[e][at] = f
 
     def owner3(f):
         try:
             return float(f.get('dho_m', 'x')) <= 3.0
         except ValueError:
             return False
-    wm = [m for m in moves if m['500'].get('ent') in walk_ents]
     o2 = [m['2000'] for m in wm if '2000' in m and 'dho_m' in m['2000']]
     o10 = [m['10000'] for m in wm if '10000' in m and 'dho_m' in m['10000']]
     r['quiet'].update({'walk_moves': sum(1 for f in qw if f.get('quiet') == 'walk'), 'plans': plans, 'plans_started': started,
-                       'walk_owner_2s': {'read': len(o2), 'within_3m': sum(1 for f in o2 if owner3(f))},
-                       'walk_owner_10s': {'read': len(o10), 'within_3m': sum(1 for f in o10 if owner3(f))}})
+                       'plans_lost': lost, 'plans_lost_guards': len(lost_idx),
+                       'walk_owner_2s': {'read': len(o2), 'within_3m': sum(1 for f in o2 if owner3(f)),
+                                         'walkers': len(set(f.get('ent') for f in o2))},
+                       'walk_owner_10s': {'read': len(o10), 'within_3m': sum(1 for f in o10 if owner3(f)),
+                                          'walkers': len(set(f.get('ent') for f in o10))}})
     owners = [fields(l) for l in host if 'event=owner;' in l or 'event=owner; ' in l]
     r['m3_owner_changes'] = len(owners)
     last, fast = {}, 0
