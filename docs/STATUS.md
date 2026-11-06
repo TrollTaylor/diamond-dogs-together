@@ -1,3 +1,32 @@
+## November 5, 2026: horse M2h - putting your downed partner on the horse: one driver on their body, both carry orders seen through ride and revive in play; the gate not passed, still off unless named (`wp/horse`)
+
+**Players get:** nothing new at the defaults (world_horse_cargo stays off unless named). With it named, two play
+rehearsals over `-WanSim bad` now went end to end, one per carry order: put on the horse from its flank, the first E
+mounts, the ride (178 m / 44 m), the partner stays down and lying on the horse on their own screen, across the horse
+behind the rider on the carrier's screen, laid down at the same spot on both screens, and revived. Not yet: the lab
+revive after the take-down failed in all three lab sessions, the (a) rides stayed under 50 m, the carrier sees the
+partner's upper body raised on the horse's back right after the load, and the link drop was not reached.
+docs/mounts.md section 15.
+
+- **Code:** `55269368` red / `6719e257` green: with world_horse_cargo the partner driver hands body 1 to the cargo hold
+  (`pr::In.body_owned`: no recon placement or correction, a neutral armed window; `partner_recon=cargo_hold`) - lab
+  `a53a243a`'s 32 recon place lines were logged, not applied; the real second driver was the armed input window [O];
+  live 0 recon placements inside the hold in every load of this round [O]. Lua `step=near`, `step=loaded` / `step=pin`
+  `hyaw` / `byaw`, world_downed `step=revive_wait`. `e61febc7` red / `a0a45c4a` green: body 1 on the census point until
+  the rider sits over the census root (lab `990d2530`: 0.97 m under it right after the mount, body 1 by the ground);
+  `step=pin` x,z; `step=revive_near`. Scenarios `225f213a`, `1a072dfd`, `6ab24575` (load E from `horse_flank`, (b) from
+  the boot spot, the carry check, the victim's camera, a longer (a) gallop). `31477fee` merge of dev `60bc4a6a`
+  (STATUS both sides). Full build + CTest 355/355 at `31477fee` (and at `6719e257`, `a0a45c4a`); every `--check` passes
+  but the base four (carry_info, sleep_plugin differ; native_ui, teammate_targeting no local evidence).
+- **Runs** (three attempts; archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` with the full session observer
+  logs): play `c62e2ce6` (b) and play `2a41c416` (a) passed every require; lab `990d2530` (a) / (b) and lab `107977cb`
+  (a) ran load -> ride -> dismount -> take-down at one x,z on both copies, then no revive (`107977cb`: the revive held
+  about 3 s, then one victim status 517 ms old reset it [O]); the rest stopped on scenario checks or the stock pickup /
+  aim / horse call (`ad7bbe2c`, `49a1c525`, (b) of `107977cb` / `2a41c416`). No Unconscious / horse_hit line in any.
+- **Gaps:** the lab revive (3 of 3), rides under 50 m in (a), the load pose (the downed pose, act 5, at the hold's yaw),
+  the victim's frames without the horse at walk and the load, (c) not reached; the lrrp module's lines now hit the
+  observer's `world=log_cap` (one `step=unloaded` line dropped in `2a41c416`). Nothing pushed.
+
 ## November 5, 2026: horse step S - riding behind your partner keeps its seat through a game hitch at the defaults (`wp/horse`; the seat holds now come with `world_horse_pillion`); a rider downed on the horse still stays on (not reproduced this round)
 
 **Players get:** riding behind your partner (on by default since 0.15.2), a short game stutter no longer drops you off

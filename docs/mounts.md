@@ -960,6 +960,81 @@ hop-off in play `-WanSim bad`, both orders, with them in) was met by `22926dbf` 
   reported as a held posture (no prone timeout) and the native get-off: the `+0x16E` flag's writer, or ACTION left
   unmasked for the get-off and pressed by the mod (a new pinned site either way).
 
+## 15. M2h round: one driver on body 1, the revive after the take-down (not passed)
+
+Round `wp/horse` M2h (world_horse_cargo named, off unless named; markers [O] / [I] / [U]; slim archives with the full
+session observer logs `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).
+- **What the old runs showed** (re-sliced from the game folders' observer logs): in `a53a243a` the 32
+  `partner_recon=place` lines beside `horse_drive=held; body=1` were logged but not applied (the apply is skipped under
+  `carry_hold`; each verify ended `placed ok=0` with `body_mm` still on the horse) [O log + code]; the second driver was
+  the native input window, armed with the victim's pad (`partner_native mode=active mag_pct=100`, err 0.3-6.5 m) [O].
+- **One driver on body 1** (`55269368` red / `6719e257` green): with `world_horse_cargo` the partner driver sets
+  `pr::In.body_owned` while coop_carry's cargo hold holds body 1 on this copy and no stock carried body 1
+  (`Settings.horse_cargo = world_horse_cargo && world_horse_share`): the reconciliation places, verifies, nudges, pins,
+  snaps, turns and stance-fixes nothing, drops pending placements and keeps the window armed with a neutral pad; edge
+  line `partner_recon=cargo_hold; on=0|1; mode=..`. Live [O both orders, lab `990d2530` and play `c62e2ce6`]: 0
+  `partner_recon=place` lines inside the cargo hold, `partner_native_face reason=owned; neutral=1`.
+- **Load / ride lines**: `step=loaded` and `step=pin` carry `hyaw` / `byaw` (the hold's yaw, a quarter turn) and since
+  `a0a45c4a` `bx_cm` / `bz_cm` (the hold's target) and `px_cm` / `pz_cm` (the rider); `step=near` (carrying within 2.5 m
+  of the horse, 1 Hz: `d_cm`, the raw E, mounted). Body 1's readback yaw equals `byaw` (`c62e2ce6`: 729 / 729) [O].
+- **Rider not yet in the saddle** (`e61febc7` / `a0a45c4a`): lab `990d2530` (a) logged the rider's own y 0.97 m under the
+  census root right after the mount (`step=pin` `py_cm` 33751 / `hy_cm` 33848) with body 1 held 0.15 m over it, by the
+  ground [O]; riding now uses the rider anchor only while the rider is at or over the census root, else the census
+  cargo point (`how=unseated`).
+- **Revive lines** (world_downed): `step=revive_wait` (the raw E held near a downed teammate while the revive does not
+  take it: carry role, the record's age, generation, xz mm; on the host `host=1` with the actor's target generation and
+  the 3 m reach) and since `a0a45c4a` `step=revive_near` (on foot within 5 m of a downed teammate, 1 Hz, 120 a mission:
+  the raw E, the revive's held, its mask, xz, age, generation).
+- **Scenarios**: the load E from `horse_flank` in all five parts (play `72e6269a`: `goto_horse` put the carrier on the
+  census root, a fall / land, and E 900 ms gave no load); (b) lab and play from the boot spot (both teleported, the
+  guest's horse called first, 12 s, a waitlog that it stands within about 25 m of the boot spot: it came in 3 of 6 runs, `ad7bbe2c`, `c62e2ce6`,
+  `49a1c525`);
+  the carry check takes the carry acts (acts 1 / 3 / 39, b1 0x2a..0x2c: `ad7bbe2c` / `c62e2ce6` (a) stopped there while the
+  host was carrying); the victim's camera turned before the load frame (`mouse 400 300` looked straight down,
+  `600 -200` level with the body; attempt 3 `600 80`); two more gallop holds in lab (a) (`990d2530` rode 37 m).
+- **Hidden runs** (lab `horse-cargo.txt` (a) + `horse-cargo-b.txt` (b) + `horse-cargo-drop.txt` (c), play
+  `horse-cargo-play.txt` (a) + `horse-cargo-play-b.txt` (b); `-WanSim bad`, the gun profile, research build, afgh-ledge;
+  claims on both logs and frames looked at):
+  - Attempt 1 (`225f213a`): lab `ad7bbe2c` and play `c62e2ce6` (a) stopped at the carry check while the host carried
+    (above). Play `c62e2ce6` (b) **passed every require**: from the boot spot the guest carried the downed host, `step=near`
+    then claim (77 cm) / grant / loaded, the first E mounted, a 178 m ride (`final_sent path_cm=17815`), the host's stance
+    CRAWL in 20 `victim_pin` windows (worst lag 59 / drop 22 cm), the dismount, the take-down at the same x,z on both copies
+    (63233,169665), the revive (`down=0`); no Unconscious or horse_hit line [O both logs]. Frames: on the carrier's screen
+    across behind the rider at trot / gallop / gallop4 and across the rump at the stop and after the dismount, but at the
+    LOAD the upper body raised upright on the rump (back to the camera) and at the walk hunched behind the rider; on the
+    victim's own screen prone on the horse, the horse in view at the trot, gallop and after the dismount, not at walk /
+    gallop4 / stop (camera straight down) [O].
+  - Attempt 2 (`1a072dfd`): lab `990d2530` (a) and (b) ran to the revive: loads, first E, rides of 37 / 159 m, the
+    victim CRAWL in 19 / 19 windows (worst drop 52 / 24 cm), the take-down at the same x,z (82979,163190 / 83833,178115),
+    0 recon placements inside the cargo hold; then the 3 s revive did not start in either order (no grant, no
+    `revive_wait`) [O]; (c) found the host still down. Carrier frames across behind the rider except (a)'s gallop frame:
+    body 1 on the ground beside the galloping horse (no recon line then; the rider-under-the-root case above is the
+    candidate [I]). Play `49a1c525`: (a) the stock pickup did not shoulder the guest; (b) the guest (still down from (a))
+    never hit the host.
+  - Attempt 3 (`6ab24575` + dev `60bc4a6a` merged, `31477fee`): lab `107977cb` (a): load, a 43 m ride (path_cm 4280, the
+    horse stopped at a rock wall), the victim CRAWL in 22 windows (worst drop 12 cm), the take-down at the same x,z
+    (83185,163333); every carrier frame of the ride and the stop shows body 1 across the horse behind the rider [O]; the
+    revive did not start: `revive_near` on the carrier shows the revive mask set and `held=1` for about 3 s, then the
+    victim's record 517 ms old (`age_ms=517`, over the revive's 500 ms), the mask dropped and the hold restarted as the E
+    holds ran out [O host log] - under `-WanSim bad` one late status reset the 3 s hold. (b): the guest's horse did not
+    come to the boot spot and the stock pickup did not shoulder the host. Play `2a41c416` (a) **passed every require**: load
+    from the flank (`step=near` 84 / 76 cm), first E, a 44 m ride, the guest CRAWL in 20 windows (one window drop 203 cm
+    across M1's final, as `a53a243a`), the take-down (the host's `step=unloaded` line dropped by `world=log_cap`, the
+    lrrp module's lines; the guest laid body 0 at the host's point, `from=partner`), the revive (`step=grant`, `down=0`,
+    frame h2-revived both standing); on the victim's own screen lying on the horse with the horse in view at trot,
+    gallop, gallop4, the stop and both frames after the dismount [O]. (b) the horse did not come and the host was not hit.
+  - **Gate not passed** (three attempts used): never in one session both orders through the revive; the lab revive
+    failed in 3 of 3 sessions since `a53a243a` (cause above for `107977cb`; for `990d2530` [U], no near line then); rides in
+    (a) 37-44 m (under 50 m); the load pose on the carrier's screen (upper body raised: the downed pose, act 5, its yaw =
+    the hold's [O]); the victim's frames without the horse at walk and the load; the link drop (c) not reached this round.
+    world_horse_cargo stays off unless named.
+  - **Next:** hold E 6 s or more in the scenarios' revives (the 3 s hold restarts on one status over 500 ms old under
+    `-WanSim bad`; the players' revive itself is world_downed / world_revive_input, unchanged); a longer straight (a)
+    ride on open ground (turn away from the rock walls); run (b) before (a) or call the horse with more time (it came in 3
+    of 6 boot-spot recalls); a scenario guard that revives / waits out a down left by a failed part (the cascade into the
+    next part's downing and pickup); the pose at the load (try the A0 reset once at the first hold, or hold until the stock
+    put-down's last act ends); then the play pair, (c), the flip and one run with the key not named.
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed
