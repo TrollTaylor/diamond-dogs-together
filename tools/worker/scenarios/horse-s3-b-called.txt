@@ -1,0 +1,205 @@
+# Step S3 attempt 2, part 1 (lab): NO horse key named but world_horse_down_off (session-wide; it acts only on a rider
+# downed while riding). Order (b) FIRST with horses CALLED the stock way (horse_spawn; no horse_here: attempt 1 and S2
+# saw body 1 stand from the seating with every horse_here horse, and sit at idle with a called one): idle / walk /
+# trot / gallop frames, the rock push, the hop-off, the driver's E; then (c1): the guest mounts again (first E),
+# the host on foot makes a guard hostile (spawn_enemy here come; debug commands are refused while mounted), the
+# guest's godmode off just before: the guest driver downed on the horse, getoff (horse_drive=getoff), the revive.
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting world_horse_down_off=1
+boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
+logmark both
+both debug godmode 1
+host debug clear_enemies 100
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+# --- (b) the guest drives (from the boot spot; the trot turns left away from what may stand ahead): its first
+# E at the unridden horse mounts it; the host's own E sits the host behind.
+logmark both
+guest run goto_horse
+wait 1500
+both capture h3b-before
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+waitlog host 'partner_mount=show; mount=horse;' 10
+host run goto_horse
+wait 1500
+logmark both
+host press e 150
+waitlog host 'world_lua=event=horse_pillion; step=seated; seat=1; how=host_press; token=[0-9]+; mode=6;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=driver; seat=1; how=host_press;' 5
+waitlog guest 'partner_pillion=seat;' 5
+host run horse_status
+host require localMounted=0
+wait 1500
+host capture h3b-idle-host
+guest capture h3b-idle-guest
+# Side views (the rider in front hides the other from straight behind): the passenger's camera is free; the driver turns
+# its camera back before it rides (W steers by the camera).
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+host capture h3b-idle-side-host
+guest capture h3b-idle-side-guest
+host mouse -1200 0
+guest mouse -1200 0
+wait 600
+guest hold w 1500 nowait
+host burst h3b-walk-host 3 250
+guest hold w 1500 nowait
+guest burst h3b-walk-guest 3 250
+guest hold w+a 1500 nowait
+host burst h3b-trot-host 3 250
+guest hold w+a 1500 nowait
+guest burst h3b-trot-guest 3 250
+guest hold w+shift 1500 nowait
+host burst h3b-gallop-host 4 200
+guest hold w+shift 1500 nowait
+guest burst h3b-gallop-guest 4 200
+guest hold w+shift 1500 nowait
+host burst h3b-gallop3-host 4 200
+guest hold w+shift 1500 nowait
+guest burst h3b-gallop3-guest 4 200
+guest hold w+shift+a 1500 nowait
+host burst h3b-gallop2-host 3 250
+guest hold w+shift+a 1500 nowait
+guest burst h3b-gallop2-guest 3 250
+guest release
+host burst h3b-gallopfree-host 3 300
+guest burst h3b-gallopfree-guest 3 300
+wait 3000
+host capture h3b-stopped-host
+guest capture h3b-stopped-guest
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+host capture h3b-stopped-side-host
+guest capture h3b-stopped-side-guest
+host mouse -1200 0
+guest mouse -1200 0
+waitlog guest 'world_lua=event=horse_pillion; step=first_move; ms=' 5
+waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
+waitlog guest 'partner_pillion=stats;' 5
+# Step S2: a deliberate stop against rock (play 79287a27 (b): body 1 STANDING on the rump after the horse stalled at a
+# rock wall, the overlay still playing). The driver gallops on (rock walls stand west / north-west of this ride) until the
+# horse stalls (step=stall: ride keys held, under 0.3 m in 2 s); frames on both screens of the push and the stop, side on;
+# partner_pillion=stats now logs body 1's act / stance / upper act, the overlay phase, its DM record and the seat grace.
+logmark both
+guest hold w+shift 1500 nowait
+host burst s2b-rock1-host 3 400
+guest hold w+shift 1500 nowait
+guest burst s2b-rock1-guest 3 400
+guest hold w+shift 1500 nowait
+host burst s2b-rock2-host 3 400
+guest hold w+shift 1500 nowait
+guest burst s2b-rock2-guest 3 400
+guest hold w 1500 nowait
+host burst s2b-rock3-host 3 400
+guest hold w 1500 nowait
+guest burst s2b-rock3-guest 3 400
+waitlog guest 'world_lua=event=horse_pillion; step=stall;' 3
+guest release
+wait 1500
+host capture s2b-rock-stop-host
+guest capture s2b-rock-stop-guest
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+host capture s2b-rock-side-host
+guest capture s2b-rock-side-guest
+host mouse -1200 0
+guest mouse -1200 0
+wait 600
+guest burst s2b-rock-after-guest 3 500
+waitlog guest 'partner_pillion=stats; xz_cm=[0-9]+; dy_cm=-?[0-9]+; n=[0-9]+; act=' 5
+# The passenger (the host) hops off; the driver's E (the guest, held 400 ms) gets the driver off.
+logmark both
+host hold e 500
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
+waitlog guest 'partner_pillion=end;' 5
+wait 1500
+host run horse_status
+host require localMounted=0
+host capture s-b-hopped-off-host
+guest capture s-b-hopped-off-guest
+guest press e 400
+waitlog guest 'world_lua=event=horse_pillion; step=driver_e_off;' 5
+wait 2500
+guest run horse_status
+guest require localMounted=0
+waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
+host capture s-b-both-off-host
+guest capture s-b-both-off-guest
+wait 2000
+
+# --- (c1) the guest drives again and is downed on the horse by a guard the host (on foot) makes hostile.
+wait 2000
+logmark both
+guest run goto_horse
+wait 2000
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+host hold s 900
+host release
+wait 600
+guest debug godmode 0
+wait 300
+guest run status
+guest expect ^status;.*god=0;.*life=
+host run spawn_enemy here come
+host expect ^guard_here;ent=
+host run enemy notice nearest
+host mouse 1200 0
+both capture s3c1-before
+host burst s3c1-shot-host 4 1000
+guest burst s3c1-shot-guest 4 1000
+waitlog guest 'world_lua=event=downed; step=entered;' 40
+both capture s3c1-down
+waitlog guest 'horse_drive=getoff; ok=1;' 6
+host run enemy ignore nearest
+host expect ^enemy_ignore;ent=
+wait 1500
+guest run horse_status
+guest expect localMounted=0
+both capture s3c1-down-1s
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+guest run downed_status
+guest expect down=1
+both capture s3c1-down-4s
+logmark both
+host debug goto_carry
+wait 1500
+both capture s3c1-before-revive
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest expect down=0
+both capture s3c1-revived
+guest debug godmode 1
+wait 1000

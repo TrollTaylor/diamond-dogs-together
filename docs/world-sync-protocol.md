@@ -2612,3 +2612,90 @@ No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. N
 - New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
   planned puppet and at the end of a kept walk.
 - `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.
+
+## 47. Enemy round 11 track A: the quiet move for walkers too, then their re-plan (lab key `quiet_place`, native only; design 7.31)
+
+No new op, world note, receipt token or CFG bit; no wire change. The guest's Lua still names an off-screen correction
+quiet (` 1` on `WORLD_WARP_V1`, section 39).
+
+- Native `GuestWarpReceipt` with `quiet_place`: `soldier_act::QuietCheck` now answers `walk` for a walking guard (slot
+  speed over 0.5 m/s or unknown) or one whose follower path ends more than 2 m from both him and the target, and
+  `stance` for a stance nibble (S+0x98 records +0x34 & 0xf) of 3-4 or unread. `ok` and `walk` are staged for the quiet
+  warp (`walk` with a re-plan); every other answer sends the set-transform message as before. `world_place=warp` prints
+  `quiet=<ok|unknown|stale|unrealized|unlisted|walk|stance>` (`moving` / `path` are no longer given).
+- Hook thread, after the original manager update (`QuietPlanStep`): a quiet-moved walker whose request is a started walk
+  (dest mode 1, `R+0x19c` = 0xffff, `R+0x19e & 3` = 2) is planned with the shadow gate object through 0x1413725f0
+  (section 40) from his slot position to R+0x80; a live planner slot of another type is cancelled first (planner
+  vt[0x10]); a planner slot that could not be read gives `step=none` (no plan, no cancel). One line per move: `world_place=quiet_plan; go; seq; idx; mode; r19c; r19e; slot; slot_h; fol; step=<none|busy|plan|cancel_plan>;
+  started; handle; p; dest`; kPlanCheckMs later one `soldier_act_plan` line (section 40) for a plan that started.
+- Lua `event=readback; src=quiet`: a fourth read-back at 10 s (`at=10000`); every quiet read-back adds `dho_m` (x/z from
+  the owner copy: the host's last sample of the guard moved on by its speed for at most 400 ms) and `oage_ms` (that
+  sample's age).
+- Contract: no new site (the stance nibble is the census's `rec_stance`, the plan calls are act_plan's sites).
+- Round 12 (design 7.31): with `quiet_place` the native asks for the quiet move for every correction (` 1` or not); the
+  guest's `world_place=warp` line adds `; view=on|off` after `quiet=` (the Lua's flag). Native `HostWarpReceipt` does the
+  same for the host's M3 placements: reply `leaf="quiet"`; `world_place=host_warp` prints `leaf=quiet` and ends with
+  `; quiet=<why>` when asked; the hook logs `soldier_act_quiet=on; rest=on; role=<host|guest>`. Lua: a `src=place`
+  read-back carries `dho_m` / `oage_ms` as `src=quiet` does (log only; at the defaults too). No new op, note or site.
+
+## 48. Enemy round 11 track B: the lrrp lines cut, the crew hold, the clock offset (no new op, CFG bit or contract site; design 7.32)
+
+No wire change. Inside `lrrp_follow` (on in 30010 at the defaults, named 1 any map), Lua only (world_lrrp.lua):
+
+- Lines (the log flood: horse run `2a41c416`'s host lost 1788 Lua lines to `world=log_cap`): the host's `step=host` 2 Hz
+  while its truck moves (was 4 Hz), every 5 s manned at rest (was 1 s), every 30 s empty (was 5 s), and at once when its
+  rider count changes; `step=riders` (both roles) when the rider set changes, else every 2 s while the truck moves and
+  every 10 s otherwise (was with every host / follow line); `step=crew` one line per truck, up to 4 members a line,
+  `step=crew; id; rl; c=ent:x:z:in,...` (in 1 seated; was one line per member), every 2 s for 60 s after a rider-count
+  change (was 1 s; on the guest every 10 s for a truck the host never had manned); the guest's `step=follow` once a second
+  while the host's truck moves, else every 10 s (was 1 s manned, 5 s empty), and at once when its mode or a rider count
+  changes.
+- New lines: `step=origin; role; id` once per id when a pose read at x = 0, z = 0 is dropped; the host's
+  `step=crew_out; id; ent` at each get-out it sees; `step=crew_hold; ent; after_ms; dh_m; dq_m` once per get-out when the
+  hold answers the owner decision.
+- The crew hold (host, M3 `W.ownerOn`; only with `lrrp_follow` named, cfg 1): for 10 s after a crew member's get-out on the host (`W.crewOutAt[ent]`), while the
+  host owns him, `P.ownerOf` answers 0 (no OWNER 73 hand-over to the guest); one the guest already owns is left to the
+  owner decision; after 10 s the owner decision as before.
+- The guest's clock offset per truck (LRRP_FAST 93's sender tick): the lowest of the last second's samples, a lower one at
+  once (was the lowest ever, rising 2 % a sample). Round 11's land fix had it named-only; enemy round 12 B: whenever
+  `lrrp_follow` is on, the defaults too (30010 by the gun profile). The crew hold stays named-only.
+- Enemy round 12 B lines (guest, so a run can show the lead's cause): `step=off; id; rise_ms; lag0_ms` when a window
+  raises the offset by 100 ms or more (at most once per 2 s per truck; `lag0_ms` = how far the 0.15.3 filter, kept as a
+  shadow for the lines, lags the new offset); `step=follow` carries `ah; ah0` at its end (the lead used and the 0.15.3
+  filter's, ms, each capped at 400).
+
+## 49. Enemy round 11 track C: the hook's lease, the glide, the release watch, the host copy's next path point (lab key `act_plan`, native only; with `soldier_act`; design 7.33)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged; the wire format is unchanged. Native only,
+under `act_plan`.
+
+- SOLDIER_ACT (0x58) request parts: with `act_plan` on the host, a walk's packed destination (request +0x40, dest mode
+  +0x61 == 1) is the next point of the host copy's own follower path (`CornerTarget`), not the leg's end; the leg's end
+  when that point is within 1 m of it (a full path's last segment) or with no readable path (2..32 points); a partial
+  path's last point on its last segment. A guest without `act_plan` takes a walker only while the packed destination is
+  within 3 m flat of its own leg end (`LegMatch`), so a corner target makes its takes wait (`leg_wait`) except where the
+  target is the leg's end: name `act_plan` on both copies.
+- `ACT_V1 m` (SetMirror): with `act_plan` a stale mail keeps the hook's lease and the fire-drop stamp of the last fresh m
+  (they lapse 1.5 s after it); the reply's `f` is unchanged.
+- `ACT_V1 q` (QueryFresh): with `act_plan` a request that is not a walk with this copy beyond 15 m of the owner copy is
+  not taken (`near_wait`); walks are taken whatever their leg or distance.
+- New lines `soldier_act_glide; t; idx; first; d_m; p; at; lent; gait` (guest) and `soldier_act_corner; t; idx; n;
+  target; dest; p` (host); `soldier_act_release` adds the steps `watch` / `watch_none`.
+- `soldier_act_frame` adds `glide`, `rel_watch`, `corner` after `recheck`.
+- Round 12 (enemy round 12 track C): ACT_CAPS (0x5C) carries FM1 revision 7 ({caps, 7}); a partner whose revision is
+  older (or who sends none) mirrors nothing (`why=peer`; a revision 6 host sends nothing, a revision 7 guest releases).
+  The revision does not say whether `act_plan` is on: a revision 7 copy without it still pairs, and its takes of
+  corner-targeted walks wait on `LegMatch` (above). With caps bit 2 (the calm limit) any CP at EVASION / ALERT
+  (localPhase >= 2) on the guest releases every puppet and stops takes (`why=phase_limit`), not only the guard's own
+  CP. No new op; Lua only.
+- Round 13 (enemy round 13 track C; the user's decision D-FM3 (b)): a new local receipt op, not on the wire: ACT_V1
+  `w <slot> <goId>` (guest only; refused "role" on the host, "paused" while paused). Lua sends it after a puppet's m
+  while both his own spot and his owner copy's spot (the m reply's ox / oz) lie outside the guest's camera cone (the
+  M-series 100-degree cone of `P.seen` with no distance cut, so binoculars and scopes count: they look along the same
+  yaw). For 1 s after it (`kOffViewMs`) native skips the glide for that guard's walk applies (take or re-apply) and
+  does not hold a re-apply that would warp, so the unpack's own 15 m warp puts a copy more than 15 m off on his owner
+  copy's spot; under 15 m he walks / waits as before. `soldier_act_warp15` adds `off` (1: an off-view warp). New Lua
+  lines (guest): `event=mirror_view;ent;view=on|off;apart_m;yaw` when a puppet's verdict changes, and
+  `event=mirror_cam;x;z;yaw` every 2 s while a puppet lives (the jump row's "could a player see it"). R(caution) is 90 m
+  (1.5 x the 58.7 m first notice in caution, run `4735fee5`). No wire change, no CFG bit, no contract site; ACT_CAPS
+  stays revision 7 (only the guest decides; a revision 7 guest without it glides as before).

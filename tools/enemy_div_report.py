@@ -64,6 +64,39 @@ def build_id(lines):
     return 'unknown'
 
 
+def walk_owner(lines, prefix):
+    """Enemy round 11 / 12 track A (design 7.31): per walker quiet move (its own quiet warp line, `prefix` ... leaf=quiet,
+    says quiet=walk; its next at=500 read-back starts it) the 2 s / 10 s read-backs' x/z distance to the owner copy
+    (dho_m) within 3 m: {'walk_owner_2s': {read, within_3m, walkers}, 'walk_owner_10s': {...}}."""
+    kind, wm, wcur = {}, [], {}
+    for l in lines:
+        if l.startswith(prefix) and 'leaf=quiet' in l:
+            f = fields(l)
+            kind[f.get('ent')] = f.get('quiet')
+        elif 'event=readback' in l and 'src=quiet' in l:
+            f = fields(l)
+            e, at = f.get('ent'), f.get('at')
+            if at == '500':
+                wcur.pop(e, None)
+                if kind.get(e) == 'walk':
+                    wcur[e] = {'500': f}
+                    wm.append(wcur[e])
+            elif e in wcur:
+                wcur[e][at] = f
+
+    def owner3(f):
+        try:
+            return float(f.get('dho_m', 'x')) <= 3.0
+        except ValueError:
+            return False
+    o2 = [m['2000'] for m in wm if '2000' in m and 'dho_m' in m['2000']]
+    o10 = [m['10000'] for m in wm if '10000' in m and 'dho_m' in m['10000']]
+    return {'walk_owner_2s': {'read': len(o2), 'within_3m': sum(1 for f in o2 if owner3(f)),
+                              'walkers': len(set(f.get('ent') for f in o2))},
+            'walk_owner_10s': {'read': len(o10), 'within_3m': sum(1 for f in o10 if owner3(f)),
+                               'walkers': len(set(f.get('ent') for f in o10))}}
+
+
 def analyse(host, guest):
     r = {}
     # Corrections on the guest.
@@ -263,7 +296,7 @@ def analyse(host, guest):
     r['m3_hplace_while_down'] = wp
     # quiet_place: the guest's corrections moved by the quiet warp and their read-backs (x/z and y within 1 m).
     qw = [fields(l) for l in guest if l.startswith('world_place=warp') and 'leaf=quiet' in l]
-    ql = [fields(l) for l in guest if l.startswith('world_place=quiet')]
+    ql = [fields(l) for l in guest if l.startswith('world_place=quiet;') or l.startswith('world_place=quiet; ')]
     qr = [fields(l) for l in guest if 'event=readback' in l and 'src=quiet' in l]
 
     def within(f):
@@ -299,6 +332,43 @@ def analyse(host, guest):
     read = [m for m in moves if '500' in m and '2000' in m]
     r['quiet'].update({'why': why, 'readback_5s': len(r5), 'walk_on_within_2m_5s': sum(1 for f in r5 if near2(f)),
                        'moves_read': len(read), 'moves_both_within_1m': sum(1 for m in read if within(m['500']) and within(m['2000']))})
+    # Enemy round 11 track A (design 7.31): walkers' quiet moves (quiet=walk), their re-plans (world_place=quiet_plan step,
+    # started) and the owner rows: per walker move (its next at=500 read-back starts it) the 2 s / 10 s read-backs' x/z
+    # distance to the owner copy (dho_m) within 3 m.
+    # As the review checked it: a move is a walker's when its own quiet warp line (the guard's last one before its at=500
+    # read-back) says quiet=walk, so a later quiet=ok move of the same guard is not counted; a cancelled slot whose plan
+    # did not start (step=cancel_plan, started=0) is a lost plan (his brain's walk cancelled, none in its place).
+    plans = {}
+    started, lost, lost_idx = 0, 0, set()
+    for l in guest:
+        if l.startswith('world_place=quiet_plan'):
+            f = fields(l)
+            plans[f.get('step')] = plans.get(f.get('step'), 0) + 1
+            started += 1 if f.get('started') == '1' else 0
+            if f.get('step') == 'cancel_plan' and f.get('started') != '1':
+                lost += 1
+                lost_idx.add(f.get('idx'))
+    r['quiet'].update({'walk_moves': sum(1 for f in qw if f.get('quiet') == 'walk'), 'plans': plans, 'plans_started': started,
+                       'plans_lost': lost, 'plans_lost_guards': len(lost_idx)})
+    r['quiet'].update(walk_owner(guest, 'world_place=warp'))
+    # Enemy round 12 track A (design 7.31): the host's M3 placements quiet too (world_place=host_warp leaf=quiet), their
+    # reasons and the walkers' owner rows from the host's own read-backs (dho_m against the guest's copy).
+    hw = [fields(l) for l in host if l.startswith('world_place=host_warp') and 'leaf=quiet' in l]
+    hwhy = {}
+    for l in host:
+        if l.startswith('world_place=host_warp') and 'quiet=' in l:
+            k = fields(l).get('quiet')
+            hwhy[k] = hwhy.get(k, 0) + 1
+    r['host_quiet'] = {'warps': len(hw), 'why': hwhy, 'walk_moves': sum(1 for f in hw if f.get('quiet') == 'walk'),
+                       'moved': sum(1 for l in host if l.startswith('world_place=quiet;') and fields(l).get('moved') == '1'),
+                       'readback': sum(1 for l in host if 'event=readback' in l and 'src=quiet' in l)}
+    r['host_quiet'].update(walk_owner(host, 'world_place=host_warp'))
+    # Round 12: the message corrections' 2 s read-backs against the owner copy (src=place dho_m), per side.
+    r['place_owner_2s'] = {}
+    for side, lines in (('host', host), ('guest', guest)):
+        p2 = [fields(l) for l in lines if 'event=readback' in l and 'src=place' in l and 'at=2000' in l and 'dho_m=' in l]
+        r['place_owner_2s'][side] = {'read': len(p2), 'within_3m': sum(1 for f in p2 if float(f.get('dho_m', 99)) <= 3.0),
+                                     'guards': len(set(f.get('ent') for f in p2))}
     owners = [fields(l) for l in host if 'event=owner;' in l or 'event=owner; ' in l]
     r['m3_owner_changes'] = len(owners)
     last, fast = {}, 0

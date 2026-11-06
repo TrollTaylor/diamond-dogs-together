@@ -1,0 +1,88 @@
+# Step S3 attempt 2, part 2 (lab, after horse-s3-b-called.txt): (a) on the same horse, where part 1 left it (no
+# teleport, no horse_here, no recall): the host's first E mounts it, the guest sits behind; side frames at idle (was
+# body 1 on the host's copy - part 1's drawn driver through its rock push - seated?); then (c2): the guest in the
+# rear seat (not natively mounted) makes a guard hostile, godmode off: the passenger downed and laid off
+# (world_horse_pillion stop passenger_downed), the host's E off, the revive.
+logmark both
+both debug godmode 1
+guest run downed_status
+guest expect down=0
+host run enemy ignore nearest
+host run goto_horse
+wait 2000
+host capture h3-before
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+guest run goto_horse
+wait 1500
+# Beside it (goto_horse: 1.6 m) the ride hold masks the stock mount and E claims the rear seat; the host rides at once.
+guest run goto_horse
+wait 1500
+waitlog guest 'world_lua=event=horse_hold; step=action_masked;' 5
+logmark both
+guest press e 150
+waitlog guest 'world_lua=event=horse_pillion; step=claim; seat=1;' 5
+waitlog host 'world_lua=event=horse_pillion; step=grant; seat=1;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=seated; seat=1; how=grant; token=[0-9]+; mode=6;' 5
+waitlog host 'partner_pillion=seat;' 5
+guest run horse_status
+guest require localMounted=0
+wait 1500
+guest capture h3-idle-guest
+host capture h3-idle-host
+guest mouse 1200 0
+host mouse 1200 0
+wait 600
+guest capture h3-idle-side-guest
+host capture h3-idle-side-host
+guest mouse -1200 0
+host mouse -1200 0
+wait 600
+# --- (c2) the passenger is downed by a guard it makes hostile from the rear seat.
+logmark both
+guest debug godmode 0
+wait 300
+guest run spawn_enemy here come
+guest expect ^guard_here;ent=
+guest run enemy notice nearest
+host mouse 1200 0
+both capture s3c2-before
+host burst s3c2-shot-host 4 1000
+guest burst s3c2-shot-guest 4 1000
+waitlog guest 'world_lua=event=downed; step=entered;' 40
+both capture s3c2-down
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger_downed;' 5
+host run enemy ignore nearest
+wait 1500
+guest run downed_status
+guest expect down=1
+both capture s3c2-down-1s
+host press e 400
+waitlog host 'world_lua=event=horse_pillion; step=driver_e_off;' 5
+wait 2500
+host run horse_status
+host expect localMounted=0
+logmark both
+host debug goto_carry
+wait 1500
+both capture s3c2-before-revive
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest expect down=0
+both capture s3c2-revived

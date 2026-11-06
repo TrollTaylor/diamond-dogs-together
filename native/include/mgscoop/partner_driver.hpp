@@ -733,7 +733,17 @@ struct Settings {
     // Horse plan M4 (lab.ini world_horse_shot, with world_horse_pillion): the local passenger's shots start past the horse
     // (the pbox lease, partner_seat_shot horse class) and body 1 raises its gun in the rear seat (partner_seat_gun pillion).
     bool horse_shot;
-    bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
+    // Step S (lab.ini world_horse_pillion with world_horse_share, on with the gun profile): the rear seat's holds
+    // (horse_drive::SeatHold.grace, the DM overlay's pillion re-entry; the Lua track wait follows the same key).
+    bool horse_seat_holds;
+    // Horse plan M2h (lab.ini world_horse_cargo with world_horse_share, off unless named): while the horse cargo holds body 1
+    // on this copy (coop_carry's cargo hold, not a stock carried body 1) the reconciliation leaves it alone (pr::In
+    // body_owned: no placement or correction, a neutral armed window): run a53a243a's 32 place lines beside hold1.
+    bool horse_cargo;
+    // Step S3 (lab.ini world_horse_down_off with world_horse_share, off unless named): the motion-record log
+    // partner_pillion=mg (horse_drive::MotionLog); the Lua rrec poll and getoff follow the same key.
+    bool horse_down_off;
+    bool ui_filter;   // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
     // a ride logs partner_ride=net_rebased (partner_native_unrealize_all, "Ride hides").
     bool unrealize_all;
@@ -759,6 +769,7 @@ struct Mission {
     // partner_native_mount=hide: the act-rule episode (partner_mount=hide|end lines, capped).
     partner_mount_policy::Episode mount;
     LogCap mount_cap;
+    bool anchor_hold; // M2j: the rider body anchors no horse place (act 122 with world_horse_cargo; horse_drive=anchor_hold)
     // partner_native_unrealize_all (G5): the other ride hides' episode (heli, vehicle, horse kind 3;
     // partner_ride=unrealize|unrealize_end lines) and the partner_ride=net_rebased line of the
     // link-quality rebase after a ride (net_quality_rebase, below), on their own cap.
@@ -840,6 +851,11 @@ struct Mission {
     bool pillion_aim_on;
     float pillion_xz_max, pillion_dy_max;
     unsigned pillion_err_n, pillion_stats_lines;
+    // Step S2 (play 79287a27 (b): body 1 STANDING on the rump after a rock stall, the overlay still playing): the seat's
+    // grace ticks used in the stats window and body 1's DM record as the overlay last read it while seating it.
+    unsigned pillion_grace_n;
+    partner_player::DmState pillion_dm;
+    bool pillion_dm_ok;
     std::uint64_t pillion_stats_ms;
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
     // kRideCensusMs (the local one and the remote driver's copy), own cap.
@@ -1109,6 +1125,7 @@ struct Mission {
     bool hold_stripped; // live remote HOLD refused by the effective native mask/gate
     bool dash_fix;
     bool carry_hold; // instance 1 is in the stock carried state (coop_carry): recon holds
+    bool recon_owned; // M2h: the horse cargo's hold owns instance 1 (Settings.horse_cargo): the recon's body_owned
     bool vehicle_job; // current verified demand keeps native Arm until original exit
     partner_native::DashState dash;
     std::uint32_t recon_in_age_ms;

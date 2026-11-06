@@ -2171,6 +2171,32 @@ void TestCensusAndProbes() {
     Check(d.settings.apply == mgscoop::PartnerApply::xform && d.settings.anim == mgscoop::PartnerAnim::mirror &&
           d.settings.aset == mgscoop::PartnerAset::s && d.settings.reset == mgscoop::PartnerReset::a &&
           d.settings.look == mgscoop::PartnerLook::net && !d.settings.probe_ps && d.look_forced_rev == 1, "configure");
+    // Step S (horse): the rear seat's three holds (HoldSeat's 2-tick lease grace, the overlay's pillion re-entry, the Lua
+    // track wait) follow world_horse_pillion's default (on with the gun profile), not world_horse_shot (off unless named);
+    // a named world_horse_pillion=0 (or share 0) turns them off with the seat.
+    const auto parsed = [](const char* text) {
+        mgscoop::LabConfig c{};
+        (void)mgscoop::ParseLabConfig(text, std::strlen(text), c);
+        return c;
+    };
+    pd::Driver hg{};
+    pd::Configure(hg, parsed("enabled=1\nrole=host\npartner_native_profile=gun\n"));
+    Check(hg.settings.horse_seat_holds && !hg.settings.horse_shot, "step S: the seat holds on with the gun profile, shot key not named");
+    pd::Driver hp{};
+    pd::Configure(hp, parsed("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_pillion=0\n"));
+    Check(!hp.settings.horse_seat_holds, "step S: a named world_horse_pillion=0 turns the seat holds off");
+    pd::Driver hs{};
+    pd::Configure(hs, parsed("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_share=0\n"));
+    Check(!hs.settings.horse_seat_holds, "step S: a named world_horse_share=0 turns the seat holds off");
+    // M2h: the reconciliation leaves body 1 to the horse cargo's hold only with world_horse_cargo (and share): off at the
+    // defaults (the key is off unless named), on when named.
+    Check(!hg.settings.horse_cargo, "M2h: the cargo hand-off off at the defaults (world_horse_cargo off unless named)");
+    pd::Driver hc{};
+    pd::Configure(hc, parsed("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=1\n"));
+    Check(hc.settings.horse_cargo, "M2h: a named world_horse_cargo=1 hands body 1 to the cargo hold");
+    pd::Driver hcs{};
+    pd::Configure(hcs, parsed("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=1\nworld_horse_share=0\n"));
+    Check(!hcs.settings.horse_cargo, "M2h: world_horse_cargo without world_horse_share: no hand-off");
 }
 // Part L: the SET_PARTS gate, COPY withholding and stall recovery.
 void TestLookFix() {

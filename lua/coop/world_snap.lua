@@ -13,9 +13,8 @@
 -- when a guard near it walks another one (ENEMY_DEBUG kind 2 flag 16: route only, no placement); the guest's copy takes
 -- it (SetSneakRoute without a point: the engine's default 0xFFFF, the dispatcher's own, joins where he stands) unless it
 -- is already on it (IsOnRoute), and again right after each correction lands.
--- M7 probe (docs/world-sync-design.md 7.13; soldier_puppet, CFG r[19] bit 32, W.puppetOn; the plan's own scope for now:
--- probes behind a switch): on the guest, the copies of the host's guards it drives become puppets (SetPuppet true and
--- restrict notice: they neither move by themselves nor notice this player) driven every update (DRIVE_V1 mode 1);
+-- M7 probe (design 7.13; soldier_puppet, CFG r[19] bit 32, W.puppetOn): on the guest, the copies of the host's guards it
+-- drives become puppets (SetPuppet true and restrict notice) driven every update (DRIVE_V1 mode 1);
 -- outside 60 m or off NORMAL they are set back. Without soldier_perceive the host's AI does not perceive the guest's body
 -- (the target filter at 0x1325629 compares the target with the local player only), so the probe's puppets never fight.
 -- M7 brain (soldier_brain with soldier_perceive, CFG r[19] bit 64, W.brainOn): each guard's owner (the host, or the guest
@@ -23,7 +22,7 @@
 -- drops the other copy's hits on a player and forwards the owner's hits on the replica as SOLDIER_HIT
 -- (world_friendly.lua). The other copy of a calm guard is a puppet (SetPuppet: it never notices or fights; it stands in its
 -- idle pose (run ef7e9088) and only the M4 stream moves it; M1 corrections refuse it as disabled_local;
--- restrict notice did not hold the copies back: run 5fb44105, 89 hits on a restrict-noticed guest in 30 s); it is set free
+-- restrict notice did not hold the copies back: run 5fb44105); it is set free
 -- (its own AI fights, its damage counted only by the owner) while its CP is in ALERT, for 8 s after its owner's copy hit
 -- this player (SOLDIER_HIT: W.soldierEngaged, which also makes it discover this player), and for 8 s after this player
 -- damaged it (so a shot guard still reacts and its CP raises the alarm).
@@ -43,9 +42,9 @@ do
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
         function S.reset()
-            S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt, S.bd, S.br, S.hu = nil, {}, {}, 0, 0, nil, {}, 0, {}
+            S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt, S.bd, S.br, S.hu, S.seat = nil, {}, {}, 0, 0, nil, {}, 0, {}, {}
             S.rt = {names = nil, i = 0, cur = {}, want = {}}
-            S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, sink = 0}
+            S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, sink = 0, seated = 0}
         end
         S.reset()
         W.startHooks[#W.startHooks + 1] = S.reset
@@ -114,6 +113,19 @@ do
         end
         -- Receiver: one DRIVE_V1 for each of up to 8 NORMAL guards the other side owns within 60 m of this player, not
         -- being placed; a stale stream backs a guard off 500 ms, a refusal 2 s.
+        -- Enemy harden (design 7.30): never a guard seated in a vehicle here (vehicle_local's read, every 250 ms): no xz
+        -- step or vert snap pulls a rider out of his seat (f256bf29: 25605's riders passed the guest 12 m off, streamed).
+        function S.seatedHere(h, id, now)
+            local s = S.seat[h] or {at = -1e9}
+            S.seat[h] = s
+            if now - s.at >= 250 then
+                s.at = now
+                local ok, v = pcall(W.api.send, id, {id = "GetVehicleGameObjectId"})
+                local on = ok and type(v) == "number" and v ~= W.api.null
+                if on ~= (s.on == true) then s.on = on or nil; L("event=snap_seated;ent=%.0f;id=%d;on=%d", h, id, on and 1 or 0) end
+            end
+            return s.on
+        end
         function S.drive(now)
             local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
             local list = W.entOrder
@@ -128,7 +140,12 @@ do
                     not (dv and dv.back and now < dv.back) and P.state(en) == 0 then
                     local x, y, z = pos(en.id)
                     local slot = S.slotOf(h)
-                    if slot and x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= (W.reachOn and 160000 or 60000) then
+                    local near = slot and x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= (W.reachOn and 160000 or 60000)
+                    if near and S.seatedHere(h, en.id, now) then
+                        near = false
+                        S.n.seated = S.n.seated + 1
+                    end
+                    if near then
                         calls = calls + 1
                         S.n.calls = S.n.calls + 1
                         if not dv then dv = {}; S.dv[h] = dv end
@@ -498,8 +515,8 @@ do
             if not S.statAt or now - S.statAt >= 10000 then
                 S.statAt = now
                 local c = S.n
-                L("event=snap_stats;tx=%d;calls=%d;steps=%d;hard=%d;rest=%d;stale=%d;refused=%d;sink=%d", c.tx, c.calls, c.steps,
-                    c.hard, c.rest, c.stale, c.refused, c.sink)
+                L("event=snap_stats;tx=%d;calls=%d;steps=%d;hard=%d;rest=%d;stale=%d;refused=%d;sink=%d;seated=%d", c.tx, c.calls,
+                    c.steps, c.hard, c.rest, c.stale, c.refused, c.sink, c.seated)
             end
         end
     end

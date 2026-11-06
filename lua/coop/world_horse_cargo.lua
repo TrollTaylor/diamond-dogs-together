@@ -26,14 +26,11 @@ for k, v in pairs(CAUSE) do CODE[v] = k end
 -- TAKE_MS 0.3 s (run a49c4d76: the coop pickup shouldered the body off the horse before a 0.5 s hold).
 local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 300, 1500, 6000, 1000, 3500, 1500, 1000
 local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 450, 1100
--- Heights (step=pin and frames): an unridden census root stands 0.5-1.3 m over the carrier's ground; body 1 goes 0.45 m
--- over an unridden census and, while this copy's player rides, 0.54 m behind and 0.15 m over the rider's own position (no
--- census lag; M2g: 0.4 drew its back at the rider's mid-back in 770368d0 / 4585cc5a). On foot within 3 m a point outside
--- 0.8-2.0 m over the carrier's ground is put 1.35 m over it (5a92c73f: a census root 0.52 m over it after a ride). The
--- victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose right
--- after each placement, else 0.9 m over the census. Both bodies lie along their yaw: each is held a quarter turn from the
--- horse's yaw, across its back (M2g: body 1 at the horse's yaw lay along it over the saddle, 770368d0 host-h2-loaded).
-local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 150, 800, 2000, 1350, 3000, 2000
+-- Heights (docs/mounts.md 11): body 1 0.45 m over an unridden census; riding, 0.54 m behind and 0.15 m over the rider
+-- once the rider sits over the census root (M2h, 990d2530: 0.97 m under it right after the mount), else the census
+-- point; on foot within 3 m over 2.0 m over the ground, 1.35 m over it (M2j: no low edge). Body 0 1.3 m over the placed pose
+-- after each placement, else 0.9 m over the census. Both held a quarter turn from the horse's yaw (across its back).
+local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 150, 2000, 1350, 3000, 2000
 local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
 -- Round 2 (83ac3950 / 547b431e: body 1 trailing low at a gallop, body 0 slipping off): a warped body is drawn after
 -- the frame's own move of the rider / the placed horse, so it leads by the last per-tick move (at most 0.6 m; a bigger
@@ -45,12 +42,8 @@ C.LEAD_MAX_MM = LEAD_MAX_MM
 -- drops faster than DOWN_MMPS (a rise is immediate); the lab lever horse_probe cargo_pose sets the heights, back, rate (V).
 -- Within FACE_MM of the root the carrier is against the horse: no facing check (20aef564 refused 0.85 m away).
 local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
--- Body 0's mover: 4 the Lua Warp (the lying pose, with spells on the ground under the moving horse), 0..3 hold0 with
--- Warp's resets (bit 0 A0, bit 1 C0): none (a242d867 / c2927350) and A0 (8cfe8e97 / 7f3155c8) kept it with the horse
--- but in the airborne pose on both screens. hold0 + C0 alone (2; C0.vt+0x90 sets bit 0x20 of the 0x580 record's +0x2C0,
--- which C0.vt+0xD0 0x14128E010 clears while it answers "no fall") kept the lying pose, but a later write of the frame
--- dropped the body under the horse (run cfd2b604, drop 136-288 cm): default 14 adds the native write watch (4) and pin (8)
--- on body 0's transform (horse_body_watch). The lever picks 0..15 (4 the Lua Warp); free0 ends the pin before a lay-down.
+-- Body 0's mover (docs/mounts.md 11): the lever picks 0..15, 4 the Lua Warp, else hold0 with Warp's resets (bit 0 A0,
+-- bit 1 C0: the lying pose); default 14 = C0 + the write watch (4) + pin (8) (cfd2b604); free0 ends the pin first.
 local RESET = 14
 -- The carrier's copy holds body 1 (the downed partner) by hold1 with the same C0 + watch + pin (run cfd2b604: the Lua Warp
 -- of body 1 drew it low behind the rider at a trot / gallop on the carrier's screen); a refusal keeps the Lua Warp.
@@ -60,7 +53,6 @@ local WARP_WHY = {off = true, request = true, pins = true, receipt = true}
 C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
 local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET, relie = 1}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
-C.GROUND_LO_MM = GROUND_LO_MM
 C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM,
  VICTIM_RISE_MM, VICTIM_PLACED_MM
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
@@ -294,11 +286,24 @@ local function beginLoad(now)
 end
 -- On foot, carrying the downed partner, E held 450 ms within reach of this copy's horse and facing it.
 local function offTick(now)
- if not held("E", now) then C.heldSince, C.heldDone = nil, nil; return end
- C.heldSince = C.heldSince or now
+ -- M2h (play 72e6269a: E 900 ms at the horse while carrying, no load, no line): carrying within reach, 1 Hz, the raw E.
+ if now >= (C.nearAt or 0) then
+  C.nearAt = now + 1000
+  local h, x, _, z = cargo(false, false, false) == 1 and horse(), mine()
+  local d = h and x and sqrt((h.x - x) ^ 2 + (h.z - z) ^ 2)
+  if d and d <= REACH_MM then
+   capped("near", fmt("step=near;d_cm=%d;e=%d;mounted=%d", round(d / 10), held("E", now) and 1 or 0, mounted() and 1 or 0), 40)
+  end
+ end
+ -- M2j: an E begun while carrying logs a short hold or a lost carry.
+ if not held("E", now) then
+  if C.heldSince and not C.heldDone and C.heldCarry then capped("load_e", fmt("step=load_e;held_ms=%d", round(now - C.heldSince))) end
+  C.heldSince, C.heldDone = nil, nil; return
+ end
+ if not C.heldSince then C.heldSince, C.heldCarry = now, cargo(false, false, false) == 1 end
  if C.heldDone or now - C.heldSince < HOLD_MS or mounted() then return end
  C.heldDone = true
- if cargo(false, false, false) ~= 1 then return end
+ if cargo(false, false, false) ~= 1 then return C.heldCarry and refuse("carry") end
  local other = rec(3 - W.role)
  if not (fresh(other, now) and other.down == true and int(other.generation, 1, 4294967295)) then return refuse("awake") end
  local h = horse()
@@ -333,7 +338,9 @@ local function loadTick(now)
   -- The E that loaded them, still held, never takes them down: the take-down waits until E and R have been up once.
   C.takeArmed = not held("R", now) and not held("E", now)
   send(LOADED, 0, C.gen, h.x, h.y, h.z, h.yaw)
-  log(fmt("step=loaded;seat=2;gen=%d;role=carrier;hx=%d;hz=%d", C.gen, round(h.x / 10), round(h.z / 10)))
+  local _, _, _, a = cargoPoint(h)
+  log(fmt("step=loaded;seat=2;gen=%d;role=carrier;hx=%d;hz=%d;hyaw=%d;byaw=%d", C.gen, round(h.x / 10), round(h.z / 10), h.yaw,
+   round((a + pi / 2) * 1000)))
   pin(h)
  elseif now - C.loadAt > LOAD_MS then stop(now, "load_timeout", false) end
 end
@@ -341,14 +348,15 @@ end
 local function bodyPoint(h, rides)
  local x, y, z, a = cargoPoint(h)
  local px, py, pz = mine()
- if rides and px then
+ if rides and px and py >= h.y then
   local lx, lz = lead(C.lastMine, px, pz)
   C.lastMine = {px, pz}
   return px - RIDE_BACK_MM * sin(a) + lx, py + RIDE_RISE_MM, pz - RIDE_BACK_MM * cos(a) + lz, a, "rider"
  end
  C.lastMine = nil
+ if rides then return x, y, z, a, "unseated" end
  if px and sqrt((h.x - px) ^ 2 + (h.z - pz) ^ 2) <= NEAR_MM then
-  if y > py + GROUND_HI_MM or y < py + GROUND_LO_MM then
+  if y > py + GROUND_HI_MM then
    C.dyFix = py + GROUND_MM - h.y
    return x, py + GROUND_MM, z, a, "ground"
   end
@@ -396,9 +404,10 @@ local function carrierTick(now)
  hold1(bx, by, bz, ba)
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS
-  local _, py = mine()
-  capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d", how, rides and 1 or 0, round(h.y / 10),
-   py and round(py / 10) or -1, round(by / 10)), 60)
+  local px, py, pz = mine()
+  capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d;hyaw=%d;byaw=%d;bx_cm=%d;bz_cm=%d;px_cm=%d;pz_cm=%d", how,
+   rides and 1 or 0, round(h.y / 10), py and round(py / 10) or -1, round(by / 10), h.yaw, round((ba + pi / 2) * 1000), round(bx / 10),
+   round(bz / 10), px and round(px / 10) or -1, pz and round(pz / 10) or -1), 60)
  end
  if now >= C.keepAt then C.keepAt = now + KEEP_MS; send(KEEP, 0, C.gen, h.x, h.y, h.z, h.yaw) end
  if not C.takeArmed and not held("R", now) and not held("E", now) then C.takeArmed = true end

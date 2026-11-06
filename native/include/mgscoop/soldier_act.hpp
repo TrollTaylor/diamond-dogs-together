@@ -114,14 +114,75 @@ struct RestView {
     bool realized, listed, has;
     float speed_mps;
     float pos[3], end[3];
+    // Enemy round 11 track A (design 7.31): the stance nibble S+0x98 records +0x34 & 0xf the set-transform handler reads
+    // (0xff: not read).
+    std::uint8_t stance = 0xff;
 };
-enum class QuietWhy : std::uint8_t { ok, unknown, stale, unrealized, unlisted, moving, path };
+// Round 11 (design 7.31): walk = a walking guard or one with a path ahead: the quiet move, then his re-plan (QuietPlan);
+// stance = stance 3-4 or unread: the message (its rotated pose; no action post there). moving / path are no longer given.
+// Round 13 (design 7.31): fast = the owner copy moves over kQuietFastMps (a vehicle): the message, as the defaults.
+enum class QuietWhy : std::uint8_t { ok, unknown, stale, unrealized, unlisted, moving, path, walk, stance, fast };
 inline constexpr std::uint64_t kRestMs = 250, kRestStaleMs = 1500;
 inline constexpr float kRestSpeedMps = 0.5f, kRestPathM = 2.0f;
 // ok only when the view is at most kRestStaleMs old, realized, listed, his speed known and at most kRestSpeedMps, and no
 // path of his ends more than kRestPathM (x/z) from both where he stands and the target (he would walk there after it).
 QuietWhy QuietChoose(const RestView& r, const float (&target)[3], std::uint64_t now_ms) noexcept;
 const char* QuietWhyName(QuietWhy why) noexcept;
+// Enemy round 11 track A (design 7.31): after a quiet move of a walker, his re-plan from where he now stands to his own
+// brain's destination R+0x80 (the shadow plan 0x1413725f0 of act_plan): only for a started walk (dest mode 1,
+// PlanGate); his brain's live slot of another type is cancelled first (PlanSlot); another type with no handle: busy.
+// slot_read: whether his planner slot was read at all (the review: an unread slot is no empty slot): none if not.
+// Round 13: replan = our own live plan re-planned toward the owner copy (QuietPlanFollow).
+enum class QuietPlan : std::uint8_t { none, busy, plan, cancel_then_plan, replan };
+QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle, bool slot_read) noexcept;
+const char* QuietPlanName(QuietPlan step) noexcept;
+// Enemy round 12 track A (design 7.31): which place warps ask for the quiet move (QuietCheck then decides). off_screen:
+// the guest's Lua said the guard is off its player's screen; host: the host's M3 placement (WORLD_WARP_HOST_V1);
+// correction: grant kind 3; go: the GameObjectId (type 2 = soldier).
+bool QuietAsk(bool quiet_place, bool off_screen, bool host, bool correction, std::uint32_t go) noexcept;
+// Whether the request manager hook (and its rest views) runs the quiet moves on this role: lab key, soldier_follow, and
+// for a host soldier_owner (M3).
+bool QuietHook(bool quiet_place, bool soldier_follow, bool soldier_owner, bool host) noexcept;
+// Enemy round 13 track A (design 7.31): the owner copy's track from its two newest correction samples (world::Core::
+// EntGrants; metres, pop time). Rounds 11-12 re-planned a moved walker to his own brain's destination R+0x80: far walkers
+// then followed their host copies worse than the default move (2 s: 16/27 and 13/31 within 3 m), and a guard standing
+// on a ledge on the host walked off it on the guest. Now the re-plan goes where the owner copy walks.
+struct OwnerSample {
+    bool valid;
+    float pos[3];
+    std::uint64_t rx_ms;
+};
+// unknown: one sample, or two under kOwnerMinDtMs / over kOwnerMaxDtMs apart (to = the newest spot); stand: slower than
+// kQuietStandMps (to = its spot: he keeps standing there); walk: to = its spot moved on by its speed for its age +
+// kQuietLeadMs, at most kQuietLeadMaxMs (y its own); fast: over kQuietFastMps (to = its spot; QuietOwnerWhy: the message).
+enum class QuietLead : std::uint8_t { unknown, stand, walk, fast };
+inline constexpr std::uint64_t kOwnerMinDtMs = 250, kOwnerMaxDtMs = 4000, kQuietLeadMs = 3000, kQuietLeadMaxMs = 4500;
+inline constexpr float kQuietStandMps = 0.4f, kQuietFastMps = 4.5f;
+QuietLead QuietLeadFor(const OwnerSample& cur, const OwnerSample& prev, std::uint64_t now_ms, float (&to)[3], float& speed) noexcept;
+const char* QuietLeadName(QuietLead lead) noexcept;
+// ok / walk with a fast owner copy: fast (the set-transform message); any other reason as it is.
+QuietWhy QuietOwnerWhy(QuietWhy why, QuietLead lead) noexcept;
+// Whether a quiet move re-plans him: a walker (any lead), or a guard at rest whose owner copy walks.
+bool QuietReplan(QuietWhy why, QuietLead lead) noexcept;
+// QuietPlanChoose, else replan when our own live plan (`ours`: the handle his last quiet plan got) holds R+0x19c and his
+// planner slot (kMoveHash, the same handle) in a walk (dest mode 1): the planner replaces a plan of its own type. Round 12:
+// every later move gave step=none and he walked the rest of our first plan's path on.
+QuietPlan QuietPlanFollow(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle, bool slot_read, std::uint16_t ours) noexcept;
+// The follow after a quiet plan (hook thread): a newer owner sample re-plans him when the target moved more than
+// kQuietFollowMoveM or the lead changed, until kQuietFollowMs after his last quiet move.
+inline constexpr std::uint64_t kQuietFollowMs = 12000, kQuietFollowPollMs = 400;
+inline constexpr float kQuietFollowMoveM = 1.0f;
+struct QuietFollow {
+    bool on;
+    std::uint32_t ent, go;
+    std::uint16_t seq, ours;
+    std::uint64_t until, last_rx;
+    QuietLead lead;
+    float to[3];
+};
+bool QuietFollowDue(const QuietFollow& f, std::uint64_t rx_ms, QuietLead lead, const float (&to)[3], std::uint64_t now_ms) noexcept;
 // Whether idx is among the first count entries of the realized list.
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept;
 #ifdef _WIN32
@@ -199,7 +260,9 @@ bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned 
 // (leg_wait 775) and the 10 m rule (near_wait 53) and stayed 17-45 m off). With act_plan a walker is taken whatever his leg
 // or distance: the plan walks him onto the host copy's path, and beyond 15 m the take opens with the unpack's warp. Without
 // it, LegMatch as round 6. 0 taken, 1 leg_wait, 2 near_wait.
-unsigned TakeWait(bool plan, bool leg_match, bool take_near) noexcept;
+// Round 11 C: the third argument is no_warp (!TakeWarps): with act_plan a take that would open with the unpack's warp
+// waits (near_wait); a walk glides (GlideEntry), so walkers are still taken whatever their leg or distance.
+unsigned TakeWait(bool plan, bool leg_match, bool no_warp) noexcept;
 // The plan check (round 10 C; 226fc789 / c0c3d088: 4 and 2 plans with no path yet at 300 ms): kPlanCheckMs after a plan,
 // then every kPlanCheckMs up to kPlanRechecks more times while the path is missing or ends beyond kPlanEndM of R+0x80 (the
 // query may still run); the last check's verdict is the one counted.
@@ -227,6 +290,58 @@ inline constexpr float kReleaseArriveM = 1.5f;
 inline constexpr std::uint64_t kReleaseArriveMs = 2000, kReleaseWalkMs = 180000;
 enum class ReleaseWalk { walk, finish, over };
 ReleaseWalk ReleaseWalkStep(bool ours_live, std::uint64_t near_ms, std::uint64_t age_ms) noexcept;
+// Enemy round 11 track C (act_plan, design 7.33; runs 15aa58cb / 689e654c).
+// - MirrorLease: with act_plan an m whose mail is stale keeps the hook's last fresh lease (it lapses kActFreshMs after the
+//   last fresh m) instead of ending it at once (689e654c: the hook released guard 18 and took him again 10 times while
+//   Lua held him: one late resend over -WanSim bad). A fresh m stamps now.
+std::uint64_t MirrorLease(bool fresh, std::uint64_t was_ms, std::uint64_t now_ms) noexcept;
+// - GlideEntry: with act_plan a walk's lent entry (wire +0x61 == 1) lies at most kGlideM (3D) from this copy, toward the
+//   owner copy, so the unpack's 15 m warp never moves him (689e654c: 5 take warps of 18-49 m a run, 5 at once at the
+//   caution retake): the plan and the catch-up gait (from the owner copy's real position) walk or run him onto the host
+//   copy's walk. True when clamped; else entry = owner.
+inline constexpr float kGlideM = 14.0f;
+bool GlideEntry(const float (&self)[3], const float (&owner)[3], float (&entry)[3]) noexcept;
+// - TakeWarps: a take that would open with the unpack's warp: a request that is not a walk (wire +0x61 != 1) with this copy
+//   beyond 15 m (3D, Warp15) of the owner copy; a walk glides. Unknown positions: no warp (the unpack lends his own).
+bool TakeWarps(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept;
+// - The release watch: for kWatchMs after a release (and after a released walk's end) a copy whose brain re-targeted a
+//   walk with no path (ReleaseFreeze: dest mode 1, (R+0x19e & 3) == 2, R+0x19c 0xffff, a free or move slot, no follower
+//   path, R+0x80 beyond kReleaseArriveM flat) for kWatchFreezeMs is planned to R+0x80 with the shadow plan (689e654c:
+//   guard 15 stood 15 s at his kept walk's end: his brain set R+0x80 to its next route point with no new request, R+0x19c
+//   and his slot cleared, no path). His brain's own type in his slot, or kWatchMs, ends the watch.
+inline constexpr std::uint64_t kWatchMs = 60000, kWatchFreezeMs = 500;
+bool ReleaseFreeze(unsigned dest_mode, std::uint16_t r19e, std::uint16_t r19c, std::uint64_t slot_hash, std::uint16_t slot_handle,
+                   bool path, float d_dest_m) noexcept;
+enum class WatchStep { wait, plan, end };
+WatchStep WatchChoose(bool freeze, std::uint64_t freeze_ms, std::uint64_t age_ms, std::uint64_t slot_hash) noexcept;
+// - CornerTarget (the owner side): with act_plan the host sends a walk's destination as the next point of the host copy's
+//   own follower path, not the leg's end (15aa58cb / 689e654c: guard 15's host copy walked the route's L - north 15 m,
+//   then east - while the puppet's plan took the straight line to the leg's end and led by p50 3 m, p90 6.6-10.8 m). The
+//   point after the segment nearest `self` (flat); within kCornerM (flat) of it, the one after. False (send the leg's end)
+//   with fewer than 2 points or when that point lies within kPlanEndM (3D) of `dest`.
+inline constexpr float kCornerM = 2.0f;
+bool CornerTarget(const float (*points)[3], unsigned count, const float (&self)[3], const float (&dest)[3], float (&target)[3]) noexcept;
+// Enemy round 13 track C (design 7.33 round 13; the user's decision D-FM3 (b)): a far-mirror walk may open with the
+// unpack's 15 m warp onto the owner copy's spot (no glide) only while both this copy's and the owner copy's spots are
+// outside the guest's view. Lua stamps that per puppet with ACT_V1 w after his m (the M-series 100-degree camera cone of
+// world_place_guest.lua with no distance cut: binoculars and scopes look along the camera's yaw); the stamp lapses
+// kOffViewMs after the last w. GlideOn: with act_plan a walk (wire +0x61 == 1) with this copy's position known glides
+// (GlideEntry) unless the stamp is fresh.
+inline constexpr std::uint64_t kOffViewMs = 1000;
+bool OffViewFresh(std::uint64_t stamp_ms, std::uint64_t now_ms) noexcept;
+bool GlideOn(bool plan, bool walk, bool have_self, bool off_view) noexcept;
+// Round 13 C (run 1fb060aa: guard 18's host copy stood 44.8 m from his guest copy at pairing, so his take waited on
+// near_wait and came 11 s later in the guest's view as a 35.9 m glide): TakeNoWarp - a take that would open with the
+// unpack's warp (TakeWarps) is allowed while the off-view stamp is fresh (Lua sends ACT_V1 w for a candidate too, from the
+// q reply's owner position, then asks q again).
+bool TakeNoWarp(bool take_warps, bool off_view) noexcept;
+// Round 13 C (1fb060aa: guard 246's host copy stood 78 s with a walk request and a follower path while his puppet walked
+// the corner target 12.7 m ahead and waited there; the place error counted 12.7 -> 0.7 m as the host copy then walked up):
+// with act_plan the host sends a walk's destination as the host copy's own position while he has stayed within
+// kOwnerStillM (flat) of one spot for kOwnerStillMs. OwnerStill keeps that spot and its time per guard (ref, ref_at).
+inline constexpr float kOwnerStillM = 0.5f;
+inline constexpr std::uint64_t kOwnerStillMs = 2000;
+bool OwnerStill(const float (&self)[3], float (&ref)[3], std::uint64_t& ref_at, std::uint64_t now_ms) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
@@ -260,6 +375,8 @@ unsigned SendStaged(std::uint64_t now_ms) noexcept;
 // Puppet side: mirror guard `idx` (roster `slot`) or release him. On, pulls the newest SOLDIER_ACT of the slot into the
 // hook's mailbox; true when the request is fresh (kActFreshMs). Off clears his mailbox and the fire-drop bit.
 bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) noexcept;
+// Round 13 C (D-FM3 (b)): ACT_V1 w - puppet `idx`'s and his owner copy's spots are outside the guest's view now (OffViewFresh).
+void SetOffView(unsigned idx, std::uint64_t now_ms) noexcept;
 void ReleaseAll() noexcept;
 // Candidate side: whether the slot's newest SOLDIER_ACT request is fresh (kActFreshMs); arms nothing (no mailbox, no
 // hook apply, no fire drop). Lua sends m only once the guard is a puppet (run 3bc7280b: m on candidates armed the fire
@@ -288,6 +405,9 @@ struct Counters {
     // Round 10 C: rel_keep / rel_replan = released walks kept / planned again (ReleaseChoose); rel_end = released walks
     // finished or over; recheck = plan checks run again (PlanCheckVerdict again).
     std::uint32_t rel_keep, rel_replan, rel_end, recheck;
+    // Round 11 C: glide = walk applies whose entry GlideEntry clamped; rel_watch = released copies planned by the watch;
+    // corner = host requests sent with the host copy's next path point (CornerTarget).
+    std::uint32_t glide, rel_watch, corner;
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the
@@ -300,13 +420,19 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
 bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm = nullptr) noexcept;
 // The owner copy's position (mm) in guard idx's mailbox (the order part, flag bit 0); false when none.
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept;
+// Round 13 C (D-FM3 (b)): the owner copy's position from the slot's newest SOLDIER_ACT order part, for the q reply (a
+// candidate: Lua's view check before an off-view take). False without a fresh-or-not order part with a position.
+bool QueryOwner(std::uint16_t slot, std::int32_t (&mm)[3]) noexcept;
 // Enemy round 9 (quiet_place, design 7.24): QuietChoose on the hook's newest rest view of guard idx (unknown before the
 // hook has made one). Runtime thread; read only. SetQuietRest turns the hook's rest views on (the guest with the key).
 QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept;
 void SetQuietRest(bool on) noexcept;
 // Stages a quiet move of guard idx (go: his GameObjectId, for the line) to pos / yaw: the hook runs 0x136ece0 in its next
 // update (before the engine's own) and logs world_place=quiet. False when the hook is not installed or idx is out of range.
-bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept;
+// Round 13 (design 7.31): ent, the owner track's lead and target (to, metres) and its newest sample's pop time for the
+// re-plan and its follow (QuietPlanFollow / QuietFollowDue).
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan = false,
+                std::uint32_t ent = 0, QuietLead lead = QuietLead::unknown, const float* to = nullptr, std::uint64_t rx_ms = 0) noexcept;
 #endif
 
 } // namespace mgscoop::soldier_act

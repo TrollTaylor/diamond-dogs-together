@@ -1,0 +1,59 @@
+# Enemy round 13 track B (lrrp_follow, D-B11 the crew hold; docs/world-sync-design.md 7.32 round 13 block): enemy-prove-1-join.txt
+# WITHOUT 'enemy ignore' on truck 25605's crew (3970963356, 2305481811; the 12 afgh_field_cp guards stay ignored, so their
+# notice stays restricted on both copies as before). The host alone 50 m south of afgh_field_cp (known ground), the guest
+# pairs; then both go to the two measured standing points south of the outpost (enemy-mirror6-calm.txt: position read-backs
+# of run fbf3522a), 69-76 m south of the spot where 25605 stops and its crew gets out (414.7, 2093.3 in da5ecb1d / 67f2b138,
+# ~220-230 s after the pairing): host (424.627, 271.559, 2025.110), guest (414.897, 274.034, 2017.557). Both are far
+# from the crew (host 69 m, guest 76 m: gap under 5 m, so the host keeps every crew member: world_place.lua P.ownerOf)
+# until the get-out; enemy-lrrp-crew-near.txt then moves the guest 13.6 m from it.
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy13-B-trucks -ScenarioPath
+#     tools/worker/scenarios/enemy-b13-join.txt,tools/worker/scenarios/enemy-lrrp-crew-near.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     [-LabSetting lrrp_follow=1] -TimeoutSec 600 -Wait
+labsetting nametag=1
+titlemenu host 240
+title host 240
+waitgameplay host 150
+host debug godmode 1
+host debug infinite_ammo 1
+host debug time 72000
+host debug weather sunny
+wait 6000
+host run teleport 421.16 269.2 2084.42 0
+wait 8000
+host run world_status
+host capture q1
+logmark both
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+guest debug godmode 1
+guest debug infinite_ammo 1
+host run enemy ignore 2961503
+host run enemy ignore 2942862796
+host run enemy ignore 1740692850
+host run enemy ignore 1799112697
+host run enemy ignore 2929558510
+host run enemy ignore 667680985
+host run enemy ignore 1179373153
+host run enemy ignore 3268415846
+host run enemy ignore 753908875
+host run enemy ignore 1904171355
+host run enemy ignore 1845278687
+host run enemy ignore 1926520947
+wait 2000
+guest run teleport 414.897 274.034 2017.557 0
+host run teleport 424.627 271.559 2025.110 0
+wait 3000
+host run position
+guest run position
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture r-3s
+wait 4000
+both capture r-8s
+host run world_status
+guest run world_status

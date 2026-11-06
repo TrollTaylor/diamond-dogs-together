@@ -126,6 +126,9 @@ struct WarpGrant {
     std::uint32_t serial{};  // world::Grant::serial (1..0x7FFFFFFF, process-unique)
 };
 WarpGrant FindGrant(std::uint16_t seq) noexcept;
+// Enemy round 13 track A (quiet_place, docs/world-sync-design.md 7.31): the newest two correction grants of guard `ent`
+// (world::Core::EntGrants: the owner copy's track), on the receiver's clock (now_ms); false when none.
+bool EntGrants(std::uint32_t ent, std::uint64_t& now_ms, world::Grant& cur, world::Grant& prev) noexcept;
 // Enemy sync M4: the newest two SOLDIER_SNAP records of a roster slot (world::Core::SnapPair), metres / radians on the
 // receiver's clock; false when none in the current paired epoch.
 bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world::Snap& prev) noexcept;

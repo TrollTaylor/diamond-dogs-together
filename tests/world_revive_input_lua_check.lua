@@ -310,6 +310,39 @@ do
     check(c.env.vars.playerDisableActionFlag == 0, 'a downed local player does not change Fulton')
 end
 
+-- M2h (lab a53a243a: after the horse take-down the carrier's E near the downed teammate gave no revive and no line said
+-- why): the raw E held near a downed teammate while the revive does not take it logs why, at most once a second.
+do
+    local c = fixture(); c.logs = {}
+    c.W.log = function(s) c.logs[#c.logs + 1] = s end
+    local function seen(p) for _, l in ipairs(c.logs) do if l:find(p, 1, true) then return true end end return false end
+    c.n.held = true; c.n.carry = 3; c.useHeld = true
+    check(not c.step(), 'M2h: loaded on the horse the E stays native (no revive hold)')
+    check(seen('event=downed;step=revive_wait;carry=3;other=down;age_ms=0;gen=1;d_mm=3000'),
+        'M2h: a refused revive E near a downed teammate logs the carry role, the record age, its generation and distance')
+    local n = #c.logs; c.step(100)
+    check(#c.logs == n, 'M2h: revive_wait at most once a second')
+    c.n.held = false; c.step(1000); n = #c.logs; c.step(100)
+    check(#c.logs == n, 'M2h: no raw E, no revive_wait')
+end
+-- M2h (lab 990d2530 (a) and (b): four E holds by the downed teammate after the horse take-down gave no revive and no
+-- revive_wait: the raw E was never seen, or the revive mask hid it): on foot within 5 m of a downed teammate, once a
+-- second (at most 120 a mission), the raw E, the revive's held, the revive mask, the distance and the record's age.
+do
+    local c = fixture(); c.logs = {}
+    c.W.log = function(s) c.logs[#c.logs + 1] = s end
+    local function count(p) local k = 0; for _, l in ipairs(c.logs) do if l:find(p, 1, true) then k = k + 1 end end return k end
+    c.step()
+    check(count('event=downed;step=revive_near;raw=0;held=0;mask=') == 1 and count(';d_mm=3000;age_ms=0;gen=1') == 1,
+        'M2h: near a downed teammate on foot: one revive_near line (raw E, held, mask, distance, age, generation)')
+    c.step(100)
+    check(count('step=revive_near') == 1, 'M2h: revive_near at most once a second')
+    c.step(1000)
+    check(count('step=revive_near') == 2, 'M2h: revive_near again a second later')
+    c.D.records[2].pos[1] = 6000; c.step(1000)
+    check(count('step=revive_near') == 2, 'M2h: beyond 5 m no revive_near')
+end
+
 -- Execute the real staged world-sync OnUpdate wrapper while inactive; D.tick is not entered there.
 do
     local env = setmetatable({e = {}}, {__index = _G})

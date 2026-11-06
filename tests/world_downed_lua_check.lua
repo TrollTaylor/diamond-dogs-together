@@ -383,6 +383,84 @@ check(a.D.progress <= 100 and not b.revived, 'a long release drains the revive t
 for _ = 1, 20 do step(a, b, 100) end
 check(not b.revived, 'a drained revive needs a fresh full hold')
 
+-- M2i (lab 107977cb (a): a held revive about 3 s in was reset when the victim's status came 517 ms late under
+-- -WanSim bad): a late status is no release by the player. The host keeps ticking while one peer's statuses are lost
+-- for 700 ms; the hold drains at the fill rate through the late spell (as after a brief release) and the same reviver
+-- resumes from what is left, instead of restarting from zero.
+-- fixland3 (review: no game ran the drain, and it changed every revive at the defaults): the drain is on only with
+-- world_horse_cargo named (W.horseCargo.keyOn() true); at the defaults a late spell still restarts the hold as before.
+for _, cargoKey in ipairs({false, true}) do
+for _, actorHost in ipairs({true, false}) do
+    local host, guest = pair()
+    if cargoKey then host.W.horseCargo = {keyOn = function() return true end} end
+    local tag = ' (actor host ' .. tostring(actorHost) .. ', cargo key ' .. tostring(cargoKey) .. ')'
+    local target, actor = actorHost and guest or host, actorHost and host or guest
+    down(target); actor.native.held = true
+    for _ = 1, 20 do step(host, guest, 100) end
+    local before = host.D.progress
+    check(before >= 1500 and not target.revived, 'partial progress before the late spell (actor host ' .. tostring(actorHost) .. ')')
+    -- The target's statuses (host actor) or the host's statuses to the actor (guest actor) are lost for 7 ticks.
+    for _ = 1, 7 do
+        host.now, guest.now = host.now + 100, guest.now + 100
+        host.D.tick(host.now); guest.D.tick(guest.now)
+        if actorHost then pump(host, guest); guest.tx = {} else host.tx = {}; pump(guest, host) end
+    end
+    -- The guest's status still names no target for one tick after the host's statuses arrive again.
+    for _ = 1, 3 do step(host, guest, 100) end
+    if cargoKey then
+        check(host.D.progress >= 1000 and not target.revived,
+            'a late status drains the hold instead of restarting it' .. tag .. ': ' .. host.D.progress)
+        local n = 0
+        while not target.revived and n < 25 do step(host, guest, 100); n = n + 1 end
+        check(target.revived == 1 and n <= 20, 'the same reviver completes from the remainder after a late spell: ' .. n)
+    else
+        check(host.D.progress <= 400 and not target.revived,
+            'at the defaults a late status still restarts the hold' .. tag .. ': ' .. host.D.progress)
+        local lines = 0
+        for _, l in ipairs(host.logs) do if l:find('step=revive_late', 1, true) then lines = lines + 1 end end
+        check(lines == 0, 'at the defaults no step=revive_late line' .. tag)
+    end
+end
+end
+-- M2j (lab 01d9924e (a), the carrier reviving: held in the 1 s samples 371.5-373.5 s, then at 374.9 s the victim's
+-- record 534 ms old, mask 0 and no revive_late line, so the hold was already zeroed before a late tick could drain it:
+-- a host loop gap over 500 ms resets the hold in D.tick (loop_gap), a stall is no release by the player): with
+-- world_horse_cargo named a loop gap drains the hold as a late status does; at the defaults it still resets. Either way
+-- with the key a hold under way that is reset or drained there logs one step=revive_reset line (why, progress, gap,
+-- drain); fixland4 (review: no run without a horse key at this code): at the defaults no line, exactly as before.
+for _, cargoKey in ipairs({false, true}) do
+    local host, guest = pair()
+    if cargoKey then host.W.horseCargo = {keyOn = function() return true end} end
+    local tag = ' (cargo key ' .. tostring(cargoKey) .. ')'
+    down(guest); host.native.held = true
+    for _ = 1, 20 do step(host, guest, 100) end
+    check(host.D.progress >= 1500 and not guest.revived, 'loop gap: partial progress first' .. tag)
+    -- The host's loop stalls 600 ms; the guest keeps ticking and its statuses arrive after the stall.
+    for _ = 1, 6 do guest.now = guest.now + 100; guest.D.tick(guest.now) end
+    host.now = host.now + 600
+    host.D.tick(host.now); pump(guest, host); pump(host, guest)
+    for _ = 1, 2 do step(host, guest, 100) end
+    local resets = 0
+    for _, l in ipairs(host.logs) do if l:find('step=revive_reset;why=loop_gap', 1, true) then resets = resets + 1 end end
+    check(resets == (cargoKey and 1 or 0), (cargoKey and 'one' or 'no') .. ' step=revive_reset;why=loop_gap line' .. tag .. ': ' .. resets)
+    if cargoKey then
+        check(host.D.progress >= 900 and not guest.revived, 'a loop gap drains the hold instead of restarting it' .. tag .. ': ' .. host.D.progress)
+        local n = 0
+        while not guest.revived and n < 25 do step(host, guest, 100); n = n + 1 end
+        check(guest.revived == 1 and n <= 20, 'the same reviver completes from the remainder after a loop gap: ' .. n)
+    else
+        check(host.D.progress <= 400 and not guest.revived, 'at the defaults a loop gap still restarts the hold' .. tag .. ': ' .. host.D.progress)
+    end
+end
+-- Unchanged: a release of several ticks with no late status still restarts the hold (MGO drain only for one tick).
+a, b = pair(); down(b); a.native.held = true
+for _ = 1, 20 do step(a, b, 100) end
+a.native.held = false
+for _ = 1, 3 do step(a, b, 100) end
+a.native.held = true
+step(a, b, 100)
+check(a.D.progress <= 100 and not b.revived, 'a multi-tick release with fresh statuses restarts the hold as before')
+
 -- Wire evidence cannot be refreshed by a duplicate or stale sequence, and
 -- observing a normal body cannot self-authorize a revive.
 c = fixture(true)
