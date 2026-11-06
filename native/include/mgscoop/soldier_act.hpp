@@ -219,7 +219,9 @@ bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned 
 // (leg_wait 775) and the 10 m rule (near_wait 53) and stayed 17-45 m off). With act_plan a walker is taken whatever his leg
 // or distance: the plan walks him onto the host copy's path, and beyond 15 m the take opens with the unpack's warp. Without
 // it, LegMatch as round 6. 0 taken, 1 leg_wait, 2 near_wait.
-unsigned TakeWait(bool plan, bool leg_match, bool take_near) noexcept;
+// Round 11 C: the third argument is no_warp (!TakeWarps): with act_plan a take that would open with the unpack's warp
+// waits (near_wait); a walk glides (GlideEntry), so walkers are still taken whatever their leg or distance.
+unsigned TakeWait(bool plan, bool leg_match, bool no_warp) noexcept;
 // The plan check (round 10 C; 226fc789 / c0c3d088: 4 and 2 plans with no path yet at 300 ms): kPlanCheckMs after a plan,
 // then every kPlanCheckMs up to kPlanRechecks more times while the path is missing or ends beyond kPlanEndM of R+0x80 (the
 // query may still run); the last check's verdict is the one counted.
@@ -247,6 +249,37 @@ inline constexpr float kReleaseArriveM = 1.5f;
 inline constexpr std::uint64_t kReleaseArriveMs = 2000, kReleaseWalkMs = 180000;
 enum class ReleaseWalk { walk, finish, over };
 ReleaseWalk ReleaseWalkStep(bool ours_live, std::uint64_t near_ms, std::uint64_t age_ms) noexcept;
+// Enemy round 11 track C (act_plan, design 7.33; runs 15aa58cb / 689e654c).
+// - MirrorLease: with act_plan an m whose mail is stale keeps the hook's last fresh lease (it lapses kActFreshMs after the
+//   last fresh m) instead of ending it at once (689e654c: the hook released guard 18 and took him again 10 times while
+//   Lua held him: one late resend over -WanSim bad). A fresh m stamps now.
+std::uint64_t MirrorLease(bool fresh, std::uint64_t was_ms, std::uint64_t now_ms) noexcept;
+// - GlideEntry: with act_plan a walk's lent entry (wire +0x61 == 1) lies at most kGlideM (3D) from this copy, toward the
+//   owner copy, so the unpack's 15 m warp never moves him (689e654c: 5 take warps of 18-49 m a run, 5 at once at the
+//   caution retake): the plan and the catch-up gait (from the owner copy's real position) walk or run him onto the host
+//   copy's walk. True when clamped; else entry = owner.
+inline constexpr float kGlideM = 14.0f;
+bool GlideEntry(const float (&self)[3], const float (&owner)[3], float (&entry)[3]) noexcept;
+// - TakeWarps: a take that would open with the unpack's warp: a request that is not a walk (wire +0x61 != 1) with this copy
+//   beyond 15 m (3D, Warp15) of the owner copy; a walk glides. Unknown positions: no warp (the unpack lends his own).
+bool TakeWarps(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept;
+// - The release watch: for kWatchMs after a release (and after a released walk's end) a copy whose brain re-targeted a
+//   walk with no path (ReleaseFreeze: dest mode 1, (R+0x19e & 3) == 2, R+0x19c 0xffff, a free or move slot, no follower
+//   path, R+0x80 beyond kReleaseArriveM flat) for kWatchFreezeMs is planned to R+0x80 with the shadow plan (689e654c:
+//   guard 15 stood 15 s at his kept walk's end: his brain set R+0x80 to its next route point with no new request, R+0x19c
+//   and his slot cleared, no path). His brain's own type in his slot, or kWatchMs, ends the watch.
+inline constexpr std::uint64_t kWatchMs = 60000, kWatchFreezeMs = 500;
+bool ReleaseFreeze(unsigned dest_mode, std::uint16_t r19e, std::uint16_t r19c, std::uint64_t slot_hash, std::uint16_t slot_handle,
+                   bool path, float d_dest_m) noexcept;
+enum class WatchStep { wait, plan, end };
+WatchStep WatchChoose(bool freeze, std::uint64_t freeze_ms, std::uint64_t age_ms, std::uint64_t slot_hash) noexcept;
+// - CornerTarget (the owner side): with act_plan the host sends a walk's destination as the next point of the host copy's
+//   own follower path, not the leg's end (15aa58cb / 689e654c: guard 15's host copy walked the route's L - north 15 m,
+//   then east - while the puppet's plan took the straight line to the leg's end and led by p50 3 m, p90 6.6-10.8 m). The
+//   point after the segment nearest `self` (flat); within kCornerM (flat) of it, the one after. False (send the leg's end)
+//   with fewer than 2 points or when that point lies within kPlanEndM (3D) of `dest`.
+inline constexpr float kCornerM = 2.0f;
+bool CornerTarget(const float (*points)[3], unsigned count, const float (&self)[3], const float (&dest)[3], float (&target)[3]) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
@@ -308,6 +341,9 @@ struct Counters {
     // Round 10 C: rel_keep / rel_replan = released walks kept / planned again (ReleaseChoose); rel_end = released walks
     // finished or over; recheck = plan checks run again (PlanCheckVerdict again).
     std::uint32_t rel_keep, rel_replan, rel_end, recheck;
+    // Round 11 C: glide = walk applies whose entry GlideEntry clamped; rel_watch = released copies planned by the watch;
+    // corner = host requests sent with the host copy's next path point (CornerTarget).
+    std::uint32_t glide, rel_watch, corner;
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the

@@ -2663,3 +2663,28 @@ No wire change. Inside `lrrp_follow` (on in 30010 at the defaults, named 1 any m
   raises the offset by 100 ms or more (at most once per 2 s per truck; `lag0_ms` = how far the 0.15.3 filter, kept as a
   shadow for the lines, lags the new offset); `step=follow` carries `ah; ah0` at its end (the lead used and the 0.15.3
   filter's, ms, each capped at 400).
+
+## 49. Enemy round 11 track C: the hook's lease, the glide, the release watch, the host copy's next path point (lab key `act_plan`, native only; with `soldier_act`; design 7.33)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged; the wire format is unchanged. Native only,
+under `act_plan`.
+
+- SOLDIER_ACT (0x58) request parts: with `act_plan` on the host, a walk's packed destination (request +0x40, dest mode
+  +0x61 == 1) is the next point of the host copy's own follower path (`CornerTarget`), not the leg's end; the leg's end
+  when that point is within 1 m of it (a full path's last segment) or with no readable path (2..32 points); a partial
+  path's last point on its last segment. A guest without `act_plan` takes a walker only while the packed destination is
+  within 3 m flat of its own leg end (`LegMatch`), so a corner target makes its takes wait (`leg_wait`) except where the
+  target is the leg's end: name `act_plan` on both copies.
+- `ACT_V1 m` (SetMirror): with `act_plan` a stale mail keeps the hook's lease and the fire-drop stamp of the last fresh m
+  (they lapse 1.5 s after it); the reply's `f` is unchanged.
+- `ACT_V1 q` (QueryFresh): with `act_plan` a request that is not a walk with this copy beyond 15 m of the owner copy is
+  not taken (`near_wait`); walks are taken whatever their leg or distance.
+- New lines `soldier_act_glide; t; idx; first; d_m; p; at; lent; gait` (guest) and `soldier_act_corner; t; idx; n;
+  target; dest; p` (host); `soldier_act_release` adds the steps `watch` / `watch_none`.
+- `soldier_act_frame` adds `glide`, `rel_watch`, `corner` after `recheck`.
+- Round 12 (enemy round 12 track C): ACT_CAPS (0x5C) carries FM1 revision 7 ({caps, 7}); a partner whose revision is
+  older (or who sends none) mirrors nothing (`why=peer`; a revision 6 host sends nothing, a revision 7 guest releases).
+  The revision does not say whether `act_plan` is on: a revision 7 copy without it still pairs, and its takes of
+  corner-targeted walks wait on `LegMatch` (above). With caps bit 2 (the calm limit) any CP at EVASION / ALERT
+  (localPhase >= 2) on the guest releases every puppet and stops takes (`why=phase_limit`), not only the guard's own
+  CP. No new op; Lua only.

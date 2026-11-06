@@ -281,7 +281,7 @@ int main() {
         // (3) the frame line prints the aim-swap counter payload_ids (RemapAimTarget) and the apply accounting.
         sa::Counters k{};
         k.payload_ids = 5; k.due = 9; k.applied = 8; k.reapply_moving = 4; k.frames = 61; k.frame_p95_us = 18950;
-        char line[512]{};
+        char line[1024]{};  // the hook's frame line buffer (round 10 C: 1024 bytes)
         Check(sa::FormatFrameLine(123, k, line, sizeof(line)) && std::strstr(line, "soldier_act_frame; t=123; frames=61; p95_ms=18.95;") &&
                   std::strstr(line, "; payload_ids=5;") && std::strstr(line, "; due=9;") && std::strstr(line, "; reapply=4") &&
                   std::strstr(line, "; applied=8;"), "the frame line prints payload_ids, due and reapply");
@@ -443,7 +443,7 @@ int main() {
     // Enemy round 10 track C (act_plan, design 7.29): the take of walkers, the plan recheck, the partial hold, the release
     // walk (runs 226fc789 / 77785f31 / c0c3d088).
     {
-        Check(sa::TakeWait(true, false, false) == 0 && sa::TakeWait(true, true, false) == 0 && sa::TakeWait(true, false, true) == 0,
+        Check(sa::TakeWait(true, false, true) == 0 && sa::TakeWait(true, true, true) == 0,
               "take: with act_plan a walker on another leg or beyond 10 m is taken (the plan walks him onto the path)");
         Check(sa::TakeWait(false, false, true) == 1 && sa::TakeWait(false, true, false) == 0 && sa::TakeWait(false, true, true) == 0,
               "take: without act_plan LegMatch as round 6, no 10 m rule");
@@ -480,8 +480,62 @@ int main() {
         k.tx_parts = k.staged = k.rx = k.applied = k.orders = 4000000000u;  // 10-digit counters: the line still fits 1024
         char line[1024]{};
         Check(sa::FormatFrameLine(9, k, line, sizeof(line)) &&
-                  std::strstr(line, "; plan_hold=12; rel_keep=3; rel_replan=2; rel_end=4; recheck=6\r\n"),
+                  std::strstr(line, "; plan_hold=12; rel_keep=3; rel_replan=2; rel_end=4; recheck=6; "),
               "the frame line prints rel_keep / rel_replan / rel_end / recheck");
+    }
+    // Enemy round 11 track C (act_plan, design 7.33): the hook's lease, the glide, no warp at a take, the release watch, the
+    // host copy's next corner (runs 15aa58cb / 689e654c).
+    {
+        Check(sa::MirrorLease(true, 0, 5000) == 5000 && sa::MirrorLease(true, 1000, 5000) == 5000, "lease: a fresh m stamps now");
+        Check(sa::MirrorLease(false, 4200, 5000) == 4200 && sa::MirrorLease(false, 0, 5000) == 0,
+              "lease: a stale m keeps the last fresh lease (689e654c: 10 hook releases of guard 18 while Lua held him)");
+        const float self[3] = {0.0f, 0.0f, 0.0f}, far[3] = {30.0f, 0.0f, 40.0f}, near[3] = {6.0f, 1.0f, 8.0f};
+        float e[3]{};
+        Check(sa::GlideEntry(self, far, e) && std::fabs(e[0] - 8.4f) < 0.01f && std::fabs(e[2] - 11.2f) < 0.01f && !sa::Warp15(self, e),
+              "glide: a walk's entry 50 m off is lent 14 m toward the owner copy (no warp)");
+        Check(!sa::GlideEntry(self, near, e) && e[0] == 6.0f && e[1] == 1.0f && e[2] == 8.0f, "glide: within 14 m the owner copy's own");
+        unsigned char walk[0x70]{}, stand[0x70]{};
+        walk[0x61] = 1;
+        walk[0x63] = 1;
+        Check(!sa::TakeWarps(walk, self, far, true) && sa::TakeWarps(stand, self, far, true) && !sa::TakeWarps(stand, self, near, true) &&
+                  !sa::TakeWarps(stand, self, far, false),
+              "take: only a non-walk beyond 15 m would open with a warp");
+        Check(sa::TakeWait(true, true, false) == 2 && sa::TakeWait(true, false, false) == 2 && sa::TakeWait(false, true, false) == 0,
+              "take: with act_plan no take that opens with a warp (near_wait)");
+        Check(sa::ReleaseFreeze(1, 0x0062, 0xffff, 0, 0xffff, false, 12.0f) &&
+                  sa::ReleaseFreeze(1, 0x0062, 0xffff, 0x2c505bab2efcull, 0xffff, false, 12.0f),
+              "watch: a brain re-target with no path (689e654c guard 15)");
+        Check(!sa::ReleaseFreeze(1, 0x0062, 0xffff, 0, 0xffff, true, 12.0f) && !sa::ReleaseFreeze(1, 0x0062, 0x0004, 0, 0xffff, false, 12.0f) &&
+                  !sa::ReleaseFreeze(1, 0x0062, 0xffff, 0x1234567890abull, 0x0003, false, 12.0f) &&
+                  !sa::ReleaseFreeze(0, 0x0062, 0xffff, 0, 0xffff, false, 12.0f) &&
+                  !sa::ReleaseFreeze(1, 0x0061, 0xffff, 0, 0xffff, false, 12.0f) && !sa::ReleaseFreeze(1, 0x0062, 0xffff, 0, 0xffff, false, 1.0f),
+              "watch: a path, a handle, his brain's slot, not a walk, the start not run, or at R+0x80: no freeze");
+        Check(sa::WatchChoose(true, 500, 1000, 0) == sa::WatchStep::plan && sa::WatchChoose(true, 499, 1000, 0) == sa::WatchStep::wait &&
+                  sa::WatchChoose(false, 0, 1000, 0) == sa::WatchStep::wait,
+              "watch: planned after 0.5 s of freeze");
+        Check(sa::WatchChoose(true, 900, 60000, 0) == sa::WatchStep::end && sa::WatchChoose(false, 0, 2000, 0x1234567890abull) == sa::WatchStep::end &&
+                  sa::WatchChoose(true, 900, 2000, 0x2c505bab2efcull) == sa::WatchStep::plan,
+              "watch: ends after 60 s or with his brain's type in his slot");
+        // The host copy's path: north 15 m, then east, then north (guard 15's L): the next corner, not the leg's end.
+        const float pts[4][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 15.0f}, {20.0f, 0.0f, 15.0f}, {20.0f, 0.0f, 30.0f}};
+        const float dest[3] = {20.0f, 0.0f, 30.0f}, partial[3] = {50.0f, 0.0f, 50.0f};
+        const float leg1[3] = {0.3f, 0.0f, 5.0f}, corner[3] = {0.2f, 0.0f, 13.5f}, leg3[3] = {20.2f, 0.0f, 20.0f};
+        float t[3]{};
+        Check(sa::CornerTarget(pts, 4, leg1, dest, t) && t[0] == 0.0f && t[2] == 15.0f, "corner: the next point of his path");
+        Check(sa::CornerTarget(pts, 4, corner, dest, t) && t[0] == 20.0f && t[2] == 15.0f, "corner: within 2 m of it, the one after");
+        Check(!sa::CornerTarget(pts, 4, leg3, dest, t) && !sa::CornerTarget(pts, 1, leg1, dest, t),
+              "corner: on the last leg, or no path: the leg's end");
+        Check(sa::CornerTarget(pts, 4, leg3, partial, t) && t[0] == 20.0f && t[2] == 30.0f, "corner: a partial path's end");
+        Check(sa::kGlideM == 14.0f && sa::kWatchMs == 60000 && sa::kWatchFreezeMs == 500 && sa::kCornerM == 2.0f, "round 11 C constants");
+        sa::Counters k{};
+        k.tx_parts = k.staged = k.rx = k.applied = k.orders = 4000000000u;  // 10-digit counters: the line still fits 1024
+        k.recheck = 6;
+        k.glide = 7;
+        k.rel_watch = 8;
+        k.corner = 9;
+        char line[1024]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) && std::strstr(line, "; recheck=6; glide=7; rel_watch=8; corner=9\r\n"),
+              "the frame line prints glide / rel_watch / corner");
     }
     // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the quiet warp 0x136ece0 moves a copy only beyond
     // 15 m of its slot position; a nearer correction biases the slot 20 m along x first (the function overwrites it).
