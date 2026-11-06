@@ -148,9 +148,11 @@ def analyse(host, guest):
         'guard_fell': sum(1 for l in host + guest if 'event=place_div' in l and 'why=fall' in l),
         # place_sink (enemy gaps): both roles check their placed copies; a copy level with its owner is place_drop.
         'guard_sank': sum(1 for l in host + guest if 'event=place_sink' in l),
-        'drive_sank': sum(1 for l in host + guest if 'event=drive_sink' in l),
         'body_fell': sum(1 for l in host + guest if 'event=body_fall' in l),
     }
+    # drive_sink (a driven copy more than 1.5 m under its target for 2 s, also while the owner climbs): information only
+    # since the enemy flip A-vert (D-A10); the gate is vert_left_under (below).
+    r['drive_sank'] = {side: sum(1 for l in lines if 'event=drive_sink' in l) for side, lines in (('host', host), ('guest', guest))}
     for l in host + guest:
         m = re.search(r'\boverflow=(\d+)', l)
         if m and 'world=stats' in l:
@@ -383,7 +385,81 @@ def analyse(host, guest):
         r['readback_fix'][side] = sum(1 for l in lines if 'event=readback_fix' in l and 'put=1' in l)
         r['vert_snaps'][side] = sum(1 for l in lines if 'world_drive=vert;' in l)
         r['vert_stop'][side] = sum(1 for l in lines if 'world_drive=vert_stop' in l)
+    r['vert_left_under'], r['vert_left_unresolved'], r['vert_rest_data'] = vert_left(host, guest)
     return r
+
+
+# Enemy flip A-vert (user decision D-A10, design 7.27): the drive_sink row read as "left under after the owner copy's
+# height has stayed level for 1 s". A copy is left under when it stays more than 1.5 m under its owner copy for more than
+# VERT_LEFT_MS (drive_sink's own 2 s window) counted from the moment the owner copy had been level in y for 1 s; a sink
+# while the owner climbs (vert_wait, rest_ms under 1000) does not count. From the native world_drive lines (drive_vert
+# on): a vert snap up (gap_cm > 150) came rest_ms - 1000 after that moment (capped by the time he was known to be under:
+# an open drive_sink spell's low_ms plus the time since it, or 2 s without one); a vert_stop up (the no-thrash cap: the
+# owner level, the copy due) leaves him under until his next snap or the log end. Native lines carry no t_ms: each takes
+# the last t_ms before it on that copy.
+VERT_LEFT_MS = 2000
+VERT_REST_MS = 1000
+
+
+def vert_left(host, guest):
+    """Per copy: {ent: [ms left under, ...]} over VERT_LEFT_MS, the drive_sink spells no vert line resolved, and whether
+    any vert line (the owner-rest data) was seen."""
+    go_ent = {}
+    for l in host + guest:
+        m = re.search(r'\bent=(\d+)', l)
+        g = re.search(r'\bgo=(\d+)', l) or ('event=obs' in l and re.search(r'\bid=(\d+)', l))
+        if m and g:
+            go_ent.setdefault(g.group(1), m.group(1))
+    left, unresolved, seen = {}, {}, False
+    for side, lines in (('host', host), ('guest', guest)):
+        t, spell, stop, waited = 0, {}, {}, set()
+        out, unres = {}, []
+        for l in lines:
+            m = re.search(r'(?:^|[;\s])t_ms=(\d+)', l)
+            if m:
+                t = int(m.group(1))
+            if 'event=drive_sink' in l:
+                f = fields(l)
+                spell[f.get('ent')] = (t, int(f.get('low_ms', 0) or 0))
+                continue
+            if not l.startswith('world_drive=vert'):
+                continue
+            seen = True
+            f = fields(l.replace('world_drive=', 'kind=', 1))
+            ent = go_ent.get(f.get('go'), 'go' + str(f.get('go')))
+            try:
+                gap = int(f.get('gap_cm', '0'))
+            except ValueError:
+                gap = 0
+            if f.get('kind') == 'vert_wait':
+                waited.add(ent)
+            elif f.get('kind') == 'vert_stop':
+                if gap > 150:
+                    stop.setdefault(ent, t)
+            elif f.get('kind') == 'vert':
+                if gap > 150:
+                    try:
+                        ms = max(0, int(f.get('rest_ms', '0')) - VERT_REST_MS)
+                    except ValueError:
+                        ms = 0
+                    if ent in stop:
+                        ms = max(ms, t - stop.pop(ent))
+                    elif ent in spell:
+                        s_t, low = spell[ent]
+                        ms = min(ms, low + max(0, t - s_t))
+                    else:
+                        ms = min(ms, VERT_LEFT_MS)
+                    if ms > VERT_LEFT_MS:
+                        out.setdefault(ent, []).append(ms)
+                spell.pop(ent, None)
+                waited.discard(ent)
+        for ent, s_t in stop.items():
+            out.setdefault(ent, []).append(max(0, t - s_t))
+            spell.pop(ent, None)
+        for ent in spell:
+            unres.append({'ent': ent, 'vert_wait': ent in waited})
+        left[side], unresolved[side] = out, unres
+    return left, unresolved, seen
 
 
 def gates(r):
@@ -416,6 +492,12 @@ def gates(r):
         gate('M6: <= 2 body_tx per body per copy', r['body_tx_max'] <= 2, '%d sent, max %d' % (r['body_tx'], r['body_tx_max']))
     n = r['never']
     gate('0 latches, faults, game overs, roster mismatches, overflow, guard copies under the ground', all(v == 0 for v in n.values()), n)
+    # D-A10: n/a when copies sank (drive_sink) but no world_drive=vert line gives the owner's rest (drive_vert off).
+    lu = r['vert_left_under']
+    sank = sum(r['drive_sank'].values())
+    gate('vert left under 0 (a copy > 1.5 m under its owner copy for > 2 s after the owner copy was level in y for 1 s)',
+         None if sank and not r['vert_rest_data'] else not any(lu.values()),
+         {side: {e: [round(ms / 1000, 2) for ms in v] for e, v in d.items()} for side, d in lu.items()})
     return g
 
 
@@ -477,6 +559,9 @@ def main(argv=None):
               r['readback_under_guards']['guest'] or 'none', r['readback_above_guards']['host'] or 'none',
               r['readback_above_guards']['guest'] or 'none', r['readback_2s']['host'], r['readback_2s']['guest'],
               r['readback_fix'], r['vert_snaps'], r['vert_stop']))
+    print('  drive_sink (information since D-A10: also while the owner climbs) %s; vert left under (s) %s; drive_sink spells '
+          'no vert line resolved %s; owner-rest data (world_drive=vert lines) %s' % (
+              r['drive_sank'], r['vert_left_under'], r['vert_left_unresolved'], 'yes' if r['vert_rest_data'] else 'none'))
     print('  crossfire: terminal_win %d, REJECT 12 %d, not_attributed %d; host scan avg %s us, max %s us' % (
         r['terminal_win'], r['reject_12'], r['not_attributed'],
         None if r['scan_avg_us'] is None else round(r['scan_avg_us']), r['scan_max_us']))

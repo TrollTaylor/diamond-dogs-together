@@ -786,7 +786,8 @@ struct LabConfig {
     bool place_reach_given = false;
     // Enemy gaps 3 (docs/world-sync-design.md 7.18, native DriveReceipt only, no CFG bit): the soft follow also puts a copy
     // at rest in x/z that stands more than 1.5 m above or below the owner's for 1 s on the owner's spot (drive_sink at the
-    // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
+    // defaults: 6348f361, 41f2b07f, 31a799e3), only once the owner copy has been level in y for 1 s (7.27). Lab and play;
+    // follows the gun profile since user decision D-A10 (lab_config.cpp), a named 0 opts out.
     bool drive_vert = false;
     bool drive_vert_given = false;
     // Enemy round 8 track B (docs/world-sync-design.md 7.21, no CFG bit; Lua asks the receipt MGS_COOP_LRRP_CFG_V1): the host
