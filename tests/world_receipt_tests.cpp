@@ -489,6 +489,9 @@ void Warp() {
                   world::ParseAct(r.data(), r.size(), op, aslot, ago) && op == 'r' && ago == 0 &&
                   world::ParseAct(s.data(), s.size(), op, aslot, ago) && op == 's' && aslot == 0,
               "act: t / m / r with a slot and goId, s 0 0");
+        // Enemy round 13 C (D-FM3 (b)): w <slot> <goId>, the puppet's and his owner copy's spots outside the guest's view.
+        const std::string wv = act("w 3 1041");
+        Check(world::ParseAct(wv.data(), wv.size(), op, aslot, ago) && op == 'w' && aslot == 3 && ago == 1041, "act: w <slot> <goId>");
         const char* bads[] = {"x 7 1037", "t 0 1037", "t 513 1037", "t 7 65536", "t 7", "t 7 1037 1", "s 1 0", "s 0 1", "t  7 1037",
                               "t 7 -1", ""};
         for (const char* b : bads) {

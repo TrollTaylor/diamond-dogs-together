@@ -2172,6 +2172,34 @@ if arg[7] and arg[8] then
         ticks(pl, 40)
         check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever pl=1: a puppet again once every CP is below EVASION')
     end)()
+    -- Enemy round 13 C (the user's decision D-FM3 (b)): a puppet may be warped onto his owner copy's spot only while both
+    -- spots are outside this player's view (the M-series 100-degree camera cone with no distance cut: binoculars and
+    -- scopes look along the camera's yaw): ACT_V1 w after his m. R(caution) is 90 m (1.5 x the 54.3-58.7 m first notice in
+    -- caution, run 4735fee5).
+    ;(function()
+        local vw = guestFix(0)                                -- this player at the origin, looking +z
+        vw.W.snapOn, vw.W.actOn, vw.W.mission = true, true, 30010
+        vw.W.handlers[92]({1, 7})
+        check(vw.W.mirror.R[0] == 80 and vw.W.mirror.R[1] == 90, 'D-FM3: R 80 m calm, 90 m caution (1.5 x 58.7 m, 4735fee5)')
+        local function nW()
+            local n = 0
+            for _, s in ipairs(vw.acts or {}) do if s:find(' -- w 1 1', 1, true) then n = n + 1 end end
+            return n
+        end
+        vw.positions[1] = {0, 1.8, -120.0}                    -- behind this player
+        vw.actReply = {f = 1, sh = 0, ox = 30000, oy = 1800, oz = -150000}  -- his owner copy behind too, 30 m off
+        ticks(vw, 8)
+        check(vw.W.mirror.pp[3000000001] ~= nil and nW() >= 1 and logged(vw, 'event=mirror_view;ent=3000000001;view=off'),
+            'D-FM3: both spots behind this player: w (the walk may warp)')
+        local w0 = nW()
+        vw.actReply = {f = 1, sh = 0, ox = 30000, oy = 1800, oz = 150000}   -- his owner copy 150 m ahead: in view
+        ticks(vw, 8)
+        check(nW() == w0 and logged(vw, 'event=mirror_view;ent=3000000001;view=on'), 'D-FM3: the owner copy in view: no w (he glides)')
+        vw.actReply = {f = 1, sh = 0, ox = 30000, oy = 1800, oz = -150000}
+        vw.positions[1] = {0, 1.8, 250.0}                     -- the copy 250 m ahead: in view (no distance cut)
+        ticks(vw, 8)
+        check(nW() == w0 and vw.W.mirror.pp[3000000001] ~= nil, 'D-FM3: the copy in view at 250 m: no w')
+    end)()
     -- FM1 round 6 (2): riders (GetVehicleGameObjectId) are skipped by the far rule (run adecad01: two LRRP riders of another
     -- CP were puppeted at 297 m and released apart 283-285 m off); a puppet who mounts is released (why=vehicle).
     ;(function()

@@ -502,6 +502,14 @@ int main() {
               "take: only a non-walk beyond 15 m would open with a warp");
         Check(sa::TakeWait(true, true, false) == 2 && sa::TakeWait(true, false, false) == 2 && sa::TakeWait(false, true, false) == 0,
               "take: with act_plan no take that opens with a warp (near_wait)");
+        // Enemy round 13 C (D-FM3 (b)): Lua's ACT_V1 w (both spots outside the guest's view) lets a walk skip the glide for
+        // kOffViewMs, so the unpack's 15 m warp puts a far copy on his owner copy's spot; otherwise he glides as round 11.
+        Check(sa::OffViewFresh(5000, 5000) && sa::OffViewFresh(5000, 6000) && !sa::OffViewFresh(5000, 6001) &&
+                  !sa::OffViewFresh(0, 100) && !sa::OffViewFresh(5000, 4999),
+              "off view: an ACT_V1 w stamp holds 1 s");
+        Check(sa::GlideOn(true, true, true, false) && !sa::GlideOn(true, true, true, true) && !sa::GlideOn(false, true, true, false) &&
+                  !sa::GlideOn(true, false, true, false) && !sa::GlideOn(true, true, false, false),
+              "off view: a walk glides only while one of the spots may be seen");
         Check(sa::ReleaseFreeze(1, 0x0062, 0xffff, 0, 0xffff, false, 12.0f) &&
                   sa::ReleaseFreeze(1, 0x0062, 0xffff, 0x2c505bab2efcull, 0xffff, false, 12.0f),
               "watch: a brain re-target with no path (689e654c guard 15)");

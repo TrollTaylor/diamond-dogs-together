@@ -342,6 +342,9 @@ bool GlideEntry(const float (&self)[3], const float (&owner)[3], float (&entry)[
     return true;
 }
 
+bool OffViewFresh(std::uint64_t, std::uint64_t) noexcept { return false; }  // round 13 C red stub
+bool GlideOn(bool plan, bool walk, bool have_self, bool) noexcept { return plan && walk && have_self; }  // round 13 C red stub
+
 bool TakeWarps(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept {
     if (host_request[0x61] == 1u || !have) return false;  // a walk glides; unknown positions: the unpack lends his own
     return Warp15(self, owner);
@@ -2141,6 +2144,8 @@ bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) 
     soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), lease != 0, lease ? lease : stamp);  // the fire-drop lease
     return fresh;
 }
+
+void SetOffView(unsigned, std::uint64_t) noexcept {}  // round 13 C red stub
 
 std::atomic<bool> g_paused{false};
 void SetPaused(bool paused) noexcept { g_paused.store(paused); if (paused) ReleaseAll(); }

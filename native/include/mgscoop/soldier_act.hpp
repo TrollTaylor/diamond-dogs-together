@@ -280,6 +280,15 @@ WatchStep WatchChoose(bool freeze, std::uint64_t freeze_ms, std::uint64_t age_ms
 //   with fewer than 2 points or when that point lies within kPlanEndM (3D) of `dest`.
 inline constexpr float kCornerM = 2.0f;
 bool CornerTarget(const float (*points)[3], unsigned count, const float (&self)[3], const float (&dest)[3], float (&target)[3]) noexcept;
+// Enemy round 13 track C (design 7.33 round 13; the user's decision D-FM3 (b)): a far-mirror walk may open with the
+// unpack's 15 m warp onto the owner copy's spot (no glide) only while both this copy's and the owner copy's spots are
+// outside the guest's view. Lua stamps that per puppet with ACT_V1 w after his m (the M-series 100-degree camera cone of
+// world_place_guest.lua with no distance cut: binoculars and scopes look along the camera's yaw); the stamp lapses
+// kOffViewMs after the last w. GlideOn: with act_plan a walk (wire +0x61 == 1) with this copy's position known glides
+// (GlideEntry) unless the stamp is fresh.
+inline constexpr std::uint64_t kOffViewMs = 1000;
+bool OffViewFresh(std::uint64_t stamp_ms, std::uint64_t now_ms) noexcept;
+bool GlideOn(bool plan, bool walk, bool have_self, bool off_view) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
@@ -313,6 +322,8 @@ unsigned SendStaged(std::uint64_t now_ms) noexcept;
 // Puppet side: mirror guard `idx` (roster `slot`) or release him. On, pulls the newest SOLDIER_ACT of the slot into the
 // hook's mailbox; true when the request is fresh (kActFreshMs). Off clears his mailbox and the fire-drop bit.
 bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) noexcept;
+// Round 13 C (D-FM3 (b)): ACT_V1 w - puppet `idx`'s and his owner copy's spots are outside the guest's view now (OffViewFresh).
+void SetOffView(unsigned idx, std::uint64_t now_ms) noexcept;
 void ReleaseAll() noexcept;
 // Candidate side: whether the slot's newest SOLDIER_ACT request is fresh (kActFreshMs); arms nothing (no mailbox, no
 // hook apply, no fire drop). Lua sends m only once the guard is a puppet (run 3bc7280b: m on candidates armed the fire
