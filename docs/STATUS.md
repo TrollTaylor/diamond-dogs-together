@@ -1,3 +1,64 @@
+## November 6, 2026: enemy round 12 track B - patrol trucks: round 11's fixes proven at the defaults (no-key run `da5ecb1d`): about a third of the truck log lines, an origin line, a get-out line, and the faster clock-offset estimate for moving trucks ON with `lrrp_follow` in 30010; the crew hold and Africa stay named-only and go to the user (D-B11, D-B12); not landed yet (`wp/enemy-lrrp`, not pushed)
+
+Design 7.32 (round 12 block), protocol 48. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. dev
+7d23eddc was already merged (5871d920, the round 11 land step). Red c3eba73e (204, 205, 207, 208 failed at 72e883e0) /
+green 5a0ffb36 (world_vehicle_state_lua_check 208); docs 7ec46e94 and this entry. Full `tools/build.ps1 -Jobs 4` at
+5a0ffb36: CTest 355/355; every contract `--check` = the known base set (horse_drive / vehicle_controller pass with
+`--executable`). No CFG bit, no wire op, no native change, no README change. Hidden sessions (worker queue, play,
+`-WanSim bad`, native gun profile, research build, all at code 5a0ffb36): `da5ecb1d` (join + crew10, NO key; after job
+40c296 was VOID: the audited CTest flake #105 check 185 before any game), `67f2b138` (join + crew10, `lrrp_follow=1`),
+`8be4db27` (Africa, `lrrp_follow=1`). Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run id>`. The
+stale round 11 Africa job 4e5282 never ran a game; the new runner closed it as interrupted (no result).
+
+- **What players get**: nothing they can see by eye. In Afghanistan free roam the patrol-truck code writes about a third
+  of its log lines (host 114 lines a minute, was 331 in `86d6045f`; guest 149, was 293; 0 `log_cap` on both), so the
+  logs players send are less likely to be cut; a moving truck's copy on the guest uses the faster clock-offset estimate
+  (moving truck p90 0.75 m; earlier no-key runs 0.53-1.10 m). No frame showed a difference.
+- **Gate rows** (`da5ecb1d`, no key, both copies' sliced logs) [O]:
+  - PASS moving truck place error (lrrp_gate10 method, host lines 2 Hz) p50 0.20 / p90 0.75 m (187; 25605 0.95, 25606
+    0.57). Max 18.76 m: the gate's interpolation across the HOST's own 25605 moving ~25 m off and back within 1.6 s
+    (host lines at 35 and 65 m/s), 643-757 m from the guest's player; the guest followed with far jumps [O], cause [U].
+  - PASS crews 20-40 s after the host's get-out p90 2.55 / 2.48 m (25605's two, 8 samples each; 25606 never got out).
+  - PASS get-outs / boardings matched: 25605 2 -> 1 -> 0 on both copies, 25606 2 throughout on both; 0 trucks moving with
+    the crews differing.
+  - PASS 0 origin jumps: one host `step=origin` line for 25606 parked manned at (-1687.5, 976.3), the spot where
+    `86d6045f`'s host stopped streaming it, so that [U] was an origin read [O]; the guest released it as stale.
+  - PASS 0 latches / faults / game overs / roster mismatches / `guard_fell` (enemy_div_report, every row PASS).
+  - PASS lines: host lrrp 793 in 6.9 min, guest 1040 in 7.0 min; 0 `log_cap` on either role (`86d6045f` 0 too;
+    `2a41c416` host 1468 `log_cap` lines at 995 lrrp lines a minute: not rerun, its horse scenario is the horse round's).
+  - Frames: the first frames of both copies are gameplay, connected, no modal; host k-5 has a truck's side at the edge of
+    the binoculars, the guest's k-5 a rock wall: no matched truck pair.
+- **The lead fix**: its cause stays [I]. No run of this round had an offset step while a truck moved: `ah0 - ah` (the
+  0.15.3 filter's lead minus the one used) was under 50 ms in all but one moving follow line of the three runs. The
+  400 ms cap hits (about a fifth of moving lines) came with both filters at the cap, so from sample age, not the offset.
+  `step=off` also fires at rest (one sample per window: 92 / 110 / 129 lines a run).
+- **Test honesty** (the review): the 60 s total (<= 280) and the count-change line as they stand fail at the old
+  world_lrrp.lua (261432af: 802 lines) and pass at the new; a new cut-kinds bound from the design rates (host 120 + 12 + 2,
+  riders 30 + 6, crews 2 x 30 = 230; old 772); the 'lrrp_follow off: no hold' check needs the guard since the land fix.
+  The red step checks said rise_ms 1000; the fixture's step sample first dips the offset 200 ms, so green says 1200.
+- **The crew hold** (named only, `67f2b138`) [O]: moving truck p90 0.64 m; 2 `crew_hold` lines (25605's riders, 0.7 /
+  1.4 s after their get-outs, 9-12 m from the host's player, 13-16 m from the guest's); no owner line for any crew
+  guard in either run (the host was nearer, so no hand-over was due: the hold changed nothing here [I]); crews 20-40 s
+  p90 3.27 / 2.56 m (25605) and 4.76 / 4.76 m (25606 far; `139a1440` 4.83 m without the hold); notice toward the guest:
+  0 `phase_discovery` and 0 guest-requested phase rises after any get-out in both this run and `da5ecb1d` (so no
+  difference seen; 0 against 0 says little).
+- **Africa** (named only, `8be4db27`, the first Africa run of `lrrp_follow`) [O]: moving truck p90 0.52 m (25601, 116);
+  its crew 20-40 s after the get-out p90 1.77 / 0.14 m; get-outs matched (2 -> 0 on both). The D-B10 limits: 25601 was
+  within 400 m at the pairing and deferred ~20 s (its seated crew 9 of 20 samples over 8 m, up to 332 m); the other six
+  trucks were empty on both copies (0 unseats, so the "other crews unseated" limit did not arise); no re-boarding.
+  0 origin jumps, latches, faults, game overs; host lrrp 72 / min, guest 99 / min, 0 `log_cap`. FAIL `guard_fell` 3 (the
+  guest's `place_div why=fall` of three Masa Village guards, 11-14 m under, fixed; no crew member) [I] not from the
+  trucks, [U] whether it happens with `lrrp_follow` off (no Africa control run). The run was in ALERT from before the
+  pairing: the host's lone frame shows a guard at the jeep and "All fireteams, this is CP!", the guest's first frame "We
+  are engaged with an enemy force" with damage arcs; cp 688425608 phase 3 in the pairing snapshot. No calm Africa row.
+- **Decisions for the user** (not asked; not in DECISIONS.md): D-B11 the crew hold at the defaults in 30010
+  (recommended: no for now; it fired twice and changed nothing, and it can only keep the brain on the host's copy, which
+  does not perceive the guest). D-B12 `lrrp_follow` in Africa 30020 (recommended: not yet; first a calm Africa run from a
+  start point with no guard at the jeep and a `lrrp_follow=0` control for the `guard_fell` rows; the truck rows passed).
+- **Land**: the gate passed at the final code head; `wp/enemy-lrrp` is ready for the land step (not merged into dev).
+- **Next**: an offset step on a moving truck (the lead's cause); the host-side truck excursion of `da5ecb1d`; the calm
+  Africa run and its control; item 5 (a stop that holds a crew-driven far truck).
+
 ## November 5, 2026: enemy round 11 track B - patrol trucks: fewer lrrp log lines and an origin line at the defaults (log lines only); the crew hold and the clock-offset window named-only (`lrrp_follow=1`); no hidden session counted; players see no difference
 
 Design 7.32, protocol 48. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. After merging dev

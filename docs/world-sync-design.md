@@ -1517,6 +1517,31 @@ only); [I] inferred; [U] unknown.
   log cut (crew10 runs had 0 `log_cap` at the old code). The hold at the defaults is the user's decision (D-B11). Africa
   stays off unless named. Item 5: decompile the 0x9fcfc16ce0ce component's vt[0x78] and find the speed command's name.
 
+- **Round 12 B** (enemy round 12 track B; red c3eba73e / green 5a0ffb36, world_vehicle_state_lua_check 208; no CFG bit,
+  no wire change, no native change):
+  - The lead fix ON with `lrrp_follow` (30010 by the gun profile; named any map): the offset window as above at cfg 1 and
+    2 (the land fix had it named-only). The crew hold stays named-only (cfg 1; D-B11).
+  - Lines so a run can show the lead's cause: the guest's `step=off; id; rise_ms; lag0_ms` when a window raises the
+    offset by 100 ms+ (at most once per 2 s per truck; `lag0_ms` against a shadow of the 0.15.3 filter), and `ah; ah0` at
+    the end of `step=follow` (the lead used, the 0.15.3 filter's; ms, capped 400). A lead stretch with `ah0` at 400 and
+    `ah` below it after a `step=off` would show the cause. `step=off` also fires for trucks at rest (one sample per
+    window), so it marks a step only for a moving truck.
+  - Test honesty (review): the 60 s total (<= 280) and the count-change line fail at the old world_lrrp.lua (261432af:
+    802) and pass now; a cut-kinds bound from the design rates (230; old 772). The red step checks said rise 1000; the
+    fixture's step sample first dips the offset 200 ms, so 1200 (said in the green commit).
+  - Runs [O] (all at code 5a0ffb36, `-WanSim bad`, gun profile, research build): `da5ecb1d` (join + crew10, no key):
+    moving truck p90 0.75 m (25605 0.95, 25606 0.57; 187), crews 20-40 s p90 2.55 / 2.48 m, get-outs matched, 0 origin
+    jumps (the host's one `step=origin` line for 25606 at (-1687.5, 976.3), the spot where `86d6045f`'s host stopped
+    streaming it: an origin read), 0 latches / faults / game overs, host lrrp 114 / min (`86d6045f` 331), guest 149 /
+    min (293), 0 `log_cap`; its max 18.76 m is the gate's interpolation across the host's own 25605 moving ~25 m off and
+    back within 1.6 s (643-757 m from the guest's player) [U cause]. `67f2b138` (`lrrp_follow=1`): p90 0.64 m, crews p90
+    2.56-4.76 m, 2 `crew_hold` lines and no hand-over due (the hold changed nothing [I]). `8be4db27` (Africa,
+    `lrrp_follow=1`): p90 0.52 m, crews p90 1.77 / 0.14 m, the run in ALERT from before the pairing, `guard_fell` 3 (Masa
+    guards, no crew) [I] not from the trucks. No run had an offset step while a truck moved (ah0 - ah under 50 ms in all
+    but one moving line): the lead fix is on without a regression, its effect and cause [I].
+  - Next: an offset step on a moving truck (the cause); a calm Africa run and a `lrrp_follow=0` control for `guard_fell`
+    (D-B12); the host-side truck excursion of `da5ecb1d`; item 5.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
