@@ -1,0 +1,81 @@
+# Enemy round 11 track A (docs/world-sync-design.md 7.31), part 2 after enemy8-quiet-calm.txt (same session): calm
+# corrections of walkers off the guest's screen. At the afgh-ledge seed guards 15 (1740692850) and 246 (1926520947) hold
+# swapped routes on the two copies, so the guest's copies walk away from the host's again after each correction. The host
+# goes back to its pre-pairing spot 50 m south of afgh_field_cp (421.16, 269.2, 2084.42: where it stood unseen before
+# the pairing in every quiet-calm run), within 55 m of the outpost's south guards (the host samples them); the guest stays
+# at the logged point B (414.897, 274.034, 2017.557), 67 m further south, so those guards are more than 60 m from the
+# guest (never driven, never "on screen": every correction is off screen). Both look at 246 and 15 through binoculars
+# every ~25 s (the guest's look at a guard beyond 60 m keeps his corrections off screen). ~140 s, no shot, no phase set.
+# Gate (round 11): per quiet move of a walker (world_place=warp quiet=walk), world_place=quiet_plan, and the read-backs
+# (event=readback src=quiet at=2000 / at=10000: dho_m <= 3 m against the owner copy); 0 radio report / phase change
+# caused by a mod move (event=req_phase / phase lines; with act_census named, no action kind 13 of a moved guard).
+logmark both
+host run teleport 421.16 269.2 2084.42 0
+wait 4000
+host run position
+guest run position
+host run world_status
+guest run world_status
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w246-a
+wait 450
+both capture w246-b
+wait 20000
+logmark both
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-a
+wait 450
+both capture w15-b
+wait 20000
+host run world_status
+guest run world_status
+logmark both
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w246-c
+wait 450
+both capture w246-d
+wait 20000
+logmark both
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-c
+wait 450
+both capture w15-d
+wait 20000
+host run world_status
+guest run world_status
+logmark both
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w246-e
+wait 450
+both capture w246-f
+wait 20000
+host run position
+guest run position
+host run world_status
+guest run world_status
+logmark both

@@ -40,6 +40,64 @@ bit, no wire op, no native change, no README change.
 - **Next**: a named run (`lrrp_follow=1`) of the hold near a crew's get-out and of the offset under `-WanSim bad`, with
   an `off` / delay line; horse `2a41c416`'s scenario for the log cut; Africa stays off unless named.
 
+## November 5, 2026: enemy round 11 track A - a likely cause of the false radio report found [I] (the set-transform handler posts action 0xa6 naming this PC's player for every normal guard; no run has tested it); `quiet_place` now moves walkers too and re-plans them; NO RUN: the queue waited on the C: floor, nothing turned on (`wp/enemy-m7`, not pushed)
+
+Design 7.31, protocol 47. Markers: [O] seen in a log line, a frame or the code (read-only disassembly / Ghidra), [I]
+inferred, [U] unknown. After merging dev 28c7e487 (e3db2851): red 3fa38869 / green 1b34856a, scenario 1ca09b1f. Corrected as the review checked it: red 7121a51e / green b4665f30
+(report rows), red ba498f9a / green 38c3c683 (an unread planner slot); the census numbers and two overclaims below
+(commit 3650f2d7's subject says "cause found": the cause is [I]).
+
+- **What players get**: nothing new; the defaults behave as 0.15.3. `quiet_place` stays off unless named.
+- **Found** (RE, read only; design 7.31):
+  - [O code] Every live guest correction goes by the typed dispatch (`leaf=typed`) to the soldier handler 0x1360f90
+    alone; its set-transform branch posts an action request {0xa6, msg+0x30 = player index, flag 4} through
+    vt[0x1f8] -> (this+0x80)->vt[8] for every guard whose stance nibble (S+0x98 records +0x34 & 0xf) is 1 or 2; the
+    mod leaves msg+0x30 at 0, this PC's own player (the player carry code puts the carrier's index there). Stance 3-4:
+    a rotated pose, no post. soldier_warp's stance refusal runs only on the pinned chain, so it never ran live.
+  - [O code] The quiet warp 0x136ece0 makes the same controller calls (vt[0x68] position, vt[0x70] rotation) without
+    the post: the post is what the quiet move lacks of the default warp (the review: the quiet warp also moves only
+    past its 15 m slot gate, 225.0 at 0x2329c00, hence QuietBias, and writes the slot's network position; so not "the
+    only difference").
+  - [O census] Stance 1 is the normal one (0d801772 guest census: st=1 3621 of 4044 samples, st=2 423). No census in
+    0d801772, fbf3522a, f11fe8a1 or 0f020398, on either copy, has a stance 0 (so the quiet move's stance 0 case is never
+    seen); the figures first written here (st=1 6841, st=0 1081) were substring counts that took `post=1` / `post=0`
+    too. No log_cap drops in these logs. Guard 246 read st=1 at his warp in 0d801772, fbf3522a and f11fe8a1. In
+    0f020398 all 15 message corrections of stance 1 guards were followed by action kind 3 -> 15 (the kind before was 1,
+    18 or 31; 2929558510: 1, 3, 15, 12, 27), the stance 4 guard's (guard 15, seq 154) by kind 4 only.
+  - [I] the post is the startle (a guard told this PC's player handled him; 246 then radioed "a possible intruder ...
+    attacked me"). What 0xa6 does in the action component is [U]; it is not a flag on the message.
+- **Built** (native + Lua, no CFG bit, no wire change; still off unless `quiet_place=1`): the quiet warp for every
+  off-screen correction of a stance 0-2 guard, walkers too (`quiet=walk`), stance 3-4 or unread keeps the message
+  (`quiet=stance`); a moved walker on a started walk (dest mode 1) is re-planned from his new spot to his own brain's
+  R+0x80 (act_plan's shadow plan 0x1413725f0 after his brain's live planner slot is cancelled;
+  `world_place=quiet_plan`, then `soldier_act_plan`); quiet read-backs at 0.5 / 2 / 5 / 10 s with `dho_m` /
+  `oage_ms` against the owner copy. Tests: soldier_act_tests 194 (red: "rest: walking: quiet, then re-planned (round
+  11)"), world_align_lua_check 466 (red 213: the 10 s / owner read-back); enemy_div_report rows `walk_moves`, `plans`,
+  `plans_started`, `walk_owner_2s` / `walk_owner_10s` (910b5c6e; enemy_div_report_check 16).
+  As the review checked it: the walker re-plan plans only from a planner slot it read (an unread slot was taken for an
+  empty one; soldier_act_tests 195); the report's walker rows go by the move's own warp line (`quiet=walk`), not by the
+  guard, count the walkers read (`walkers`) and add `plans_lost` / `plans_lost_guards` (a cancelled slot whose plan did
+  not start: his brain's walk cancelled and none in its place, so he may stand; enemy_div_report_check 17). Not fixed
+  (lab only): a re-arm of the same guard within 10 s drops his 10 s read-back; with `act_plan=1` too the quiet plans
+  share act_plan's plan check and counters.
+- **Runs**: none in the time box. Session 1 (job 20261106-032106-729-9dbd7d: `quiet_place=1, act_census=1`;
+  enemy8-quiet-calm, the radio spot of 0d801772 / fbf3522a, + enemy11-quiet-walk, calm corrections of the
+  swapped-route walkers 15 / 246) was queued at 21:21 behind three other tracks' jobs. The queue runner waited for its
+  floors from 21:15 to past 22:51: C: free 5.0 GB at 21:15, 2.0 GB at 21:21, 0.0-0.5 GB 21:34-22:16, 7.6 GB at 22:20,
+  5.4 GB at 22:51 (floor 6 GB), then commit memory under 15 GB; Docker Desktop's update installer in Temp was one writer
+  (595 MB at 21:32); this track writes nothing to C: but its notes. Of the jobs ahead, enemy11-C was interrupted (its
+  runner ended) and enemy11-B-trucks failed its audited CTest; B-africa still waited at 22:51. The job stays queued
+  (no cancel in the queue): if it runs later its result lands under `build/worker-runs` of this worktree, at the code
+  head then built (1b34856a code). No gate row was measured.
+- **Checks**: full `tools/build.ps1 -Jobs 4` at 1b34856a: CTest 354/355 (worker_queue_tests timed out under the
+  parallel load; passed alone in 53 s); every contract `--check` as before (known base failures only; horse_drive and
+  vehicle_controller pass with `--executable`).
+- **Next**: run session 1 as queued (gate: >= 10 quiet moves incl. >= 3 of walkers, 0 radio report / phase change from a
+  mod move, moved walkers within 3 m of the owner copy at 2 s and 10 s with >= 3 walkers read at each, `plans_lost` 0,
+  0 latches / faults / game overs, guest p90 <= 2 m; the queued job builds the head then current, which now holds the
+  slot-read fix), then flip `quiet_place` with the gun profile and the no-key run. Not covered by this fix: on-screen
+  corrections still use the message (its post too), and so do the host's M3 placements on the host's copies.
+
 ## November 5, 2026: enemy harden - inside the keys already on (`drive_vert`, `lrrp_follow` in 30010): the soft follow leaves a guard seated in a vehicle alone, a truck read at the map origin is no sample, a parked far truck that its own crew drives is put back at most once a second, and a seated crew is unseated at most 3 times; no default changed, no wire change, no README change (players see no difference)
 
 Design 7.30. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. After merging dev 60bc4a6a (6ad92706):
