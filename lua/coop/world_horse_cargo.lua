@@ -28,7 +28,7 @@ local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS 
 local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 450, 1100
 -- Heights (docs/mounts.md 11): body 1 0.45 m over an unridden census; riding, 0.54 m behind and 0.15 m over the rider
 -- once the rider sits over the census root (M2h, 990d2530: 0.97 m under it right after the mount), else the census
--- point; on foot within 3 m over 2.0 m over the ground, 1.35 m over it (M2j, 3a86c82f: no low edge). Body 0 1.3 m over the placed pose
+-- point; on foot within 3 m over 2.0 m over the ground, 1.35 m over it (M2j: no low edge). Body 0 1.3 m over the placed pose
 -- after each placement, else 0.9 m over the census. Both held a quarter turn from the horse's yaw (across its back).
 local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 150, 2000, 1350, 3000, 2000
 local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
@@ -295,11 +295,15 @@ local function offTick(now)
    capped("near", fmt("step=near;d_cm=%d;e=%d;mounted=%d", round(d / 10), held("E", now) and 1 or 0, mounted() and 1 or 0), 40)
   end
  end
- if not held("E", now) then C.heldSince, C.heldDone = nil, nil; return end
- C.heldSince = C.heldSince or now
+ -- M2j: an E begun while carrying logs a short hold or a lost carry.
+ if not held("E", now) then
+  if C.heldSince and not C.heldDone and C.heldCarry then capped("load_e", fmt("step=load_e;held_ms=%d", round(now - C.heldSince))) end
+  C.heldSince, C.heldDone = nil, nil; return
+ end
+ if not C.heldSince then C.heldSince, C.heldCarry = now, cargo(false, false, false) == 1 end
  if C.heldDone or now - C.heldSince < HOLD_MS or mounted() then return end
  C.heldDone = true
- if cargo(false, false, false) ~= 1 then return end
+ if cargo(false, false, false) ~= 1 then return C.heldCarry and refuse("carry") end
  local other = rec(3 - W.role)
  if not (fresh(other, now) and other.down == true and int(other.generation, 1, 4294967295)) then return refuse("awake") end
  local h = horse()
