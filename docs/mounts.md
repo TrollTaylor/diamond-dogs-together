@@ -1303,9 +1303,15 @@ Round `wp/horse` step S3 (markers [O] / [I] / [U]; slim archives with the full s
   `guest debug godmode 0` did not take while the guest rode (`status ... god=1`), and the guard was 321 m away
   (`clear_enemies 100` at the start: `mode=route; why=far`), so `getoff` never ran. Part 2 stopped at the host's first E
   (`host require localMounted=1`) on the horse where part 1 left it, by the trees [O].
+- **Attempt 3** (lab `57a6c1ad`, `horse-s3-down2.txt`, world_horse_down_off named): both players where S2's (b) ended,
+  the horses called there, the guest's godmode off on foot (`god=0` this time), then `goto_horse` warped the guest to the
+  horse's census root (878.37 / 1722.13) and the guest's E 2 s later did not mount (`guest require localMounted=1`),
+  before any guard or frame [O log]. Every failed first E of these parts (S2 `41ae2b4c` part 3, S3 lab / play part 3,
+  `e3f8297d` part 2, `57a6c1ad`) was at a horse standing among the rocks and trees there, after `goto_horse`; at the boot
+  spot it mounted every time [O]; why is [U].
 - **Gate not passed:** the rear rider stands on the driver's screen from the seating with a horse_here horse in both
   orders and, with a called horse, from the moment the horse runs into a tree or a rock; nothing logged changes with it
-  yet; the downed rider was not reproduced (four attempts over S2 and S3).
+  yet; the downed rider was not reproduced (five tries over S2 and S3; this step's three attempts are used).
 - **Next:** start both orders with a horse the players called (the stock recall; for (b) after (a) move the players, not
   the horse: M1's final keeps the horse where (a) left it), so body 1 sits at idle, then a rock push: a seated and a
   standing window in one seat. Diff body 1's motion state there from a source other than the Q records (the motion
@@ -1314,7 +1320,9 @@ Round `wp/horse` step S3 (markers [O] / [I] / [U]; slim archives with the full s
   horse_here horse, compare what `place` leaves different from a recalled horse (census record, its CS slot) with
   `horse_drive=ride_rec` of body 0. The downed rider: mount first (a recalled horse, away from the guard), then
   `spawn_enemy here come` from the saddle is refused (debug commands while mounted), so let the player on foot make the
-  guard hostile with no `clear_enemies` before it, and turn the rider's godmode off BEFORE the rider mounts (attempt 2:
+  guard hostile with no `clear_enemies` before it, mount on open ground (the boot spot: every first E there mounted;
+  `spawn_enemy here` warps the nearest guard only within 250 m, so check `enemy info nearest` there first), and turn the
+  rider's godmode off BEFORE the rider mounts (attempt 2:
   `debug godmode 0` did not take while riding); then `getoff` live with world_horse_down_off named. For the standing:
   log body 1's position each tick around the 5-6 m seat-error windows and the overlay's DM state then, and try the DM
   replay after such a window.

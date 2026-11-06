@@ -32,6 +32,9 @@ docs/mounts.md section 19.
   stats fields stayed the same; two 5.6 / 5.7 m seat-error windows during the gallops. (c1) did not down the driver
   (`debug godmode 0` did not take while riding; the guard was 321 m away after `clear_enemies`); part 2 stopped at the
   host's first E by the trees. Full CTest 355/355 at `4f55fe8d`.
+- **Attempt 3** (lab `57a6c1ad`): at the spot where S2's (b) ended, with called horses and the rider's godmode off
+  on foot, the guest's first E after `goto_horse` did not mount (as in every part-3 try there), so the downed rider was
+  not reproduced in this step's three attempts; world_horse_down_off stays off unless named.
 - **M2i's two leftover queue jobs** ran on this worktree before the S3 code (world_horse_cargo named by their scenarios):
   lab `3a86c82f` passed `horse-cargo.txt` and `horse-cargo-b.txt` (the drop part failed: no `stream_lost` unload, the
   victim not down); play `7c1de731` part 2 failed (the host was never downed). Not read further this step.
