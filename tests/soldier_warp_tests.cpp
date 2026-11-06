@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include "mgscoop/soldier_warp.hpp"
 #include "soldier_relay_contract.hpp"
 #include "soldier_warp_contract.hpp"
@@ -521,6 +522,35 @@ int main() {
                   "drive_vert: at most 2 snaps of a copy in 10 s from the first; the window then starts over");
             sw::DriveVertCount(20100, win, n);
             Check(win == 20100 && n == 1, "drive_vert: the next snap opens a new window");
+            // Enemy round 10 track A (design 7.27): a vert snap only while the owner copy is at rest in y (round 7's two
+            // snaps of 2929558510 chased an owner going down 2.40 m, then up 1.88 m 1.7 s later: stairs or a ladder).
+            {
+                sw::OwnerRestY oy{};
+                const bool r0 = sw::OwnerYAtRest(276.70f, 1000, oy), r1 = sw::OwnerYAtRest(276.75f, 1400, oy),
+                           r2 = sw::OwnerYAtRest(276.62f, 1900, oy), r3 = sw::OwnerYAtRest(276.68f, 2000, oy);
+                Check(!r0 && !r1 && !r2 && r3, "drive_vert: the owner copy level within 0.2 m for 1 s is at rest");
+                // On stairs: 0.12 m per 100 ms never rests; once level again it rests 1 s after the last rise.
+                sw::OwnerRestY st{};
+                bool any = false;
+                for (unsigned i = 0; i <= 20; ++i) any = sw::OwnerYAtRest(272.0f + 0.12f * static_cast<float>(i), 5000 + 100ull * i, st) || any;
+                const float top = 272.0f + 0.12f * 20.0f;
+                const bool s1 = sw::OwnerYAtRest(top, 7500, st), s2 = sw::OwnerYAtRest(top, 7999, st),
+                           s3 = sw::OwnerYAtRest(top + 0.05f, 8000, st);
+                Check(!any && !s1 && !s2 && s3, "drive_vert: an owner going up stairs is not at rest; level again it rests after 1 s");
+                // A slow drift past 0.2 m in all starts over; so does a gap of more than 600 ms between drive calls or a NaN.
+                sw::OwnerRestY dr{};
+                const bool d0 = sw::OwnerYAtRest(270.0f, 100, dr), d1 = sw::OwnerYAtRest(270.15f, 600, dr),
+                           d2 = sw::OwnerYAtRest(270.25f, 1100, dr), d3 = sw::OwnerYAtRest(270.25f, 1600, dr),
+                           d4 = sw::OwnerYAtRest(270.25f, 2100, dr);
+                Check(!d0 && !d1 && !d2 && !d3 && d4 && dr.since_ms == 1100, "drive_vert: a drift past 0.2 m starts the rest window over");
+                sw::OwnerRestY gp{};
+                const bool g0 = sw::OwnerYAtRest(270.0f, 100, gp), g1 = sw::OwnerYAtRest(270.0f, 600, gp),
+                           g2 = sw::OwnerYAtRest(270.0f, 1100, gp), g3 = sw::OwnerYAtRest(270.0f, 1800, gp),
+                           g4 = sw::OwnerYAtRest(std::numeric_limits<float>::quiet_NaN(), 2000, gp),
+                           g5 = sw::OwnerYAtRest(270.0f, 2100, gp);
+                Check(!g0 && !g1 && g2 && !g3 && !g4 && !g5 && gp.since_ms == 2100,
+                      "drive_vert: a gap of more than 600 ms between drive calls or a NaN y starts the rest window over");
+            }
             char reply[64]{};
             const bool b1 = sw::FormatRefusal(reply, sizeof(reply), "backoff", 2500) &&
                             std::strcmp(reply, "return {refused=\"backoff\",b=2500}") == 0;
@@ -598,6 +628,51 @@ int main() {
     Check(sw::GuestMayWarp(true, false, true) && sw::GuestMayWarp(false, true, false) && sw::GuestMayWarp(true, false, false) &&
           !sw::GuestMayWarp(false, false, true), "Verify runs for a play or lab guest");
     VirtualFree(image, 0, MEM_RELEASE);
+    // Enemy round 8 track A (range_flat, docs/world-sync-design.md 7.22): run ddcdec94, the guest fell 178 m below the
+    // outpost (x/z 436.1, 2181.7) and stayed the owner (x/z rule) of guards 5-30 m from them on the ledge; the 3D rule
+    // made the host (70 m away) the nearer player and refused every placement `range`. On the ground plane the guest is.
+    {
+        const float guard[3] = {440.8f, 270.0f, 2175.8f}, host_p[3] = {418.3f, 268.3f, 2083.5f}, guest_p[3] = {436.1f, 92.1f, 2181.7f};
+        bool g_near = true;
+        const float d3 = sw::NearerSquared(guard, host_p, guest_p, true, true, g_near);
+        Check(!g_near && !(d3 <= sw::kMaxRangeLimitM * sw::kMaxRangeLimitM), "3D: the fallen guest is not nearer; out of range");
+        const float flat = sw::NearerSquaredFlat(guard, host_p, guest_p, true, true, g_near);
+        Check(g_near && std::fabs(flat - (4.7f * 4.7f + 5.9f * 5.9f)) < 0.05f, "flat: the guest on the ground plane, 7.5 m");
+        Check(std::fabs(sw::NearerSquaredFlat(guard, host_p, guest_p, true, false, g_near) - (22.5f * 22.5f + 92.3f * 92.3f)) < 1.0f &&
+                  !g_near, "flat: a stale guest pose leaves the host's leg");
+        sw::Request fr{};
+        for (unsigned i = 0; i < 3; ++i) { fr.pos[i] = guard[i]; fr.player[i] = guest_p[i]; }
+        sw::FlattenRange(fr);
+        Check(fr.player[1] == fr.pos[1] && fr.player[0] == guest_p[0] && fr.player[2] == guest_p[2],
+              "FlattenRange: Warp's range is then measured on the ground plane");
+    }
+    // Enemy round 9 track A (bug 2, design 7.24): while the host hides the guest's body for range (partner_range=hide,
+    // beyond 200 m) the driver has no command and the pose was left unknown (run 8b581a26: 142 of 142 placements refused,
+    // the guest's position read 0); the guest's network pose sample, at most 1 s old, stands in for the nearer-player rules.
+    Check(sw::RemoteRangeSource(true, false, true, 50, true) == sw::RemoteSource::cmd, "pose: the driver's command when it has one");
+    Check(sw::RemoteRangeSource(true, true, true, 50, true) == sw::RemoteSource::cmd, "pose: the command first, hidden or not");
+    Check(sw::RemoteRangeSource(false, true, true, 400, true) == sw::RemoteSource::net, "pose: hidden for range: the network sample");
+    Check(sw::RemoteRangeSource(false, true, true, 1001, true) == sw::RemoteSource::none, "pose: hidden: a sample over 1 s old is unknown");
+    Check(sw::RemoteRangeSource(false, false, true, 100, true) == sw::RemoteSource::none, "pose: no command for another reason: unknown");
+    Check(sw::RemoteRangeSource(false, true, false, 0, true) == sw::RemoteSource::none, "pose: no sample: unknown");
+    // Round 9 land step (the review): the network pose only when range_flat is named (off at the defaults, as 0.15.2: the
+    // no-key runs at 554b2fa9 did not back it, and it is also live from every 30010/30020 mission start until 'near').
+    Check(sw::RemoteRangeSource(false, true, true, 400, false) == sw::RemoteSource::none, "pose: the network sample only when named");
+    Check(sw::RemoteRangeSource(true, true, true, 50, false) == sw::RemoteSource::cmd, "pose: the command as before when not named");
+    // The review: DriveReceipt measured a 'partner nearer' drive from the command pose (0,0,0 while hidden) instead of the
+    // pose the nearer test used, so every such drive was refused 'range'. Both receipts now take the player point here.
+    {
+        const float own[3] = {10.0f, 20.0f, 30.0f}, partner[3] = {400.0f, 21.0f, 2100.0f};
+        float out[3]{};
+        sw::RangePlayer(true, own, partner, out);
+        Check(out[0] == 400.0f && out[1] == 21.0f && out[2] == 2100.0f, "range player: the nearer test's partner pose when nearer");
+        sw::RangePlayer(false, own, partner, out);
+        Check(out[0] == 10.0f && out[1] == 20.0f && out[2] == 30.0f, "range player: this player's pose otherwise");
+    }
+    Check(std::strcmp(sw::RemoteSourceName(sw::RemoteSource::net), "net") == 0 &&
+              std::strcmp(sw::RemoteSourceName(sw::RemoteSource::cmd), "cmd") == 0 &&
+              std::strcmp(sw::RemoteSourceName(sw::RemoteSource::none), "none") == 0,
+          "pose: the source names");
     std::printf("soldier_warp_tests: PASS %u checks\n", checks);
     return 0;
 }

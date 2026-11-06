@@ -285,6 +285,15 @@ overlay is drawn without the Win32 backend, never takes mouse or keyboard input
 and draws before the capture of the same Present. No F9 key is ever sent.
 `scenarios/debug-menu.txt` exercises every category; see `docs/debug-menu.md`.
 
+Refusals and retries (`wp/worker-load`, 2026-11-05). A `command_refused` receipt names the check that refused:
+`sequence`, `expired`, `expiry_beyond_2000ms`, `hold_outlives_expiry` (a press/hold read later than its
+expiry minus its duration), `keys_or_duration`, `mouse_range`, `capture_pending`, `capture_cadence` (250 ms),
+`operation`, or a loading-resume reason. The game reads the admission clock after the inbox file (before that a
+command stamped in the GetTickCount64 tick after the poll's clock read looked like a 2016 ms lifetime: the
+`sequence_expiry_or_busy` captures of horse round 4). A refused capture is sent once more 300 ms later
+(`capture_retried` in captures.jsonl); a second refusal stops the step. The landing after `placebehind` (and the
+benchmark pose reset) tolerates one 250 ms interval without a new state sample; two in a row stop it.
+
 Partner profiles (`-PartnerProfile`): `animated` (default; xform + dm=map), `input`
 (round-4 input drive) and `native` (the native puppet, `docs/native-puppet.md`: the
 animated profile as the automatic fallback plus `partner_drive=native`). `native`

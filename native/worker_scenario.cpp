@@ -189,18 +189,26 @@ void Scenario::Clear() noexcept {
 }
 bool Scenario::Accept(const Command& request,std::uint64_t now) noexcept {
     Tick(now);
-    Command c=request;
+    Command c=request;refusal_=nullptr;
+    // Each refusal names its check in the receipt.
+    const auto refuse=[this](const char* reason) noexcept {refusal_=reason;return false;};
     if(c.operation==Operation::resume_loading) {
-        if(ResumeRefusal(c))return false;
+        if(const char* reason=ResumeRefusal(c))return refuse(reason);
         c.operation=Operation::press;c.keys=std::uint64_t{1}<<static_cast<unsigned>(Key::space);c.duration=120;
     }
-    if(!c.sequence||c.sequence>4096||c.sequence<=last_sequence_||c.expires<=now||c.expires-now>2000||last_sequence_>=4096||
-       static_cast<unsigned>(c.operation)>static_cast<unsigned>(Operation::capture)) return false;
+    if(!c.sequence||c.sequence>4096||c.sequence<=last_sequence_||last_sequence_>=4096)return refuse("sequence");
+    if(c.expires<=now)return refuse("expired");
+    if(c.expires-now>2000)return refuse("expiry_beyond_2000ms");
+    if(static_cast<unsigned>(c.operation)>static_cast<unsigned>(Operation::capture))return refuse("operation");
     if(c.operation==Operation::press||c.operation==Operation::hold) {
-        if(!c.keys||c.keys>>static_cast<unsigned>(Key::count)||!c.duration||c.duration>2000||c.duration>c.expires-now) return false;
+        if(!c.keys||c.keys>>static_cast<unsigned>(Key::count)||!c.duration||c.duration>2000)return refuse("keys_or_duration");
+        if(c.duration>c.expires-now)return refuse("hold_outlives_expiry");
     } else if(c.operation==Operation::mouse) {
-        if(c.dx < -1500||c.dx>1500||c.dy < -1500||c.dy>1500||(!c.dx&&!c.dy)) return false;
-    } else if(c.operation==Operation::capture && (capture_.sequence||(capture_at_&&now-capture_at_<250))) return false;
+        if(c.dx < -1500||c.dx>1500||c.dy < -1500||c.dy>1500||(!c.dx&&!c.dy))return refuse("mouse_range");
+    } else if(c.operation==Operation::capture) {
+        if(capture_.sequence)return refuse("capture_pending");
+        if(capture_at_&&now-capture_at_<250)return refuse("capture_cadence");
+    }
     last_sequence_=c.sequence;
     if(request.operation==Operation::resume_loading)resume_sequence_=c.sequence;
     if(c.operation==Operation::press||c.operation==Operation::hold) {
@@ -367,6 +375,22 @@ BOOL CALLBACK InitializeOnce(PINIT_ONCE,PVOID parameter,PVOID*) noexcept {
     configured.store(true);Receipt("configured","actual_gates_private_desktop_exact_executable",0);
     return TRUE;
 }
+// One newer inbox command, under state_lock. Returns nullptr when accepted, else the reason its receipt carries.
+// The admission clock is read after the inbox file: the poll's caller read GetTickCount64 (15.6 ms ticks) before the
+// desktop check, the lock and the file read, and a command the controller stamped (its clock + 2000 ms) after a tick
+// turned in that gap looked like a 2016 ms lifetime and was refused (horse round 4: d4aec0a2, 05758736, 770368d0,
+// d935beae, each refusal 0-16 ms after the stamp with no capture pending).
+const char* Inbox(const char* text,std::size_t size,std::uint64_t polled) noexcept {
+    Command command{};
+    if(!ParseCommand(text,size,run_id,role,command)||command.sequence<=last_file_sequence)return "unread";
+    last_file_sequence=command.sequence;
+    const std::uint64_t read=GetTickCount64();const auto now=read>polled?read:polled;
+    const bool accepted=scenario.Accept(command,now);
+    const char* refusal=accepted?nullptr:scenario.refusal()?scenario.refusal():"sequence_expiry_or_busy";
+    Receipt(accepted?"command_accepted":"command_refused",accepted?
+        (command.operation==Operation::resume_loading?"loading_space_120ms":"typed_bounded"):refusal,command.sequence);
+    return refusal;
+}
 void Consumed(Device device) noexcept {
     const auto sequence=scenario.input_command(device);auto& last=device==Device::keyboard?consumed_keyboard:consumed_mouse;
     if(sequence&&sequence!=last) {last=sequence;Receipt("input_consumed",device==Device::keyboard?"keyboard_api":"mouse_api",sequence);}
@@ -455,15 +479,8 @@ void Poll(std::uint64_t now) noexcept {
             BY_HANDLE_FILE_INFORMATION info{};LARGE_INTEGER size{};char text[513]{};DWORD read=0;
             const bool read_ok=GetFileInformationByHandle(file,&info)&&!(info.dwFileAttributes&FILE_ATTRIBUTE_REPARSE_POINT)&&
                 GetFileSizeEx(file,&size)&&size.QuadPart>0&&size.QuadPart<=512&&ReadFile(file,text,512,&read,nullptr)&&static_cast<LONGLONG>(read)==size.QuadPart;
-            CloseHandle(file);Command command{};
-            if(read_ok&&ParseCommand(text,read,run_id,role,command)&&command.sequence>last_file_sequence) {
-                last_file_sequence=command.sequence;
-                const char* refusal=command.operation==Operation::resume_loading?scenario.ResumeRefusal(command):nullptr;
-                const bool accepted=scenario.Accept(command,now);
-                Receipt(accepted?"command_accepted":"command_refused",accepted?
-                    (command.operation==Operation::resume_loading?"loading_space_120ms":"typed_bounded"):
-                    refusal?refusal:"sequence_expiry_or_busy",command.sequence);
-            }
+            CloseHandle(file);
+            if(read_ok)Inbox(text,read,now);
         }
     }
     ReleaseSRWLockExclusive(&state_lock);SetLastError(error);
@@ -540,6 +557,10 @@ bool AcceptForTest(const Command& command,std::uint64_t now) noexcept {
     AcquireSRWLockExclusive(&state_lock);const bool ok=Active()&&mock_lease&&mock_private&&scenario.Accept(command,now);
     ReleaseSRWLockExclusive(&state_lock);return ok;
 }
+const char* InboxForTest(const char* text,std::size_t size,std::uint64_t polled) noexcept {
+    AcquireSRWLockExclusive(&state_lock);const char* result=Active()&&mock_lease&&mock_private?Inbox(text,size,polled):"inactive";
+    ReleaseSRWLockExclusive(&state_lock);return result;
+}
 void SetPrivateForTest(bool value) noexcept {mock_private=value;}
 TestStats StatsForTest() noexcept {return {consumed_keyboard,consumed_mouse,diagnostic_count};}
 #endif
@@ -567,6 +588,7 @@ void DeviceConfiguration(const char*,std::int32_t,bool,std::uint32_t,std::uint32
 #ifdef MGS_WORKER_TESTING
 void ConfigureForTest(const Authorization&,bool,bool) noexcept{}
 bool AcceptForTest(const Command&,std::uint64_t) noexcept{return false;}
+const char* InboxForTest(const char*,std::size_t,std::uint64_t) noexcept{return "inactive";}
 void SetPrivateForTest(bool) noexcept{}
 TestStats StatsForTest() noexcept{return {};}
 #endif

@@ -761,6 +761,12 @@ struct LabConfig {
     // calm / caution (the far rule releases and skips a guard whose CP is in evasion / ALERT); soldier_act=all (research)
     // keeps every phase. Carried in the ACT_V1 p reply (pl=1), no CFG bit.
     bool soldier_act_calm = false;
+    // Enemy round 8 track C (docs/world-sync-design.md 7.23; soldier_act.hpp PlanGate): the far mirror's puppets plan their own
+    // path to the host copy's destination (0x1413725f0 with a shadow gate after the engine's own request start), the gait
+    // catch-up, the warped puppet's facing, walkers taken only within 10 m of the owner copy. Native only, no CFG bit, no
+    // wire; needs soldier_act. Lab and play; off unless named until its gate run passes.
+    bool act_plan = false;
+    bool act_plan_given = false;
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
@@ -780,9 +786,30 @@ struct LabConfig {
     bool place_reach_given = false;
     // Enemy gaps 3 (docs/world-sync-design.md 7.18, native DriveReceipt only, no CFG bit): the soft follow also puts a copy
     // at rest in x/z that stands more than 1.5 m above or below the owner's for 1 s on the owner's spot (drive_sink at the
-    // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
+    // defaults: 6348f361, 41f2b07f, 31a799e3), only once the owner copy has been level in y for 1 s (7.27). Lab and play;
+    // follows the gun profile since user decision D-A10 (lab_config.cpp), a named 0 opts out.
     bool drive_vert = false;
     bool drive_vert_given = false;
+    // Enemy round 8 track B (docs/world-sync-design.md 7.21, no CFG bit; Lua asks the receipt MGS_COOP_LRRP_CFG_V1): the host
+    // streams its LRRP trucks (LRRP_FAST 0x5D) and the guest's copy follows them, its own AI stopped (ForceStop) while the
+    // host's truck moves or carries riders. Lab and play; off unless named (lab_config.cpp).
+    bool lrrp_follow = false;
+    bool lrrp_follow_given = false;
+    // Enemy round 8 track A (docs/world-sync-design.md 7.22, native only, no CFG bit). quiet_place: a correction the guest's
+    // Lua makes of a guard off its player's screen moves him with the engine's quiet network-position warp 0x136ece0 in the
+    // request manager update (no set-transform message: after 499 of 539 applied place warps of the census runs the guard
+    // was in action kind 3 within 0.5 s, 260 of them already before the warp, and run 0d801772's guard 246 then radioed a
+    // possible intruder and the outpost went to caution on the guest). range_flat: the host's M3 placement and drive range
+    // from the nearer player is measured on the ground plane (x/z), as the owner rule (a code fact, never seen refusing a
+    // placement: the ddcdec94 / 8b581a26 near=host refusals all came while the host hid the fallen guest's body beyond
+    // 200 m, which leaves the guest's pose unknown). Lab and play; both off unless named (lab_config.cpp: quiet_place's
+    // no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26). Round 9 (design 7.24): with
+    // range_flat named, both roles' nearer-player rules (host placement, soft follow, PEER) also take the partner's network
+    // pose while this PC hides the partner's body for range (soldier_warp::RemoteRangeSource); off at the defaults.
+    bool quiet_place = false;
+    bool quiet_place_given = false;
+    bool range_flat = false;
+    bool range_flat_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
@@ -1001,7 +1028,7 @@ struct LabConfig {
     // world_horse_cargo=0|1 (horse plan M2, docs/mounts.md "Downed partner on the horse"; with world_horse_share): carry a
     // downed partner to the shared D-Horse and hold E: they lie across its back on both screens (HORSE_SEAT seat 2,
     // lua/coop/world_horse_cargo.lua over the existing MGS_COOP_CARGO_V2 calls). Both PCs must run it. Off unless named
-    // in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
+    // in lab and play until its gate passes (docs/mounts.md section 11); a named 0 is the off switch.
     bool world_horse_cargo = false;
     bool world_horse_cargo_given = false;
     // world_horse_pillion=0|1 (horse plan M3, docs/mounts.md "Ride behind your partner"; with world_horse_share): E beside
@@ -1010,6 +1037,12 @@ struct LabConfig {
     // gun profile in lab and play since the M3c round (runs 51f6a2cc lab / 4f52fa2a play); a named 0 is the off switch.
     bool world_horse_pillion = false;
     bool world_horse_pillion_given = false;
+    // world_horse_shot=0|1 (horse plan M4, docs/mounts.md "Shoot from the back of the horse"; with world_horse_pillion): the
+    // passenger behind the partner aims and fires: its own bullets start past the horse and the driver (partner_seat_shot
+    // horse class, MGS_COOP_HORSE_DRIVE_V1 pbox), and the driver's copy raises body 1's gun in the rear seat (partner_seat_gun
+    // with the pillion seat). Off unless named in lab and play (the M4 gate was not reached); a named 1 runs in play.
+    bool world_horse_shot = false;
+    bool world_horse_shot_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
     // (relief) vehicle on both copies. The follow seeds carry the host's relief carry vars and
     // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN

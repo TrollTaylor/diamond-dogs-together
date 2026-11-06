@@ -1,0 +1,90 @@
+# Enemy round 9 track B (lrrp_follow, docs/world-sync-design.md 7.25): Africa (30020), seed africa-jeep (both players at
+# the Masa Village jeep, -656.01 1.20 877.73). The host alone first, the guest pairs, crouches 6 m away (a known ground
+# point of coop-vehicle-absent-30020.txt); then ~6.5 minutes of the seven authored LRRP trucks (veh_trc_0000..0006)
+# from the event=lrrp lines of both copies (map-wide), frames every 60 s on both screens.
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy9-B-trucks -ScenarioPath
+#     tools/worker/scenarios/enemy-lrrp-africa.txt -Mode play -WanSim bad -PartnerProfile native -NativeStage gun
+#     -BuildProfile research -SaveSeed africa-jeep [-LabSetting lrrp_follow=1] -TimeoutSec 600 -Wait
+labsetting nametag=1
+titlemenu host 240
+title host 240
+waitgameplay host 150
+host debug godmode 1
+host debug infinite_ammo 1
+host debug time 72000
+host debug weather sunny
+wait 6000
+host run world_status
+host run position
+host capture f-q1
+logmark both
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+guest debug godmode 1
+guest debug infinite_ammo 1
+wait 2000
+guest run teleport -661.66 1.20 874.97 262
+wait 3000
+stance host crouch
+stance guest crouch
+host run world_status
+guest run world_status
+host run position
+guest run position
+wait 800
+both capture f-0
+logmark both
+host run world_status
+guest run world_status
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture f-1
+wait 59000
+logmark both
+host run world_status
+guest run world_status
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture f-2
+wait 59000
+logmark both
+host run world_status
+guest run world_status
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture f-3
+wait 59000
+logmark both
+host run world_status
+guest run world_status
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture f-4
+wait 59000
+logmark both
+host run world_status
+guest run world_status
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture f-5
+wait 59000
+logmark both
+host run world_status
+guest run world_status
+host mouse 600 0
+guest mouse 600 0
+wait 800
+both capture f-6
+wait 59000
+host run world_status
+guest run world_status
+host run position
+guest run position

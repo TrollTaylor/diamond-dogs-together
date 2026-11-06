@@ -100,6 +100,9 @@ TxStatus ParseTx(const char* source, std::size_t size, std::uint8_t& code, std::
 bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
 // WARP_V1: seq 1..65535, goId 0..65535 (strict integers). Outputs only on success.
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
+// Enemy round 8 (quiet_place, docs/world-sync-design.md 7.22): "<seq> <goId>" or "<seq> <goId> 1" (1: the guest's Lua asks
+// for the quiet move, a correction off its player's screen). Outputs only on success.
+bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id, bool& quiet) noexcept;
 bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept;
 // FM1: ACT_V1 "<t|m|r|s|q> <slot> <goId>": slot 1..512 and goId 0..65535 (s: both 0). Outputs only on success.

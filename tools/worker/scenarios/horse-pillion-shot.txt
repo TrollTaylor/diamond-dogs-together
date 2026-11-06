@@ -1,0 +1,190 @@
+# Horse plan M4b, shoot from the back of the horse, part 1 of the lab session (then horse-pillion-shot-b.txt and
+# horse-pillion-shot-c.txt). world_horse_shot named (off unless named), world_horse_pillion on with the gun profile, not
+# named; docs/mounts.md "Shoot from the back of the horse". Afghanistan 50 m south of afgh_field_cp (the enemy rounds'
+# quiet spot), so Spawn enemy here warps a guard 5 m in front of the host (put to sleep: attempt 3's awake guards fought
+# back). Every part starts with a logmark.
+#   (a) The host drives, the guest behind: the host's first E at the unridden horse mounts it (godmode off first, so its
+#       life read means something); the guest claims the rear seat; cross-neck shots straight ahead (enemy_cam_turn 0),
+#       one while the horse walks; the guest shoots the sleeping guard (enemy_aim_nearest from the camera's eye); the guest
+#       hops off and the host's E gets them off.
+# M4b lines: the driver's copy partner_pillion=aim; on=1 (the overlay leaves body 1 to the native squat-aim) and
+# horse_pillion aim_hold on=1 ok=1 (hold1 pins it at the rear seat); frames h4-pillion-aim(-host) / h4-pillion-shot(-host):
+# the passenger aiming behind the driver on the driver's screen. world_lua=event=req (the shooter) / commit ... actor=guest
+# (the host): a guard hit from the seat. NEVER: crash_probe=av, step=two_drivers, step=horse_hit, m=Unconscious,
+# event=horse_pillion; step=error.
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-M4b
+#     -ScenarioPath tools/worker/scenarios/horse-pillion-shot.txt,tools/worker/scenarios/horse-pillion-shot-b.txt,
+#     tools/worker/scenarios/horse-pillion-shot-c.txt -Mode lab -WanSim bad -PartnerProfile native -NativeStage gun
+#     -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
+labsetting world_horse_shot=1
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting debug_soldier_warp=1
+boot 30010 421.16 269.2 2084.42 180 time=12:00 weather=sunny
+logmark both
+both debug godmode 1
+both debug infinite_ammo 1
+host run enemy ignore 2961503
+host run enemy ignore 2942862796
+host run enemy ignore 1740692850
+host run enemy ignore 1799112697
+host run enemy ignore 2929558510
+host run enemy ignore 667680985
+host run enemy ignore 1179373153
+host run enemy ignore 3268415846
+host run enemy ignore 753908875
+host run enemy ignore 1904171355
+host run enemy ignore 1845278687
+host run enemy ignore 1926520947
+host run enemy ignore 3970963356
+host run enemy ignore 2305481811
+wait 2000
+# The guest's D-Horse first (run d26aaf70: after the host's, the guest's buddy sync refused it, second_ride_unavailable).
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run pillion_status
+host require pillion;state=off;key=1;.*mode=6;.*shot=1
+guest run pillion_status
+guest require pillion;state=off;key=1;.*mode=6;.*shot=1
+# --- (a) the host drives, the guest behind shoots ------------------------------------------------------------------------
+logmark both
+host run goto_horse
+wait 1500
+host run spawn_enemy here
+host expect ^guard_here;ent=
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=
+wait 2000
+host debug godmode 0
+wait 500
+host run status
+host expect ^status;.*god=0;.*life=
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+waitlog guest 'partner_mount=show; mount=horse;' 10
+guest run goto_horse
+wait 1500
+logmark both
+guest press e 150
+waitlog guest 'world_lua=event=horse_pillion; step=claim; seat=1;' 5
+waitlog host 'world_lua=event=horse_pillion; step=grant; seat=1;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=seated; seat=1; how=grant; token=[0-9]+; mode=6;' 5
+waitlog host 'partner_pillion=seat;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=shot_box; ok=1;' 5
+waitlog guest 'partner_seat_shot=published; vehicle=6656; seat=1; class=horse;' 5
+wait 1500
+both capture h4-seated
+# Cross-neck: the passenger's camera straight ahead along its own yaw (held at the horse's), level. M4b: the aim held
+# 2.7 s (two 1.5 s holds), the frames 1.5 s in (the driver's copy leaves body 1 to the native aim while the remote aims).
+logmark both
+guest run enemy_cam_turn 0 0
+guest expect ^cam_turn;
+wait 800
+guest hold rmb 1500 nowait
+wait 1200
+guest hold rmb 1500 nowait
+wait 300
+guest capture h4-pillion-aim
+host capture h4-pillion-aim-host
+guest press lmb 120
+wait 250
+guest capture h4-pillion-shot
+host capture h4-pillion-shot-host
+wait 600
+guest release
+waitlog host 'partner_pillion=aim; on=1;' 5
+waitlog host 'world_lua=event=horse_pillion; step=aim_hold; on=1; n=[0-9]+; ok=1;' 5
+wait 1200
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest release
+wait 1000
+waitlog guest 'partner_seat_shot=shot; result=shift; vehicle=6656; seat=1; apply=1;' 5
+waitlog host 'world_lua=event=horse_pillion; step=aim_hold; on=0;' 5
+host run status
+host expect ^status;.*god=0;.*life=
+waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
+# One cross-neck shot while the horse walks.
+logmark both
+host hold w 1500 nowait
+guest hold rmb 1400 nowait
+wait 600
+guest press lmb 120
+wait 200
+wait 800
+host release
+guest release
+wait 2000
+host run status
+host expect ^status;.*god=0;.*life=
+# The sleeping guard beside the horse. M4b: the lever's eye at the rear seat's camera (1.2 m up, 1.0 m back along the
+# line); attempt 1 (lab 11645acc) put the line about 0.8 m short with the target 0.3 m up, and play 22926dbf hit at 0.3,
+# so 0.3 / 0.7 / 1.1 m up now (along the lying body); the first line's d checks the enemy follow left the guard near.
+logmark both
+guest run enemy_aim_nearest 0.3 1.2 1.0
+guest expect ^aim_nearest;ent=\d+;d=[2-9]\.
+wait 800
+guest hold rmb 1500 nowait
+wait 1200
+guest hold rmb 1500 nowait
+wait 300
+guest capture h4-guard-aim
+host capture h4-guard-aim-host
+guest press lmb 120
+wait 250
+guest capture h4-guard-shot
+host capture h4-guard-shot-host
+wait 600
+guest release
+wait 1200
+guest run enemy_aim_nearest 0.7 1.2 1.0
+wait 800
+guest hold rmb 1500 nowait
+wait 1100
+guest press lmb 120
+wait 250
+guest release
+wait 1200
+guest run enemy_aim_nearest 1.1 1.2 1.0
+wait 800
+guest hold rmb 1500 nowait
+wait 1100
+guest press lmb 120
+wait 250
+guest release
+wait 1000
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=[0-9]+; state=[45];' 6
+waitlog host 'world_lua=event=commit; ent=.*; actor=guest;' 8
+waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
+host run status
+host expect ^status;.*god=0;.*life=
+# The passenger hops off, the driver gets off. M4b (play 1a7c5d0e: the host's 150 ms E was accepted 266 ms before the
+# game's next keyboard read, and the worker never delivers a late press, so the game never saw it): the E held 400 ms;
+# the driver's copy logs its raw E and the ride's end after the seat (step=driver_e / driver_e_off).
+logmark both
+guest hold e 500
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
+waitlog guest 'partner_seat_shot=withdrawn;' 5
+wait 1500
+host press e 400
+waitlog host 'world_lua=event=horse_pillion; step=driver_e_off;' 5
+wait 2500
+host run horse_status
+host require localMounted=0
+host debug godmode 1
+guest run horse_status
+guest require localMounted=0
+host capture h4-both-off-host
+guest capture h4-both-off-guest

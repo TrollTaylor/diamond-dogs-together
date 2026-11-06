@@ -288,6 +288,263 @@ int main() {
         char tiny[16]{};
         Check(!sa::FormatFrameLine(1, k, tiny, sizeof(tiny)), "the frame line refuses a short buffer");
     }
+    // Enemy round 8 track C (design 7.23, act_plan): the walk-request start 0x1413725f0 plans a path only for a FOB remote
+    // copy (S+0x2a4 bit 2, owner byte != S+0x2a8); offline it plans nothing and a puppet's legs follow his own brain's
+    // old path. The hook re-calls it after the engine's own start with a shadow gate object.
+    {
+        Check(sa::PlanGate(1, 0xffff, 0x0002, true) && sa::PlanGate(1, 0xffff, 0x0042, true),
+              "plan: dest mode 1, no handle, the offline start ran (R+0x19e & 3 == 2), applied now");
+        Check(!sa::PlanGate(0, 0xffff, 0x0002, true) && !sa::PlanGate(2, 0xffff, 0x0002, true), "plan: modes 0 / 2 not planned");
+        Check(!sa::PlanGate(1, 0x0012, 0x0002, true), "plan: a handle already out (FOB life cycle) is left alone");
+        Check(!sa::PlanGate(1, 0xffff, 0x0003, true) && !sa::PlanGate(1, 0xffff, 0x0001, true) && !sa::PlanGate(1, 0xffff, 0x0000, true),
+              "plan: only after the offline start (low bits 2)");
+        Check(!sa::PlanGate(1, 0xffff, 0x0002, false), "plan: only for a request applied this update");
+        // The shadow: 0x1413725f0 reads its first argument only at +0x70 (0x141372635) -> S' +0x2a4 bit 2, +0x18 -> +0x18
+        // the owner bytes [idx] against +0x2a8 (0x14137264a..0x141372664).
+        static sa::Shadow sh{};
+        sa::BuildShadow(sh);
+        Check(sa::ShadowGatePasses(sh.p, 0) && sa::ShadowGatePasses(sh.p, 246) && sa::ShadowGatePasses(sh.p, sa::kMaxSoldiers - 1),
+              "the shadow passes the gate for every guard");
+        std::uintptr_t s = 0;
+        std::memcpy(&s, sh.p + 0x70, sizeof(s));
+        std::uint32_t mode = 0;
+        if (s) std::memcpy(&mode, reinterpret_cast<const unsigned char*>(s) + 0x2a4, sizeof(mode));
+        Check(s == reinterpret_cast<std::uintptr_t>(sh.s) && mode == 4 && sh.s[0x2a8] == 0, "shadow layout: +0x70 -> S', +0x2a4 = 4, +0x2a8 = 0");
+        // A real offline S (census mode=0x782: bit 2 clear) does not pass; an online owner (owner byte == peer) does not.
+        alignas(16) static unsigned char p[0x78]{}, so[0x2b0]{}, slots[0x20]{}, owner[sa::kMaxSoldiers]{};
+        const std::uintptr_t ps = reinterpret_cast<std::uintptr_t>(so), pslots = reinterpret_cast<std::uintptr_t>(slots),
+                             powner = reinterpret_cast<std::uintptr_t>(owner);
+        std::memcpy(p + 0x70, &ps, 8);
+        std::memcpy(so + 0x18, &pslots, 8);
+        std::memcpy(slots + 0x18, &powner, 8);
+        const std::uint32_t offline = 0x782, online = 0x786;
+        std::memcpy(so + 0x2a4, &offline, 4);
+        Check(!sa::ShadowGatePasses(p, 5), "offline (bit 2 clear): the gate refuses (finding 1)");
+        std::memcpy(so + 0x2a4, &online, 4);
+        so[0x2a8] = 1;
+        owner[5] = 1;
+        Check(!sa::ShadowGatePasses(p, 5), "online, this peer owns him: the gate refuses");
+        owner[5] = 0;
+        Check(sa::ShadowGatePasses(p, 5), "online, a remote copy: the gate plans");
+        Check(!sa::ShadowGatePasses(nullptr, 5) && !sa::ShadowGatePasses(sh.p, sa::kMaxSoldiers), "no object / idx out of range: refused");
+    }
+    {
+        // The gait catch-up, as the unpack's mode 0 rule (2..5 m: + 1 capped at 3; beyond 5 m: 3), never lowered.
+        Check(sa::GaitCatchUp(0.0f, 1) == 1 && sa::GaitCatchUp(0.9f, 1) == 1, "gait: within 1 m ahead unchanged (round 9 C; was 2 m)");
+        Check(sa::GaitCatchUp(2.5f, 1) == 2 && sa::GaitCatchUp(4.9f, 2) == 3 && sa::GaitCatchUp(3.0f, 3) == 3, "gait: 2..5 m + 1, cap 3");
+        Check(sa::GaitCatchUp(5.1f, 0) == 3 && sa::GaitCatchUp(12.0f, 1) == 3, "gait: beyond 5 m 3");
+        Check(sa::GaitCatchUp(8.0f, 5) == 5 && sa::GaitCatchUp(3.0f, 4) == 4, "gait: a faster gait is kept");
+        Check(sa::GaitCatchUp(-1.0f, 1) == 1 && sa::GaitCatchUp(std::nanf(""), 1) == 1, "gait: not ahead / NaN unchanged");
+        const float self[3] = {0.0f, 0.0f, 0.0f}, dest[3] = {20.0f, 0.0f, 0.0f}, ahead[3] = {3.0f, 5.0f, 4.0f}, behind[3] = {-3.0f, 0.0f, 4.0f};
+        Check(std::fabs(sa::AheadM(self, ahead, dest) - 5.0f) < 0.01f, "ahead: flat distance when the owner copy is nearer the destination");
+        Check(sa::AheadM(self, behind, dest) == 0.0f, "ahead: an owner copy behind is not ahead");
+        // The entry yaw: face mode 1 (wire +0x68) -> the facing (wire +0x50, big-endian int16 * pi/32767, 0x142338970).
+        unsigned char w[0x70]{};
+        w[0x68] = 1;
+        w[0x50] = 0x40;
+        w[0x51] = 0x00;  // 16384 -> ~pi/2
+        Check(std::fabs(sa::EntryYaw(w, 0.25f) - 1.5708f) < 0.001f, "entry yaw: face mode 1 -> the request's facing");
+        w[0x50] = 0xc0;  // -16384 -> ~-pi/2
+        Check(std::fabs(sa::EntryYaw(w, 0.25f) + 1.5708f) < 0.001f, "entry yaw: negative facing");
+        w[0x68] = 2;
+        Check(sa::EntryYaw(w, 0.25f) == 0.25f, "entry yaw: other face modes keep this copy's own yaw");
+        // A walker is taken only within 10 m (flat) of the owner copy (a take does not open with a visible jump).
+        unsigned char req[0x70]{};
+        req[0x63] = 1;
+        const float a[3] = {0.0f, 0.0f, 0.0f}, near9[3] = {6.0f, 30.0f, 6.7f}, far11[3] = {11.0f, 0.0f, 0.0f};
+        Check(sa::TakeNear(req, a, near9, true) && !sa::TakeNear(req, a, far11, true) && !sa::TakeNear(req, a, near9, false),
+              "take: a walker within 10 m (flat) of the owner copy only");
+        req[0x63] = 17;
+        Check(sa::TakeNear(req, a, far11, true) && sa::TakeNear(req, a, far11, false), "take: a guard who does not walk as before");
+        // warp15: the unpack's 15 m warp (225.0 squared, 3D) moves the copy.
+        const float e0[3] = {0.0f, 0.0f, 0.0f}, e15[3] = {10.0f, 10.0f, 6.0f}, e14[3] = {10.0f, 10.0f, 1.0f};
+        const float e15x[3] = {10.0f, 10.0f, 5.0f};  // exactly 15 m: the engine tests 225.0 < d squared
+        Check(sa::Warp15(e0, e15) && !sa::Warp15(e0, e14) && !sa::Warp15(e0, e15x), "warp15: beyond 15 m (3D)");
+        const float d0[3] = {100.0f, 270.0f, 200.0f}, end1[3] = {100.6f, 270.5f, 200.6f}, end2[3] = {101.0f, 270.0f, 200.8f};
+        Check(sa::PlanEndNear(end1, d0) && !sa::PlanEndNear(end2, d0), "plan end: within 1 m (3D) of R+0x80");
+        Check(sa::kActTakeNearM == 10.0f && sa::kPlanEndM == 1.0f && sa::kPlanCheckMs == 300, "act_plan constants");
+        // The frame line prints the act_plan counters.
+        sa::Counters k{};
+        k.plan = 7; k.plan_skip = 2; k.warp15 = 1; k.plan_ok = 6; k.plan_far = 1; k.plan_nopath = 0; k.near_wait = 3;
+        char line[768]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) &&
+                  std::strstr(line, "; plan=7; plan_skip=2; warp15=1; plan_ok=6; plan_far=1; plan_nopath=0; near_wait=3"),
+              "the frame line prints plan / plan_skip / warp15 / plan_ok / plan_far / plan_nopath / near_wait");
+    }
+    // The planner sites pinned in the contract (round 8 track C).
+    Check(c::plan_start_rva == 0x13725f0 && c::plan_dist == 10.0f && c::s_planner == 0x30 && c::planner_follower == 0x20 &&
+              c::planner_plan == 0x0 && c::planner_cancel == 0x10 && c::follower_has == 0x90 && c::follower_path == 0xa0 &&
+              c::follower_reset == 0xd0 && c::r_handle == 0x19c && c::r_198 == 0x198 && c::r_dest == 0x80 && c::path_points == 0x8 &&
+              c::path_count == 0x20,
+          "the planner contract");
+    // Session 1 (run fcfb3acc: the planner's vtable 0x23a1610; read-only decompile of its vt[0] 0x140fa2430): the per-guard
+    // slot *(planner+0x48)+idx*0x10 {u48 type hash, u16 handle, u16 counter, u16 done}; vt[0] refuses (0xffff) a request
+    // whose type hash differs from a non-zero slot hash, so a slot his own brain's walk holds is cancelled first (vt[0x10]
+    // with that handle, the engine's own cancel), and a slot of ours is cancelled when he is released.
+    {
+        Check(sa::kMoveHash == 0x2c505bab2efcull, "the request manager's move type hash (0x141372694)");
+        Check(sa::PlanSlot(0, 0xffff) == sa::SlotStep::plan && sa::PlanSlot(0x2c505bab2efcull, 0x0012) == sa::SlotStep::plan &&
+                  sa::PlanSlot(0xabcd2c505bab2efcull, 0x0003) == sa::SlotStep::plan,
+              "slot: free or ours (low 48 bits) -> plan");
+        Check(sa::PlanSlot(0x1234567890abull, 0x0007) == sa::SlotStep::cancel_then_plan, "slot: another type with a live handle -> cancel it, then plan");
+        Check(sa::PlanSlot(0x1234567890abull, 0xffff) == sa::SlotStep::busy, "slot: another type, no handle -> left alone (busy)");
+        Check(sa::ReleaseCancel(0x2c505bab2efcull, 0x0012, 0x0012) && !sa::ReleaseCancel(0x2c505bab2efcull, 0x0012, 0x0013) &&
+                  !sa::ReleaseCancel(0x1234567890abull, 0x0012, 0x0012) && !sa::ReleaseCancel(0x2c505bab2efcull, 0xffff, 0xffff),
+              "release: cancel only our live handle that R+0x19c still holds");
+        sa::Counters k{};
+        k.plan_cancel = 4; k.plan_busy = 1; k.plan_none = 2; k.plan_release = 3;
+        char line[900]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) && std::strstr(line, "; plan_cancel=4; plan_busy=1; plan_none=2; plan_release=3"),
+              "the frame line prints plan_cancel / plan_busy / plan_none / plan_release");
+        Check(c::planner_vtable_rva == 0x23a1610 && c::planner_slots == 0x48 && c::planner_records == 0x40 && c::planner_record_stride == 0xf0 &&
+                  c::planner_valid == 0x18,
+              "the planner layout");
+    }
+    // Enemy round 9 track C (act_plan, design 7.26): plan once per leg; the catch-up from 1 m (run 226fc789: 98 plans for
+    // guard 18, one per 1.01 s; the puppet trailed the host copy by about 1 s, p50 1.31 m).
+    {
+        Check(sa::kPlanCatchM == 1.0f && sa::kPlanMoveM == 1.0f, "round 9 C constants: the catch-up from 1 m, a walk's destination held within 1 m");
+        Check(sa::GaitCatchUp(1.5f, 1) == 2 && sa::GaitCatchUp(1.01f, 2) == 3 && sa::GaitCatchUp(0.9f, 1) == 1 && sa::GaitCatchUp(1.0f, 1) == 1,
+              "gait: the catch-up starts beyond 1 m");
+        unsigned char a[0x70]{}, b[0x70]{};
+        a[0x61] = b[0x61] = 1;  // dest mode 1: a walk
+        a[0x63] = b[0x63] = 1;
+        const float d0[3] = {397.66f, 270.22f, 2211.80f}, dn[3] = {397.66f, 270.22f, 2212.50f}, df[3] = {397.66f, 270.22f, 2213.00f};
+        const std::uint64_t v0 = sa::EncodePacked(d0), vn = sa::EncodePacked(dn), vf = sa::EncodePacked(df);
+        std::memcpy(a + 0x40, &v0, 8);
+        std::memcpy(b + 0x40, &v0, 8);
+        Check(!sa::RequestChangedFar(a, b), "far change: the same request is not one");
+        std::memcpy(b + 0x40, &vn, 8);
+        Check(sa::RequestChanged(a, b) && !sa::RequestChangedFar(a, b), "far change: a walk's destination 0.7 m off is held");
+        std::memcpy(b + 0x40, &vf, 8);
+        Check(sa::RequestChangedFar(a, b), "far change: 1.2 m is a change");
+        std::memcpy(b + 0x40, &vn, 8);
+        b[0x05] = 3;
+        Check(sa::RequestChangedFar(a, b), "far change: another payload byte is a change");
+        b[0x05] = 0;
+        a[0x61] = b[0x61] = 0;
+        Check(sa::RequestChangedFar(a, b), "far change: not a walk -> as RequestChanged (0.7 m is a change)");
+        Check(sa::PlanLiveFor(0x0007, 0x0007, 0x2c505bab2efcull, 0x0007, false), "plan live: our handle in R+0x19c and in his slot");
+        Check(!sa::PlanLiveFor(0xffff, 0xffff, 0x2c505bab2efcull, 0xffff, false) && !sa::PlanLiveFor(0x0007, 0x0008, 0x2c505bab2efcull, 0x0007, false) &&
+                  !sa::PlanLiveFor(0x0007, 0x0007, 0x1234567890abull, 0x0007, false) && !sa::PlanLiveFor(0x0007, 0x0007, 0x2c505bab2efcull, 0x0009, false) &&
+                  !sa::PlanLiveFor(0x0007, 0x0007, 0x2c505bab2efcull, 0x0007, true),
+              "plan live: none / R+0x19c another / another type / slot another handle / path end far or missing");
+        Check(sa::PlanHold(false, false, true, false, 1, 1), "hold: an unchanged walk with a live plan and no gait change");
+        Check(!sa::PlanHold(true, false, true, false, 1, 1) && !sa::PlanHold(false, true, true, false, 1, 1) &&
+                  !sa::PlanHold(false, false, false, false, 1, 1) && !sa::PlanHold(false, false, true, true, 1, 1) &&
+                  !sa::PlanHold(false, false, true, false, 1, 2) && !sa::PlanHold(false, false, true, false, 2, 1),
+              "hold: not a first apply, a far change, no live plan, a warp, or a gait change");
+        sa::Counters k{};
+        k.plan_hold = 12;
+        char line[960]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) && std::strstr(line, "; plan_release=0; plan_hold=12"),
+              "the frame line prints plan_hold");
+    }
+    // Enemy round 10 track C (act_plan, design 7.29): the take of walkers, the plan recheck, the partial hold, the release
+    // walk (runs 226fc789 / 77785f31 / c0c3d088).
+    {
+        Check(sa::TakeWait(true, false, false) == 0 && sa::TakeWait(true, true, false) == 0 && sa::TakeWait(true, false, true) == 0,
+              "take: with act_plan a walker on another leg or beyond 10 m is taken (the plan walks him onto the path)");
+        Check(sa::TakeWait(false, false, true) == 1 && sa::TakeWait(false, true, false) == 0 && sa::TakeWait(false, true, true) == 0,
+              "take: without act_plan LegMatch as round 6, no 10 m rule");
+        Check(sa::kPlanRechecks == 4 && sa::PlanCheckVerdict(true, true, 0) == sa::PlanVerdict::ok &&
+                  sa::PlanCheckVerdict(false, false, 0) == sa::PlanVerdict::again && sa::PlanCheckVerdict(true, false, 3) == sa::PlanVerdict::again,
+              "plan check: a missing or far path is checked again");
+        Check(sa::PlanCheckVerdict(false, false, 4) == sa::PlanVerdict::nopath && sa::PlanCheckVerdict(true, false, 4) == sa::PlanVerdict::partial &&
+                  sa::PlanCheckVerdict(true, true, 4) == sa::PlanVerdict::ok,
+              "plan check: the last check's verdict");
+        const float self[3] = {0.0f, 0.0f, 0.0f}, end5[3] = {3.0f, 9.0f, 4.0f}, end2[3] = {2.0f, -9.0f, 2.0f};
+        Check(sa::PartialHolds(false, self, end2) && sa::PartialHolds(true, self, end5) && !sa::PartialHolds(true, self, end2),
+              "partial: held while more than 3 m (flat) from its end");
+        // A released walker (dest mode 1): our live plan kept, no handle with a free slot planned again, his brain's left alone.
+        Check(sa::ReleaseChoose(1, 0x006e, 0x2c505bab2efcull, 0x0005, 0x0005) == sa::ReleaseStep::keep,
+              "release: a walk with our live plan walks on");
+        Check(sa::ReleaseChoose(1, 0x0062, 0, 0xffff, 0xffff) == sa::ReleaseStep::replan &&
+                  sa::ReleaseChoose(1, 0x0062, 0x2c505bab2efcull, 0xffff, 0xffff) == sa::ReleaseStep::replan,
+              "release: a walk with no path is planned again (77785f31's freeze)");
+        Check(sa::ReleaseChoose(1, 0x0062, 0x1234567890abull, 0x0003, 0xffff) == sa::ReleaseStep::none &&
+                  sa::ReleaseChoose(1, 0x0061, 0, 0xffff, 0xffff) == sa::ReleaseStep::none,
+              "release: his brain's slot, or the start not run offline: left alone");
+        Check(sa::ReleaseChoose(0, 0x0062, 0x2c505bab2efcull, 0x0005, 0x0005) == sa::ReleaseStep::cancel &&
+                  sa::ReleaseChoose(2, 0x0062, 0, 0xffff, 0xffff) == sa::ReleaseStep::none,
+              "release: not a walk -> our live handle cancelled as before");
+        Check(sa::ReleaseWalkStep(true, 0, 1000) == sa::ReleaseWalk::walk && sa::ReleaseWalkStep(true, 1999, 5000) == sa::ReleaseWalk::walk,
+              "release walk: walks on to R+0x80");
+        Check(sa::ReleaseWalkStep(true, 2000, 5000) == sa::ReleaseWalk::finish && sa::ReleaseWalkStep(true, 0, 180000) == sa::ReleaseWalk::finish &&
+                  sa::ReleaseWalkStep(false, 0, 1000) == sa::ReleaseWalk::over && sa::ReleaseWalkStep(false, 5000, 999999) == sa::ReleaseWalk::over,
+              "release walk: finished once he stood at R+0x80 2 s or after 180 s; over once our handle is gone");
+        Check(sa::kReleaseArriveM == 1.5f && sa::kReleaseArriveMs == 2000 && sa::kReleaseWalkMs == 180000 && sa::kPlanPartialM == 3.0f,
+              "round 10 C constants");
+        sa::Counters k{};
+        k.plan_hold = 12; k.rel_keep = 3; k.rel_replan = 2; k.rel_end = 4; k.recheck = 6;
+        k.tx_parts = k.staged = k.rx = k.applied = k.orders = 4000000000u;  // 10-digit counters: the line still fits 1024
+        char line[1024]{};
+        Check(sa::FormatFrameLine(9, k, line, sizeof(line)) &&
+                  std::strstr(line, "; plan_hold=12; rel_keep=3; rel_replan=2; rel_end=4; recheck=6\r\n"),
+              "the frame line prints rel_keep / rel_replan / rel_end / recheck");
+    }
+    // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the quiet warp 0x136ece0 moves a copy only beyond
+    // 15 m of its slot position; a nearer correction biases the slot 20 m along x first (the function overwrites it).
+    {
+        const float slot[3] = {363.6f, 270.0f, 2159.8f}, near[3] = {370.0f, 270.0f, 2160.0f}, far1[3] = {413.4f, 268.0f, 2133.6f};
+        float out[3]{};
+        Check(sa::QuietBias(slot, near, out) && out[0] == near[0] + 20.0f && out[1] == near[1] && out[2] == near[2],
+              "quiet bias: a correction within 15 m biases the slot");
+        Check(!sa::QuietBias(slot, far1, out), "quiet bias: beyond 15 m the warp moves him as it is");
+        const float edge[3] = {363.6f + 15.0f, 270.0f, 2159.8f};
+        Check(sa::QuietBias(slot, edge, out), "quiet bias: at 15.0 m (225.0 is not > 225.0) biases");
+        char line[256]{};
+        Check(sa::FormatQuietLine(1270, 6, 1, 1, 0.12f, -0.03f, line, sizeof(line)) &&
+                  std::strcmp(line, "world_place=quiet; go=1270; seq=6; moved=1; bias=1; err_m=0.12; dy_m=-0.03\r\n") == 0,
+              "the quiet line: the read-back after the move");
+        char tiny[8]{};
+        Check(!sa::FormatQuietLine(1270, 6, 1, 1, 0.0f, 0.0f, tiny, sizeof(tiny)), "the quiet line refuses a short buffer");
+        Check(c::quiet_warp_rva == 0x136ece0, "the quiet warp is the pinned network-position warp");
+    }
+    // Enemy round 9 track A (quiet_place, design 7.24): the quiet move only for a guard at rest in his own brain and in the
+    // realized list the warp reads (run 1befcef4: 1904171355 walked 9.4-14.1 m on after 22 of his 43 quiet moves; in 5 of
+    // the 8 off-target moves the body did not move while the slot table read the target).
+    {
+        const std::uint16_t list[4] = {3, 17, 40, 200};
+        Check(sa::ListHas(list, 4, 17) && !sa::ListHas(list, 4, 18) && !sa::ListHas(list, 3, 200) && !sa::ListHas(nullptr, 4, 3),
+              "the realized list: idx found only among the first count entries");
+#ifdef _WIN32
+        // Round 9 land step (the review): QuietOne read the list outside its __try; the guarded read faults to -1.
+        Check(sa::ListFind(list, 4, 17) == 1 && sa::ListFind(list, 4, 18) == 0 && sa::ListFind(nullptr, 4, 3) == 0 &&
+                  sa::ListFind(reinterpret_cast<const std::uint16_t*>(static_cast<std::uintptr_t>(0x10)), 4, 3) == -1,
+              "the realized list read: SEH-guarded, a fault reads -1");
+#endif
+        sa::RestView r{};
+        const float target[3] = {410.0f, 270.0f, 2130.0f};
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unknown, "rest: no view yet");
+        r.at = 9000;
+        r.realized = r.listed = true;
+        r.speed_mps = 0.1f;
+        r.pos[0] = 400.0f; r.pos[1] = 270.0f; r.pos[2] = 2130.0f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: standing, listed, no path: quiet");
+        Check(sa::QuietChoose(r, target, 10600) == sa::QuietWhy::stale, "rest: a view older than 1.5 s is stale");
+        r.listed = false;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unlisted, "rest: not in the realized list: the message");
+        r.listed = true;
+        r.realized = false;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unrealized, "rest: unrealized");
+        r.realized = true;
+        r.speed_mps = 1.4f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::moving, "rest: walking: the message");
+        r.speed_mps = 0.1f;
+        r.has = true;
+        r.end[0] = 400.5f; r.end[1] = 270.0f; r.end[2] = 2130.5f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: at the end of his path: quiet");
+        r.end[0] = 420.0f; r.end[2] = 2140.0f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::path, "rest: a path ahead of him: the message");
+        r.end[0] = 411.0f; r.end[2] = 2130.5f;
+        Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::ok, "rest: a path that ends at the target: quiet");
+        Check(std::strcmp(sa::QuietWhyName(sa::QuietWhy::moving), "moving") == 0 &&
+                  std::strcmp(sa::QuietWhyName(sa::QuietWhy::unlisted), "unlisted") == 0 &&
+                  std::strcmp(sa::QuietWhyName(sa::QuietWhy::ok), "ok") == 0,
+              "rest: the reason names");
+        Check(c::slots_list == 0x28 && c::slots_list_count == 0x44, "the realized list the warp reads (u16, count +0x44)");
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");

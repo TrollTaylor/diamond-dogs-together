@@ -136,4 +136,36 @@ for _,role in ipairs({true,false})do
  else check(not ok and msg=="host_only" and #c.tx==0,"play: the guest's press is still host only") end
  ok,msg=c:run("rules");check(ok and msg:find("^rules;wormhole=off"),"play: status answers")
 end
+-- Horse plan M2f: the lab lever cargo_relie 0|1 reaches world_horse_cargo's setRelie (lab only; nothing else).
+do
+ local c=F();local got={};c.W.horseCargo={setRelie=function(n)if n~=0 and n~=1 then return false end;got[#got+1]=n;return true end}
+ check(c.P.handles.cargo_relie==true,"handles cargo_relie")
+ local ok,msg=c:run("cargo_relie","0");check(ok and msg=="cargo_relie;v=0" and got[1]==0,"cargo_relie 0: the stance is logged only")
+ ok,msg=c:run("cargo_relie","1");check(ok and msg=="cargo_relie;v=1" and got[2]==1,"cargo_relie 1: asked back to CRAWL again")
+ ok,msg=c:run("cargo_relie","2");check(not ok and msg=="cargo_relie;refused=args" and #got==2,"cargo_relie 2: refused")
+ c=F({mode=2});c.W.horseCargo={setRelie=function()return true end}
+ ok,msg=c:run("cargo_relie","0");check(not ok and msg=="cargo_relie;refused=args","play: refused (a lab lever)")
+ c=F();ok,msg=c:run("cargo_relie","0");check(not ok and msg=="cargo_unavailable","no world_horse_cargo: unavailable")
+end
+-- Horse plan M2g (play 624148f9: goto_horse put the carrier on the line from the horse to them, at its head, where the
+-- first E after the load did not mount): horse_flank puts this player 1.6 m beside the local D-Horse's census root on the
+-- side they stand, facing it (lab and play).
+do
+ local c=F();c.W.mission=30010;local got,asked
+ c.W.receipt=function(t)asked=t;if t:find("MGS_COOP_HORSE_DRIVE_V1' %-%- read 30010 5$")then return {ready=true,x=100000,y=2000,z=200000,yaw=0}end end
+ local px=101.0
+ c.D.api.pose=function()return {px,1.0,199.0,0}end
+ c.D.api.warp=function(q,id)got=q;return true,"submitted_warp"end
+ check(c.P.handles.horse_flank==true,"handles horse_flank")
+ local ok,msg=c:run("horse_flank")
+ check(ok and got and math.abs(got[1]-101.6)<1e-6 and math.abs(got[2]-1.4)<1e-6 and math.abs(got[3]-200.0)<1e-6 and
+  math.abs(got[4]+90)<1e-6 and msg:find("via=flank;side=1",1,true),"horse_flank: 1.6 m right of a horse heading +z, facing it")
+ px=99.0;ok,msg=c:run("horse_flank")
+ check(ok and math.abs(got[1]-98.4)<1e-6 and math.abs(got[4]-90)<1e-6 and msg:find("side=-1",1,true),"horse_flank: the player's own side")
+ c.W.receipt=function()return {ready=false,reason="census"}end
+ ok,msg=c:run("horse_flank");check(not ok and msg=="horse_flank;horse_unknown","horse_flank: no horse read, nothing moves")
+ c=F({mode=2});c.W.mission=30010;c.W.receipt=function()return {ready=true,x=0,y=0,z=0,yaw=1571}end
+ c.D.api.pose=function()return {0,0,-5,0}end;c.D.api.warp=function(q)got=q;return true,"submitted_warp"end
+ ok,msg=c:run("horse_flank");check(ok and math.abs(got[3]+1.6)<1e-3,"horse_flank: play too (a horse heading +x, the player at -z: its right)")
+end
 print("debug_rules_lua_check: "..checks.." checks passed")

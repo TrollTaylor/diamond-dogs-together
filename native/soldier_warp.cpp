@@ -359,6 +359,27 @@ void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& co
     ++count;
 }
 
+bool OwnerYAtRest(float y, std::uint64_t now_ms, OwnerRestY& state) noexcept {
+    if (!std::isfinite(y)) {
+        state = {};
+        return false;
+    }
+    if (!state.valid || now_ms < state.last_ms || now_ms - state.last_ms > kDriveVertRestGapMs) {
+        state = {now_ms, now_ms, y, y, true};
+        return false;
+    }
+    const float lo = y < state.lo ? y : state.lo, hi = y > state.hi ? y : state.hi;
+    state.last_ms = now_ms;
+    if (!(hi - lo < kDriveVertRestM)) {
+        state.since_ms = now_ms;
+        state.lo = state.hi = y;
+        return false;
+    }
+    state.lo = lo;
+    state.hi = hi;
+    return now_ms >= state.since_ms && now_ms - state.since_ms >= kDriveVertRestMs;
+}
+
 bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept {
     if (!out || !capacity || !why) return false;
     const HRESULT hr = back_ms ? StringCchPrintfA(out, capacity, "return {refused=\"%s\",b=%llu}", why, static_cast<unsigned long long>(back_ms))
@@ -395,6 +416,33 @@ float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (
     self_nearer = self_valid && (!host_valid || to_self < to_host);
     if (self_nearer) return to_self;
     return host_valid ? to_host : INFINITY;
+}
+
+float NearerSquaredFlat(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
+                        bool& self_nearer) noexcept {
+    const float p[3] = {pos[0], 0.0f, pos[2]}, h[3] = {host[0], 0.0f, host[2]}, s[3] = {self[0], 0.0f, self[2]};
+    return NearerSquared(p, h, s, host_valid, self_valid, self_nearer);
+}
+
+void FlattenRange(Request& request) noexcept { request.player[1] = request.pos[1]; }
+
+void RangePlayer(bool partner_nearer, const float (&own)[3], const float (&partner)[3], float (&out)[3]) noexcept {
+    for (unsigned i = 0; i < 3; ++i) out[i] = partner_nearer ? partner[i] : own[i];
+}
+
+RemoteSource RemoteRangeSource(bool have_cmd, bool range_hidden, bool net_valid, unsigned net_age_ms, bool net_allowed) noexcept {
+    if (have_cmd) return RemoteSource::cmd;
+    if (net_allowed && range_hidden && net_valid && net_age_ms <= kRangePoseMaxAgeMs) return RemoteSource::net;
+    return RemoteSource::none;
+}
+
+const char* RemoteSourceName(RemoteSource source) noexcept {
+    switch (source) {
+    case RemoteSource::cmd: return "cmd";
+    case RemoteSource::net: return "net";
+    case RemoteSource::none: return "none";
+    }
+    return "?";
 }
 
 bool GuestMayWarp(bool lab, bool play, bool) noexcept { return lab || play; }

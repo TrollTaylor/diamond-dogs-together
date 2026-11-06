@@ -262,6 +262,22 @@ int main(){
     Check(ui::WorkerCoopForTest(object,sentinel,DISCL_EXCLUSIVE|DISCL_FOREGROUND)==DI_OK&&fake.coop_calls==before_refused+1&&fake.flags==(DISCL_EXCLUSIVE|DISCL_FOREGROUND),"refusedcoopforwardsoriginalonceunchanged");
     Check(!w::Active()&&GetLastError()==0x12345678,"refusedprivatecooprevokesworkerpreserveserror");w::SetPrivateForTest(true);
     w::Refuse("fixture_end");Check(!w::Active(),"revocation");Check(ui::WorkerStateForTest(object,sizeof(mouse),&mouse)==DIERR_UNSUPPORTED&&!mouse.rgbButtons[0],"revocationcannotleakphysicalorheldvirtual");
+    // Horse round 4 (runs d4aec0a2, 05758736, 770368d0, d935beae): each refused capture's receipt came 0-16 ms after the
+    // controller stamped it, with no capture pending and the last frame 0.36-3.2 s old. The controller's expiry (its
+    // clock + 2000 ms) was read in the GetTickCount64 tick after the poll's own clock read, so the poll saw 2016 ms.
+    w::ConfigureForTest({true,true,true,true},true,true);{
+        char inbox[160]{};const unsigned long long stamped=GetTickCount64();
+        std::snprintf(inbox,sizeof(inbox),"MGSWORKER1 0123456789abcdef0123456789abcdef host 1 %llu capture 0 0 0\n",stamped+2000ull);
+        Check(w::InboxForTest(inbox,std::strlen(inbox),stamped-16)==nullptr,"inboxadmitscommandstampedafterthepollclockread");
+        std::snprintf(inbox,sizeof(inbox),"MGSWORKER1 0123456789abcdef0123456789abcdef host 2 %llu capture 0 0 0\n",GetTickCount64()+2000ull);
+        const char* busy=w::InboxForTest(inbox,std::strlen(inbox),GetTickCount64());
+        Check(busy&&!std::strcmp(busy,"capture_pending"),"inboxreceiptnamesthependingcapture");
+        std::snprintf(inbox,sizeof(inbox),"MGSWORKER1 0123456789abcdef0123456789abcdef host 3 %llu press w 120 0\n",GetTickCount64()+2100ull);
+        const char* beyond=w::InboxForTest(inbox,std::strlen(inbox),GetTickCount64());
+        Check(beyond&&!std::strcmp(beyond,"expiry_beyond_2000ms"),"inboxstillrefusesalifetimeover2000ms");
+        const char* again=w::InboxForTest(inbox,std::strlen(inbox),GetTickCount64());
+        Check(again&&!std::strcmp(again,"unread"),"inboxreadseachsequenceonce");
+    }
     ui::ShutdownForTest();Check(ui::GetWorkerInputStats().cursor_success==0&&ui::GetWorkerInputStats().raw_keyboard_reads==0,
                               "fixturecleanupclearsdiagnosticsandboundedtokenstore");
     MH_Uninitialize();std::printf("worker_input_fixture checks=%u failures=%u no_windows_no_input_no_game\n",checks,failures);return failures?1:0;

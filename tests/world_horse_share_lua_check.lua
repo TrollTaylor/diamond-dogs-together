@@ -219,6 +219,17 @@ f.W.horseCargo = {placed = function(x, y, z, yaw) heard[#heard + 1] = {x, y, z, 
 for i = 0, 8 do f.fast(5000 + i * 50, 10000 + i * 200, 2000, 30000, 100); f.tick(50) end
 check(#heard >= 1 and heard[#heard][4] == 100 and heard[#heard][1] == f.places[#f.places].x,
     "M2: world_horse_cargo hears each placement with the pose written")
+-- M2f (run 4585cc5a, the victim's copy: coop_carry=watch a=19 / 1a (fall / land) from the final placement until a=3
+-- (crouch_idle), the squat on the horse): the final, unanchored placement (up to 0.3 m from the ridden one) is heard too, so
+-- a body loaded on this horse follows it in the same frame.
+local nh = #heard
+f.final(55000, 2100, 31000, 200)
+check(#heard == nh + 1 and heard[#heard][1] == 55000 and heard[#heard][2] == 2100 and heard[#heard][4] == 200,
+    "M2f: world_horse_cargo hears the final placement with the pose written")
+f.placeOk = false
+f.final(56000, 2100, 31000, 200)
+check(#heard == nh + 1, "M2f: a refused final placement is not heard")
+f.placeOk = true
 -- M3: with world_horse_pillion the ride hold shrinks to where E would claim the rear seat or the stock mount prompt shows
 -- (2.5 m, released past 2.8 m): 3 m from the partner-ridden horse E reaches the game. Without it the M1 hold stays (4 m /
 -- 4.5 m): the shrink is unproven until a pickup or revive at 3 m is seen (M3 round 1: e_free never logged).

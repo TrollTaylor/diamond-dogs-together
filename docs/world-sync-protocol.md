@@ -2433,3 +2433,182 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
   (held / under / above per copy and source), `readback_under_guards`, `readback_above_guards`, `readback_2s` (armed /
   got / cut by a newer arm / open), `readback_fix`, `vert_snaps`, `vert_stop`
   (`tests/enemy_div_report_check.py`, run by hand: `python -I tests/enemy_div_report_check.py`).
+
+## 38. Enemy round 8 track B: LRRP trucks follow the host (lab key `lrrp_follow`, native only; design 7.21)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x5D | LRRP_FAST | host to guest | U (its own newest-value slot), level 3, play too | 26 | sender tick (u32 ms), truck id (u16, 25600..26111), x / y / z (i32 mm), yaw (i32 mrad, +-31416), speed (u16 mm/s), NPC riders (u8, 0..8), flags (u8: 1 moving) |
+
+- Sent only on a host with `lrrp_follow` (off unless named, the gun profile too, from 34b9f024 until the D-B10 flip e1bf27af:
+  since then on with the gun profile in Afghanistan free roam 30010 only; receipt `MGS_COOP_LRRP_CFG_V1` -> `return 1` named
+  on, `return 2` on by the gun profile's default (Lua runs it only while `W.mission` is 30010); `return 0` off; nil off the
+  runtime thread, asked again in 5 s); never for a truck the host's player rides or one with a live RIDE_FAST track.
+  10 Hz moving, 1 Hz at rest, at most one per 50 ms (the receiver's one slot keeps the newest sender tick, so trucks take
+  turns, and a newer datagram for one truck replaces an undelivered one for another: a design limit).
+- The guest applies it only with `lrrp_follow`, only for an id that is an authored LRRP truck on its copy (else
+  `event=lrrp; step=refused; reason=not_lrrp` once per id), never while its own player rides it. Older sender ticks are
+  dropped. A partner without 0x5D skips it by its length (`unknown_op`).
+- The guest keeps ForceStop on while a track lives (moving, manned or at rest) and pins the truck at rest; a crew still
+  seated there while the host's truck rests empty gets `UnsetRelativeVehicle` (2 s) and `StartTravel{travelPlan=""}` (5 s).
+- Lines: `event=lrrp; step=host; id; x; y; z; yaw; v; riders; n` (4 Hz while moving or manned, else every 5 s);
+  `step=follow; id; mode=follow|rest; x; y; z` (read back after the placement); `d_m` (the copy before it); `v; rh; rl`
+  (host / local riders); `jumps; n` (4 Hz following, 2 s at rest); `step=riders; id; n; r1=hash:x:z; ...` beside each
+  host / follow line with riders (W.log keeps 160 characters); `step=stop|release; why`, `step=settle; d_m`,
+  `step=jump; d_m; mode; jumps` (a placement over 5 m), `step=unseat; id; ent; k`, `step=stale`.
+
+## 39. Enemy round 8 track A: the quiet place correction, the host's range on the ground plane (lab keys `quiet_place`, `range_flat`, native only; design 7.22)
+
+No new op, world note or CFG bit. One optional receipt token, log lines, and two behaviours behind native-only lab keys,
+both off unless named (design 7.22: quiet_place's no-key run failed the place_sink row; range_flat's gate failed).
+
+- `MGS_COOP_WORLD_WARP_V1 -- <seq> <goId> 1` (guest, `lua/coop/world_place_guest.lua` `P.step`): the trailing ` 1` is
+  sent for a correction whose sample was off this player's screen (`place_div ... view=off`); without it the receipt is
+  the old two-token text. `world::ParseWarp(..., quiet)` takes both; the two-token parse still refuses three tokens.
+- Native `GuestWarpReceipt` with `quiet_place`: a correction (grant kind 3) named quiet, of a soldier (`go >> 9 == 2`)
+  realized on this copy (the request manager's slot table, read through the `soldier_act` hook's last M), after the
+  same grant, gate, pose, range and budget checks, is staged instead of sent: the request manager hook (installed for a
+  play / lab guest with the key: `soldier_act_quiet=on`) calls the engine's network-position warp `0x136ece0(M-0x20,
+  idx, entry)` (entry: target x, y, z, yaw) in its next update, before the engine's own. A slot within 15 m of the
+  target is first set 20 m off along x (the function moves a copy only beyond 15 m and overwrites the slot with the
+  target). Reply `{r=0,h=1,leaf="quiet"}`; `world_place=warp; ... leaf=quiet`; then from the hook
+  `world_place=quiet; go; seq; moved; bias; err_m; dy_m` (the slot read back after the call: x/z and y from the target).
+  Not realized, or the hook not installed: the set-transform message as before.
+- Lua `event=readback` (`lua/coop/world_readback.lua`): every quiet move is read back 0.5 s and 2 s after
+  (`src=quiet`), and a read-back of a known placement adds `dxz_m` (x/z from the target) after `far_m`.
+- Native `HostWarpReceipt` and the host's `DriveReceipt` with `range_flat`: the nearer player and the 60 m range on the
+  ground plane (x/z; `NearerSquaredFlat`, `FlattenRange`), as the M3 owner rule. `world_place=host_warp` adds
+  `flat; g_age_ms; dgy_m` (the key, the guest pose's age, the guest's height over the target).
+- Contract `native/soldier_act_contract.hpp` (20 sites): `quiet_warp_rva = 0x136ece0` and three windows of it (the slot
+  write and the realized-list walk 0x136ed8c, the controller 0x136edf5, rotation / position 0x136f002).
+- `tools/enemy_div_report.py`: rows `guest_down_windows`, `m3_host_err_*_while_down`, `m3_hplace_while_down`, `quiet`.
+
+## 40. Enemy round 8 track C: the far mirror's walkers plan their own path (lab key `act_plan`, native only; with `soldier_act`; design 7.23)
+
+No new op, world note, CFG bit or receipt field; Lua unchanged. Native only, the puppet side (the guest's copies).
+
+- `act_plan=1` (lab and play; off unless named; `soldier_act_plan=on|off; given=` at install) with `soldier_act`:
+  - after the request manager update's original, for each puppet whose request the hook unpacked in that update: dest
+    mode 1, R+0x19c 0xffff, (R+0x19e & 3) == 2 -> the walk-request start 0x1413725f0 with a shadow gate object (`plan`
+    when R+0x19c then holds a handle, else `plan_none`); otherwise `plan_skip`. The planner's slot of another type with a
+    live handle is cancelled first (`plan_cancel`), with no handle left alone (`plan_busy`); at a release our handle
+    still in the slot is cancelled and R+0x19c set to 0xffff (`plan_release`).
+  - the gait catch-up (R+0xb0 bits 1..3): the owner copy (the order part's position) ahead toward R+0x80 by 2..5 m
+    flat: + 1 (cap 3), beyond 5 m: 3, never lowered (`gait_up`).
+  - the lent network-position entry's yaw: the request's facing (face mode 1) or the copy's own yaw.
+  - `ACT_V1 q` (QueryFresh) answers `f=1` for a host copy's walk only when this copy stands within 10 m (flat) of the
+    owner copy's position (the order part, flag bit 0) (`near_wait`).
+- Log lines (with `soldier_act` / `act_census`, whether or not `act_plan` is named):
+  - `soldier_act_census` adds `r19c; r198; fh; fn; fend; r80; psh; psl; psd` (R+0x19c, R+0x198, the follower's path:
+    has (-1 no follower), point count, last point; R+0x80; the planner slot's hash, handle, done).
+  - `soldier_act_planner; idx; planner_vt; p00; p10; p20; p38; follower_vt; key; f90; f98; fa0; fa8; fd0;
+    pair_in_planner; obj_is_planner` once (RVAs).
+  - `soldier_act_warp15; t; idx; first; d_m; p; at; after; moved_m; yaw; plan`: an unpack whose 15 m warp moved the
+    copy (over 15 m from the entry position, 3D), the position read back after it; `first=1` a take.
+  - `soldier_act_plan; t; idx; handle; r19c; r19e; ms; has; n; end; dest; d_end; ok; from; p`: 300 ms after each plan,
+    the follower's path end against R+0x80 (`ok` within 1 m, 3D).
+  - `soldier_act_frame` adds `plan; plan_skip; warp15; plan_ok; plan_far; plan_nopath; near_wait; gait_up; plan_fault;
+    plan_cancel; plan_busy; plan_none; plan_release`.
+- `soldier_act=installed` prints the contract's site and slot counts (31 and 13 on this track; 34 and 13 merged with track A's quiet-warp sites).
+
+## 41. Enemy round 9 track A: the quiet move only for a guard at rest, the partner's network pose while range-hidden (lab keys `quiet_place` and `range_flat`, native only; design 7.24)
+
+No new op, world note, receipt token or CFG bit. `quiet_place` stays off unless named (design 7.24: its named run asked
+18 times for 6 guards and moved 2; both were 6-20 m from the original target at the 5 s read-back, one following his
+running host copy, one a scripted goto beside him); the range pose below is off unless `range_flat` is named (land step).
+
+- Native `GuestWarpReceipt` with `quiet_place`: a correction named quiet (section 39) is staged for the quiet warp only
+  when `soldier_act::QuietCheck` answers `ok` on the hook's newest rest view of the guard (at most 1.5 s old): realized,
+  in the realized list the warp reads (`*(S+0x18)+0x28`, u16 entries, count u32 `+0x44`), his slot speed on the ground
+  plane over about 0.5 s at most 0.5 m/s, and no path of his follower (planner vt[0x20], follower vt[0x90] / vt[0xa0])
+  ending more than 2 m (x/z) from both where he stands and the target. Any other answer sends the set-transform message
+  as before. `world_place=warp` adds `quiet=<ok|unknown|stale|unrealized|unlisted|moving|path>` when a quiet move was
+  asked. The hook (`soldier_act_quiet=on; rest=on`) refreshes the rest views every 250 ms before the engine's update,
+  and `QuietOne` checks the list again before the warp (not listed: no warp, `world_place=quiet ... moved=0`).
+- Lua `event=readback; src=quiet` (`lua/coop/world_readback.lua`): a third read-back at 5 s (`at=5000`), as at 0.5 s and 2 s
+  (x/z `dxz_m` and y `dy_m` from the target, the body's GetPosition).
+- Native snapshot `remote_range_valid / remote_range_src / remote_range_pos` (`soldier_warp::RemoteRangeSource`): the
+  body driver's command while it has one (as before); while this PC hides the partner's body for range
+  (`partner_range=hide`, beyond 200 m, and from every 30010/30020 mission start until `partner_range=near`) the
+  partner's network pose sample when at most 1 s old and `range_flat` is named; else unknown. The host's M3 placement
+  range (`HostWarpReceipt`), the soft-follow range (`DriveReceipt`) and `WORLD_PEER_V1` (the owner rule) read it, on
+  both roles; both receipts measure the range from the pose the nearer test used (`soldier_warp::RangePlayer`). One
+  `partner_range_pose=<none|cmd|net>; hidden; age_ms` line when the source changes; `world_place=host_warp` adds
+  `g_src`. Off at the defaults since the land step (at 554b2fa9 it was on: `DriveReceipt` then measured from the
+  command pose, and the `dee3baf6` host placement FAIL, 30 `g_src=net unrealized`, came from it).
+- Contract `native/soldier_act_contract.hpp` (34 sites, 13 slots): `slots_list = 0x28, slots_list_count = 0x44` (pinned by
+  the site 0x136ed8c).
+- `tools/enemy_div_report.py` `quiet`: `why` (the `quiet=` counts), `readback_5s`, `walk_on_within_2m_5s`, `moves_read`,
+  `moves_both_within_1m`.
+
+## 42. Enemy round 9 track B: the LRRP crews (lab key `lrrp_follow`, native only; design 7.25)
+
+No new op; LRRP_FAST 0x5D is unchanged (section 38). The code is now its own world chunk, `lua/coop/world_lrrp.lua`,
+spliced after `world_vehicle_state.lua`.
+
+- Guest, at rest: a rider this copy has and the host's truck no longer has gets `UnsetRelativeVehicle` 2 s after the
+  host's count dropped, again at most every 5 s per guard; none once the host's count rose at that stop, until the host's
+  truck moves. `StartTravel{travelPlan=""}` is never sent.
+- Guest, crewless: while the host's truck has riders and this copy's known crew is out, and the host's truck moves (flags
+  1) or is 5 m+ off, ForceStop is lifted and the truck is not placed (`step=crew_wait; id; d_m; near_m; rh; rl`, every
+  2 s); taken again once manned here.
+- Guest, jumps: within 400 m of this player (either end) a move over 30 m waits (`step=defer`, same fields), 5..30 m
+  slides 1 m a frame (`step=catch; id; d_m; near_m`, once per catch-up); `step=jump` adds `near_m`.
+- Both roles: `step=crew; id; ent; x; z; in; rl` 1 Hz for 60 s after a rider-count change (on the guest also the host's
+  count); `step=cost; role; n; avg_ms; max_ms; tracks` every 10 s; `step=lever; on; role` for the lab lever
+  `vehicle_state_status lrrp 0|1` (pauses / resumes lrrp_follow on that copy, any mode).
+
+## 43. Enemy round 9 track C: the far mirror's walkers plan once per leg (lab key `act_plan`, native only; with `soldier_act`; design 7.26)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native only, the puppet side.
+
+- With `act_plan`, a due re-apply of a walk is held (no unpack, no restart, no new plan) while the request is the planned
+  one but for a destination moved within 1 m, our plan's handle is in R+0x19c and his planner slot (our type), its
+  300 ms check did not find the path end far or missing, the 15 m warp would not move him and the catch-up gait is unchanged.
+- The catch-up (`gait_up`) starts beyond 1 m (was 2 m): the owner copy ahead by 1..5 m gait + 1 (cap 3), beyond 5 m 3.
+- `soldier_act_frame` adds `plan_hold` (held re-applies) after `plan_release`.
+
+## 44. Enemy round 10 track A: a vert snap only while the owner copy is at rest in y (lab key `drive_vert`, native only; design 7.27)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native `DRIVE_V1` only.
+
+- With `drive_vert`, a due vert snap (`s=3`: the copy at rest in x/z more than 1.5 m above or below the rendered target
+  for 1 s) is taken only once the rendered target's y has stayed within 0.2 m (max - min) for 1 s
+  (`sw::OwnerYAtRest`); a wider span, more than 600 ms between drive calls of that copy (a stale refusal backs it off
+  500 ms) or a non-finite y starts that window over.
+- A due snap that waits logs `world_drive=vert_wait; go; slot; gap_cm; rest_ms; span_cm` once per due spell (at most 32
+  lines per process); `world_drive=vert` adds `rest_ms` (the owner's rest window when it was taken); `world_drive=stats`
+  adds `vert_wait`.
+
+## 45. Enemy round 10 track B: the LRRP crews on the host's travel step (lab key `lrrp_follow`, native only; design 7.28)
+
+New op LRRP_STEP 0x5E (94), host to guest, world queue, reliable, level 3, play too, never a request; 4 fields, 11 bytes:
+a crew member's ent hash (u32, Fox.StrCode32 of its soldier name), its LRRP travel plan hash (u32, as svars
+`solTravelName` holds it; 255 no plan), its travel step (u8, svars `solTravelStepIndex`; 255 no plan) and its truck's id
+(u16, 25600..26111). Sent only with `lrrp_follow`. A partner without 0x5E skips it by its length (`unknown_op`) and its
+crews keep their own clock (as section 42).
+
+- Both roles, once a second while a crew is known: `GameObject.SendCommand({type="TppSoldier2"}, {id="StoreToSVars"})`
+  (the call `TppEnemy.StoreSVars` makes before a checkpoint save; the exe writes each soldier's travel plan T.vt[0x78],
+  step T.vt[0x80] and keep-in-alert T.vt[0x90] there), then the crew's svars rows (row = GameObjectId & 0x1ff, used only
+  when `svars.solName[row]` is that soldier's name hash; else `step=tstep_miss; role; ent; why`, every 10 s).
+- Host: each crew member it has seen seated: LRRP_STEP on a change of plan or step (`step=tstep; role=host; id; ent;
+  plan; st`) and every 5 s. A crew the host never saw seated gets no LRRP_STEP (its guest copy keeps round 9's unseat).
+- Guest: on its own change `step=tstep; role=guest; id; ent; plan; st; host_st`. When its plan or step differs from the
+  host's (the host's not 255), its truck's track is followed within 30 m or waits crewless, the plan name is known
+  (`mvars.ene_travelPlans` keys, the crews' `lrrpTravelPlan`) and 5 s passed for that guard:
+  `StartTravel{travelPlan=name, step=host's, keepInAlert=its own}` (`step=tset; id; ent; plan; from; to; k`); else
+  `step=tstep_hold; id; ent; why (plan|track|wait|tries); st; host_st` every 10 s. `StartTravel{travelPlan=""}` is never sent.
+- Guest: while steps for a truck arrived in the last 15 s, its crew is not unseated (no `UnsetRelativeVehicle`).
+- Lines: the guest's `step=follow` (and its riders line) 1 Hz while followed, 5 s at rest (were 4 Hz / 2 s); the host's
+  `step=host` 4 Hz while its truck moves, 1 Hz manned at rest, 5 s empty.
+
+## 46. Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`; design 7.29)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native only, the puppet side, under `act_plan`.
+
+- `ACT_V1 q` (QueryFresh) no longer waits on `LegMatch` or the 10 m rule with `act_plan` (`leg_wait` / `near_wait` stay 0).
+- `soldier_act_plan` adds `tries` (rechecks, up to 4 at 300 ms); `ms` counts from the plan.
+- New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
+  planned puppet and at the end of a kept walk.
+- `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.

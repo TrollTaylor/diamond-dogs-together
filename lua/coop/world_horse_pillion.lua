@@ -28,7 +28,7 @@ local CLAIM_MM, CLAIM_MS, KEEP_MS, LOST_MS, LOCK_MS, SIDE_MM, STATS_MS, LAND_MM,
 local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 6000, 2000
 -- M3c: the driver's stall watch (ride keys = the move stick's magnitude over MAG_ON / 1000 for STALL_MS with under MOVE_MM of
 -- ridden path) and the same-moment tie (the partner's RIDE_FAST while this copy's player rides, within TIE_MS).
-local STALL_MS, MOVE_MM, MAG_ON, TIE_MS = 2000, 500, 100, 500
+local STALL_MS, MOVE_MM, MAG_ON, TIE_MS, TRACK_GRACE_MS = 2000, 500, 100, 500, 2000
 -- Body 0 on the passenger's copy: back mm behind the placed census root along its heading, rise mm over it (the rider
 -- sits 0.10 m forward and 0.49 m up of the root, probe P2; the rear seat is 0.45 m behind the rider), squatting; mode 2
 -- hold0 with the A0 reset (round 2: lag mostly 6-9 cm, peaks 74-80 cm, crouched), 0 hold0 without a reset, 4 the
@@ -61,7 +61,7 @@ end
 function P.keyOn()
  if P.key == nil then
   local r = receipt("cfg")
-  if r and (r.on == 0 or r.on == 1) then P.key = r.on == 1 and r.pillion == 1 end
+  if r and (r.on == 0 or r.on == 1) then P.key, P.shot = r.on == 1 and r.pillion == 1, r.shot == 1 end
  end
  return P.key == true
 end
@@ -162,7 +162,7 @@ local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
  P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt, P.remoteSeat = nil, nil, nil, nil, nil, nil, nil, nil, nil
- P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail, P.foot = nil, nil, nil, nil, nil, nil, nil, nil
+ P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail, P.foot, P.boxed, P.noTrack = nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
@@ -177,6 +177,7 @@ local function stop(why, remote)
   log(fmt("step=unseated;seat=1;why=%s;side=passenger;placed=%d;x=%d;z=%d;at=%s%s", why, x and 1 or 0, x and round(x / 10) or 0,
    z and round(z / 10) or 0, at, remote and ";from=partner" or ""))
  elseif s == "driver" then
+  if P.aimOn then P.aimEnd() end
   if not remote then send(UNSEATED, CODE[why] or 0) end
   log(fmt("step=unseated;seat=1;why=%s;side=driver;leases=%d%s", why, P.seatN or 0, remote and ";from=partner" or ""))
  elseif s == "claim" then
@@ -184,6 +185,8 @@ local function stop(why, remote)
  end
  if P.masked then setMask(false) end
  reset()
+ -- M4b: the driver's own E is watched DRIVER_E_MS after its seat ends (driverE).
+ if s == "driver" then P.offAt, P.offE = W.now and W.now() or 0, nil end
 end
 P.stop = stop
 local function bind() P.mission, P.epoch, P.role = W.mission, W.epoch, W.role end
@@ -201,8 +204,28 @@ local function driver(now, how)
  P.state, P.keepAt, P.rxAt, P.seatN = "driver", now + KEEP_MS, now, 0
  log(fmt("step=driver;seat=1;how=%s;token=%d", how, P.token))
 end
+-- M4b (play run 1a7c5d0e: the driver's E 2.3 s after the passenger's hop-off left the host riding, a=79, cause [U]): for
+-- DRIVER_E_MS after this copy's driver seat ended, while its player still rides, the raw E (pre-mask) and the ride's end.
+local DRIVER_E_MS = 8000
+local function driverE(now)
+ local at = P.offAt
+ if not at then return end
+ local dt = now - at
+ if dt > DRIVER_E_MS then P.offAt = nil; return end
+ if not S.localRides() then
+  capped("driver_e_off", fmt("step=driver_e_off;after_ms=%d", round(dt)), 20)
+  P.offAt = nil
+  return
+ end
+ local e = padE()
+ if e ~= nil and e ~= P.offE then
+  P.offE = e
+  if e then capped("driver_e", fmt("step=driver_e;e=1;after_ms=%d;rides=1", round(dt)), 20) end
+ end
+end
 -- On foot beside the horse the partner rides here, E (pre-mask) claims the rear seat.
 local function offTick(now)
+ driverE(now)
  if not S.track or S.localRides() or selfDown() then P.prevE = nil; return end
  local L, x, y, z = S.last, mine()
  if not (L and x) then return end
@@ -277,9 +300,22 @@ function P.placed(x, y, z, yaw)
  trail(x, y, z)
  local sx, sy, sz, a = seatPoint(P.h)
  pin(sx, sy, sz, a)
+ -- M4 (world_horse_shot): the placed horse's box (mm, mrad) for the seated-shot hook (this copy's own bullets start past it).
+ if P.shot then
+  local r = receipt(fmt("pbox %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z), round(yaw)))
+  if not P.boxed then P.boxed = true; log(fmt("step=shot_box;ok=%d;", r and r.ready == true and 1 or 0)) end
+ end
 end
 local function seatedTick(now)
- if not S.track then return stop("track_end") end
+ -- M4 (play run 28015a91, -WanSim bad): a RIDE_FAST gap ended the track (stream_lost) for 0.9 s while the ride went on;
+ -- with the shot key (the review of M4) a stream loss is held TRACK_GRACE_MS (body 0 at its last target); else ends.
+ if not S.track then
+  P.noTrack = P.noTrack or now
+  if S.endWhy ~= "stream_lost" or not P.shot or now - P.noTrack > TRACK_GRACE_MS then return stop("track_end") end
+  capped("track_wait", "step=track_wait;why=stream_lost", 10)
+ else
+  P.noTrack = nil
+ end
  if selfDown() then return stop("passenger_downed") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
  -- M3c: a tick without a placement (a refused place) holds body 0 at its last target: a lapsed hold dropped the body onto
@@ -312,6 +348,34 @@ local function driveTail()
  return fmt("rider=%d;occ=%d;held=0x%x;bm=0x%x;mag=%d", n(r and r.rider), r and r.occupied == true and 1 or 0, p and math.max(n(p.held), 0) or 0,
   p and math.max(n(p.bm), 0) or 0, p and n(p.mag) or -1)
 end
+-- M4b (world_horse_shot; runs 28015a91 / 48d31500: the driver's screen showed body 1 seated, the rifle on its back): while
+-- the remote aims the partner driver leaves body 1 to its native squat-aim at the rear seat (no overlay seat) and the seat1
+-- receipt carries that seat (aim=1, sx/sy/sz mm, syaw mrad): hold1 pins body 1 there every tick (C0 + the write watch + pin,
+-- as the cargo's body 1); the aim's end (or the seat's) frees the watch and pin (free0) for the overlay seat.
+local AIM_RESET = 14
+function P.aimEnd()
+ receipt(fmt("free0 %d %d", W.mission == 30020 and 30020 or 30010, int(W.epoch, 1, 65535) and W.epoch or 1))
+ capped("aim_hold", fmt("step=aim_hold;on=0;n=%d;ticks=%d", P.aimN or 0, P.aimTicks or 0), 60)
+ P.aimOn = nil
+end
+local function aimHold(r)
+ if not (r.aim == 1 and int(r.sx, -1000000000, 1000000000) and int(r.sy, -1000000000, 1000000000) and int(r.sz, -1000000000, 1000000000)
+  and int(r.syaw, -31416, 31416)) then
+  if P.aimOn then P.aimEnd() end
+  return
+ end
+ local h = receipt(fmt("hold1 %d %d %d %d %d %d %d", W.mission, W.epoch, r.sx, r.sy, r.sz, r.syaw, AIM_RESET))
+ local ok = h and h.ready == true
+ if not P.aimOn then
+  P.aimOn, P.aimN, P.aimTicks = true, (P.aimN or 0) + 1, 0
+  capped("aim_hold", fmt("step=aim_hold;on=1;n=%d;ok=%d;reason=%s", P.aimN, ok and 1 or 0, ok and "none" or tostring(h and h.reason)), 60)
+ end
+ P.aimTicks = P.aimTicks + 1
+ if not ok then
+  local why = h and tostring(h.reason) or "receipt"
+  if P.aimWhy ~= why then P.aimWhy = why; capped("aim_hold_refused", "step=aim_hold_refused;reason=" .. why) end
+ end
+end
 local function driverTick(now)
  if not S.localRides() then return stop("driver_off") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
@@ -342,11 +406,13 @@ local function driverTick(now)
   P.seatN = (P.seatN or 0) + 1
   local ok = "ok" .. pose
   if P.leaseWhy ~= ok then P.leaseWhy = ok; log(fmt("step=seat1;ok=1;back_mm=%d;up_mm=%d;pose=%d", V.dback, V.dup, pose)) end
+  if P.shot then return aimHold(r) end
  else
   local why = r and tostring(r.reason) or "receipt"
   if P.leaseWhy ~= why then P.leaseWhy = why; capped("seat1_refused", "step=seat1;ok=0;reason=" .. why) end
   if why == "not_riding" then return stop("driver_off") end
  end
+ if P.aimOn then P.aimEnd() end
 end
 local function onClaim(now, token)
  if not W.host then return end
@@ -446,8 +512,8 @@ function P.tick(now)
  if s == "driver" then return driverTick(now) end
 end
 function P.status()
- return fmt("pillion;state=%s;key=%d;token=%d;role=%d;mode=%d;masked=%d", P.state, P.keyOn() and 1 or 0, P.token or 0, W.role or 0,
-  V.mode, P.masked and 1 or 0)
+ return fmt("pillion;state=%s;key=%d;token=%d;role=%d;mode=%d;masked=%d;shot=%d", P.state, P.keyOn() and 1 or 0, P.token or 0, W.role or 0,
+  V.mode, P.masked and 1 or 0, P.shot and 1 or 0)
 end
 local tick = W.tick
 function W.tick(...)

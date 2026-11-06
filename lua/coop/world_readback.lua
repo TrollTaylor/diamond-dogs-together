@@ -78,18 +78,20 @@ do
         function R.tick(now)
             for h, t in pairs(R.stop) do if now >= t then R.stop[h], R.noted[h] = nil, nil end end
             for h, b in pairs(R.rb) do
-                local due = b.st == 0 and 500 or 2000
+                local due = b.st == 0 and 500 or b.st == 1 and 2000 or 5000
                 if now - b.at >= due then
                     local en = W.ent[h]
                     local x, y, z
                     if en and type(en.id) == "number" then x, y, z = pos(en.id) end
                     b.st = b.st + 1
-                    if b.st >= 2 or not x then R.rb[h] = nil end
+                    if b.st >= (b.src == "quiet" and 3 or 2) or not x then R.rb[h] = nil end  -- round 9: src=quiet at 5 s too
                     if x and type(y) == "number" then
                         local dy = y - b.ty
                         local held = abs(dy) <= 1000
-                        L("event=readback;ent=%.0f;src=%s;at=%d;ms=%d;dy_m=%.2f;held=%d;far_m=%.0f", h, b.src, due, floor(now - b.at),
-                            dy / 1000, held and 1 or 0, b.d / 1000)
+                        -- Enemy round 8 (quiet_place): x/z from the target too (dxz_m) when the placement is known.
+                        local dxz = b.c and type(b.c.x) == "number" and type(b.c.z) == "number" and flat(x, z, b.c.x, b.c.z) or nil
+                        L("event=readback;ent=%.0f;src=%s;at=%d;ms=%d;dy_m=%.2f;held=%d;far_m=%.0f%s", h, b.src, due, floor(now - b.at),
+                            dy / 1000, held and 1 or 0, b.d / 1000, dxz and fmt(";dxz_m=%.2f", dxz / 1000) or "")
                         if not held and dy < -1500 and b.d > 60000 and W.reachOn == true and not b.fixed then
                             b.fixed = true
                             R.fix(h, b, dy, y, now)
@@ -119,7 +121,9 @@ do
             if put and why and P.rz[h] and P.unhold then P.unhold(h, "fell") end
             if not why and c.kind == 3 and not c.body and type(c.pos) == "table" and type(c.y) == "number" then
                 local d = far(c.pos[1], c.pos[3])
-                if put or held or d > 60000 then R.arm(h, put and "put" or "place", c.y, d, not put and c or nil) end
+                -- Enemy round 8 (quiet_place, design 7.22): every quiet move is read back (src=quiet).
+                local quiet = c.leaf == "quiet"
+                if put or held or quiet or d > 60000 then R.arm(h, put and "put" or quiet and "quiet" or "place", c.y, d, not put and c or nil) end
             end
         end
         local hold = P.hold

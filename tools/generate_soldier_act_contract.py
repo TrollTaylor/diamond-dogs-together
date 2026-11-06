@@ -186,6 +186,128 @@ SITES = [
         (0x1381664, 'add', 'rcx, -0x20'),
         (0x1381668, 'mov', 'dword ptr [rsp + 0x20], 0'),
     ], 'codec vt[1] action B pack: direction 0'),
+    # Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): soldier_act::QuietOne calls the warp itself.
+    expect(0x136ED8C, 0x50, [
+        (0x136ED9E, 'mov', 'dword ptr [rdx + rcx*8], eax'),
+        (0x136EDB6, 'mov', 'dword ptr [rdx + rcx*8 + 0xc], eax'),
+        (0x136EDBA, 'mov', 'edx, dword ptr [r9 + 0x44]'),
+        (0x136EDC6, 'mov', 'r9, qword ptr [r9 + 0x28]'),
+        (0x136EDD2, 'movzx', 'ecx, word ptr [r9 + rax*2]'),
+    ], 'network-position warp: writes the slot position and yaw, then finds idx in the realized list *(S+0x18)+0x28 (count +0x44)'),
+    expect(0x136EDF5, 0x5C, [
+        (0x136EDF5, 'mov', 'rcx, qword ptr [r10 + 0x70]'),
+        (0x136EE21, 'call', 'qword ptr [rax + 0x100]'),
+        (0x136EE4B, 'call', 'qword ptr [rax + 0x388]'),
+    ], 'network-position warp: the controller (S vt[0x100](S, idx), then the component vt[0x388])'),
+    expect(0x136F002, 0x36, [
+        (0x136F005, 'call', 'qword ptr [rax + 0x70]'),
+        (0x136F008, 'movss', 'xmm1, dword ptr [rbx + 0x160]'),
+        (0x136F035, 'call', 'qword ptr [rax + 0x68]'),
+    ], 'network-position warp: rotation vt+0x70, position vt+0x68 (y + controller +0x160); no message, no brain'),
+    # Enemy round 8 track C (lab key act_plan, design 7.23): the walk-request start and the planner life cycle. Offline
+    # the start plans nothing (finding 1 of the enemy7 C-fm1 plan); act_plan calls it again with a shadow gate object.
+    expect(0x13725F0, 0x7A, [
+        (0x1372611, 'mov', 'r14, qword ptr [rbp + 0x77]'),
+        (0x1372615, 'mov', 'rdi, qword ptr [rbp + 0x7f]'),
+        (0x1372619, 'mov', 'rbx, r9'),
+        (0x1372621, 'mov', 'esi, edx'),
+        (0x1372626, 'and', 'word ptr [rbx + 0x19e], ax'),
+        (0x137262D, 'or', 'word ptr [rbx + 0x19e], 2'),
+        (0x1372635, 'mov', 'rdx, qword ptr [rcx + 0x70]'),
+        (0x1372639, 'mov', 'eax, dword ptr [rdx + 0x2a4]'),
+        (0x137264A, 'mov', 'rax, qword ptr [rdx + 0x18]'),
+        (0x1372651, 'mov', 'rcx, qword ptr [rax + 0x18]'),
+        (0x1372655, 'movzx', 'eax, byte ptr [rsi + rcx]'),
+        (0x1372659, 'cmp', 'byte ptr [rdx + 0x2a8], al'),
+        (0x1372664, 'jne', '0x13727c8'),
+    ], 'walk-request start (P, idx, waypoints, R, *(S+0x18), F, planner): P is read only at +0x70 for the gate (S+0x2a4 bit 2, owner byte != S+0x2a8)'),
+    expect(0x1372694, 0xA, [
+        (0x1372694, 'movabs', 'rax, 0x2c505bab2efc'),
+    ], 'walk-request start: the move type hash'),
+    expect(0x1372796, 0x2E, [
+        (0x1372796, 'mov', 'rax, qword ptr [rdi]'),
+        (0x1372799, 'lea', 'r8, [rsp + 0x20]'),
+        (0x137279E, 'mov', 'edx, esi'),
+        (0x13727A3, 'call', 'qword ptr [rax]'),
+        (0x13727A5, 'mov', 'word ptr [rbx + 0x19c], ax'),
+        (0x13727AC, 'mov', 'rcx, qword ptr [r14]'),
+        (0x13727AF, 'mov', 'edx, dword ptr [r14 + 8]'),
+        (0x13727B3, 'movss', 'xmm2, dword ptr [rip + 0xd358bd]'),
+        (0x13727BE, 'call', 'qword ptr [rax + 0xd0]'),
+    ], 'walk-request start: planner vt[0](planner, idx, move) -> R+0x19c; follower vt[0xd0](obj, u32, 10.0f at 0x20a8078)'),
+    expect(0x136F0E4, 0x11, [
+        (0x136F0E4, 'mov', 'rax, qword ptr [rcx + 0x70]'),
+        (0x136F0E8, 'mov', 'rsi, qword ptr [rax + 0x30]'),
+        (0x136F0EC, 'mov', 'rcx, rsi'),
+        (0x136F0F2, 'call', 'qword ptr [rax + 0x20]'),
+    ], 'request start: the planner *(S+0x30); vt[0x20](planner, idx) = the follower pair {obj, u32}'),
+    expect(0x136F156, 0x17, [
+        (0x136F156, 'mov', 'rax, qword ptr [rsi]'),
+        (0x136F159, 'mov', 'edx, edi'),
+        (0x136F15E, 'call', 'qword ptr [rax + 0x10]'),
+        (0x136F161, 'mov', 'eax, 0xffff'),
+        (0x136F166, 'mov', 'word ptr [rbx + 0x19c], ax'),
+    ], 'request start: planner vt[0x10](planner, idx, R+0x19c) cancels a handle, then R+0x19c = 0xffff'),
+    expect(0x136F1F8, 0x10, [
+        (0x136F1F8, 'mov', 'r9, rbx'),
+        (0x136F203, 'call', '0x13725f0'),
+    ], 'request start, dest mode 1: the walk-request start'),
+    expect(0x136F74E, 0x10, [
+        (0x136F74E, 'mov', 'r9, rbx'),
+        (0x136F759, 'call', '0x13725f0'),
+    ], 'request start, dest mode 2 fallback: the walk-request start'),
+    expect(0x1372BA1, 0x2F, [
+        (0x1372BA1, 'mov', 'rcx, qword ptr [rax + 0x30]'),
+        (0x1372BAE, 'call', 'qword ptr [rax + 0x20]'),
+        (0x1372BB1, 'movzx', 'ecx, word ptr [rsi + 0x19e]'),
+        (0x1372BB8, 'and', 'ecx, 3'),
+        (0x1372BC4, 'ja', '0x1372e5a'),
+        (0x1372BCA, 'mov', 'rcx, qword ptr [rax]'),
+        (0x1372BCD, 'mov', 'edx, dword ptr [rax + 8]'),
+    ], 'path step: runs while R+0x19e & 3 is 2 or 3, on the follower pair (vt[0x90] has a path, vt[0xa0] the path)'),
+    expect(0x1354A00, 0x2E, [
+        (0x1354A00, 'mov', 'eax, dword ptr [rcx + 0x2a4]'),
+        (0x1354A10, 'mov', 'al, 1'),
+        (0x1354A23, 'cmp', 'byte ptr [r8 + 0x2a8], cl'),
+    ], 'owner test (S, idx): 1 offline (S+0x2a4 bit 2 clear), so dest mode 2 does not plan offline either'),
+    # Session 1 (run fcfb3acc): the planner *(S+0x30) has vtable 0x23a1610 (the follower pair's object too).
+    expect(0xFA2430, 0x86, [
+        (0xFA2451, 'mov', 'rsi, r8'),
+        (0xFA2454, 'movabs', 'r9, 0xffffffffffff'),
+        (0xFA2463, 'mov', 'rax, qword ptr [r8 + 0x70]'),
+        (0xFA2467, 'imul', 'rbx, rbx, 0xf0'),
+        (0xFA246E, 'add', 'rbx, qword ptr [rcx + 0x40]'),
+        (0xFA247F, 'mov', 'eax, 0xffff'),
+        (0xFA2499, 'mov', 'r15, qword ptr [rcx + 0x48]'),
+        (0xFA24A3, 'mov', 'rcx, qword ptr [r15 + r14*8]'),
+        (0xFA24AC, 'cmp', 'rcx, r8'),
+        (0xFA24B1, 'mov', 'eax, 0xffff'),
+    ], 'planner vt[0] (planner, idx, move): refuses a type hash (move +0x70, low 48 bits) other than the slot\'s *(planner+0x48)+idx*0x10; records +0x40 stride 0xf0'),
+    expect(0xFA23A0, 0x6C, [
+        (0xFA23B2, 'call', 'qword ptr [rax + 0x18]'),
+        (0xFA23C7, 'imul', 'rdi, rdi, 0xf0'),
+        (0xFA23CE, 'add', 'rdi, qword ptr [rsi + 0x40]'),
+        (0xFA23D2, 'test', 'byte ptr [rdi + 0xe0], 1'),
+        (0xFA23E4, 'call', 'qword ptr [rax + 8]'),
+        (0xFA23F0, 'call', 'qword ptr [rax + 0x10]'),
+        (0xFA2403, 'mov', 'eax, 0xffff'),
+        (0xFA2408, 'add', 'rbx, qword ptr [rsi + 0x48]'),
+    ], 'planner vt[0x10] cancel (planner, idx, handle): only a handle vt[0x18] accepts; cancels the query, clears the slot'),
+    expect(0xFA2350, 0x22, [
+        (0xFA2355, 'cmp', 'r8w, ax'),
+        (0xFA235B, 'mov', 'rax, qword ptr [rcx + 0x48]'),
+        (0xFA2364, 'cmp', 'r8w, word ptr [rax + rdx*8 + 8]'),
+    ], 'planner vt[0x18] (planner, idx, handle): the handle is the slot\'s +8'),
+    expect(0xFA2150, 0x28, [
+        (0xFA215C, 'add', 'r8, qword ptr [rcx + 0x48]'),
+        (0xFA2160, 'movzx', 'ecx, word ptr [r8 + 8]'),
+        (0xFA216F, 'cmp', 'word ptr [r8 + 0xc], cx'),
+    ], 'planner vt[0x90] has a path (planner, idx): the slot\'s handle is live and done (+0xc)'),
+    expect(0xFA2E60, 0x19, [
+        (0xFA2E60, 'mov', 'rax, qword ptr [rcx + 0x40]'),
+        (0xFA2E67, 'imul', 'r8, r8, 0xf0'),
+        (0xFA2E6E, 'movss', 'dword ptr [r8 + rax + 0xd0], xmm2'),
+    ], 'planner vt[0xd0] (planner, idx, float): record +0xd0 = the float (10.0 from the walk-request start)'),
 ]
 
 # (vtable rva, slot offset, expected target rva, description). Data qwords are absolute (no relocations).
@@ -196,6 +318,13 @@ SLOTS = [
     (0x23E9638, 0x08, 0x1381660, 'action codec vtable +0x08 = pack B'),
     (0x23E9638, 0x10, 0x13815B0, 'action codec vtable +0x10 = unpack A'),
     (0x23E9638, 0x18, 0x13815E0, 'action codec vtable +0x18 = unpack B'),
+    (0x23A1610, 0x00, 0xFA2430, 'planner vtable +0x00 = plan (session 1, run fcfb3acc)'),
+    (0x23A1610, 0x10, 0xFA23A0, 'planner vtable +0x10 = cancel'),
+    (0x23A1610, 0x18, 0xFA2350, 'planner vtable +0x18 = handle valid'),
+    (0x23A1610, 0x20, 0xFA1CC0, 'planner vtable +0x20 = the follower pair'),
+    (0x23A1610, 0x90, 0xFA2150, 'planner vtable +0x90 = has a path'),
+    (0x23A1610, 0xA0, 0xFA1ED0, 'planner vtable +0xa0 = the path'),
+    (0x23A1610, 0xD0, 0xFA2E60, 'planner vtable +0xd0 = record +0xd0 float'),
 ]
 for table, offset, target, description in SLOTS:
     value = q(table + offset)
@@ -206,6 +335,9 @@ for table, offset, target, description in SLOTS:
 FAR = struct.unpack('<f', rd(0x2329C00, 4))[0]
 if FAR != 225.0:
     failures.append(f'network-position warp radius at 0x2329c00 is {FAR}, expected 225.0')
+PLAN_DIST = struct.unpack('<f', rd(0x20A8078, 4))[0]
+if PLAN_DIST != 10.0:
+    failures.append(f'walk-request start follower argument at 0x20a8078 is {PLAN_DIST}, expected 10.0')
 
 if failures:
     print('\n'.join(failures))
@@ -225,6 +357,7 @@ lines = [
     'inline constexpr std::uintptr_t unpack_request_rva=0x136f810;  // (M-0x20, R, in70, idx)',
     'inline constexpr std::uintptr_t unpack_order_rva=0x13701f0;    // (M-0x20, R+0x1b0, in18)',
     'inline constexpr std::uintptr_t post_rva=0x1368980;            // (M, idx, req 0xc0)',
+    'inline constexpr std::uintptr_t quiet_warp_rva=0x136ece0;      // (M-0x20, idx, entry): the network-position warp (quiet_place)',
     'inline constexpr std::uintptr_t manager_vtable_rva=0x23e8a48;  // M = P+0x20 (P, the constructed object: vtable 0x23e8a18)',
     'inline constexpr std::uintptr_t codec_vtable_rva=0x23e9638;',
     '// M: records +0x10 (stride 0x1e0), S +0x50, codec +0x58; the FOB functions take M-0x20.',
@@ -236,6 +369,9 @@ lines = [
     '// 0x28; dword +8 bit 27 puppet); +0x2a4 mode (bit 2 online, bit 1 publish); +0x2a8 this peer\'s byte.',
     'inline constexpr std::size_t s_slots=0x18, slots_exists=0x0, slots_realized=0x8, slots_active=0x10, slots_owner=0x18,',
     '                             slots_pos=0x20, slots_pos_stride=0x10, slots_count=0x40;',
+    '// Round 9 (quiet_place): the realized list 0x136ece0 looks idx up in before it moves the body: u16 entries *(+0x28),',
+    '// count u32 +0x44 (pinned by the site at 0x136ed8c: mov edx,[r9+0x44] / mov r9,[r9+0x28] / movzx ecx,word [r9+rax*2]).',
+    'inline constexpr std::size_t slots_list=0x28, slots_list_count=0x44;',
     'inline constexpr std::size_t s_records=0x98, rec_data=0x8, rec_count=0x10, rec_stride=0x70, rec_aim=0x8, rec_stance=0x34;',
     'inline constexpr std::size_t s_weapons=0xa0, wep_ammo=0x8, wep_ammo_stride=0x8, wep_mag=0x10, wep_off=0x48;',
     'inline constexpr std::size_t s_netpos=0xe0, net_data=0x8, net_count=0x10, net_stride=0x18, net_flags=0x14;',
@@ -248,6 +384,21 @@ lines = [
     '                             r_1a0=0x1a0, r_order=0x1b0, r_order_mode=0x1bc, r_order_kind=0x1c8, r_order_flags=0x1d2;',
     'inline constexpr std::size_t wire_request=0x70, wire_order=0x18;',
     'inline constexpr float netpos_warp_sq=225.0f;  // 0x2329c00',
+    '// Round 8 track C (act_plan): the walk-request start (P, idx, waypoints, R, *(S+0x18), F, planner); P is read only at +0x70.',
+    'inline constexpr std::uintptr_t plan_start_rva=0x13725f0;',
+    'inline constexpr std::uintptr_t plan_dist_rva=0x20a8078;',
+    'inline constexpr float plan_dist=10.0f;  // 0x20a8078: the follower vt[0xd0] argument',
+    '// The planner *(S+0x30): vt[0] plan (planner, idx, move) -> u16 handle, vt[0x10] cancel (planner, idx, handle), vt[0x20]',
+    '// follower (planner, idx) -> {obj, u32}, vt[0x38] (planner, idx) a mode; the follower obj: vt[0x90] has a path, vt[0x98]',
+    '// ready, vt[0xa0] the path (+8 points stride 0x10, +0x20 count), vt[0xa8] progress, vt[0xd0] (u32, 10.0f).',
+    'inline constexpr std::size_t s_planner=0x30, planner_plan=0x0, planner_cancel=0x10, planner_follower=0x20, planner_mode=0x38;',
+    'inline constexpr std::size_t follower_has=0x90, follower_ready=0x98, follower_path=0xa0, follower_progress=0xa8, follower_reset=0xd0;',
+    'inline constexpr std::size_t r_dest=0x80, r_198=0x198, r_handle=0x19c, path_points=0x8, path_count=0x20;',
+    '// Session 1 (run fcfb3acc): the planner\'s vtable; its slots +0x48 + idx*0x10 {u48 hash, u16 handle +8, counter +0xa,',
+    '// done +0xc}, records +0x40 stride 0xf0; vt[0x18] (planner, idx, handle) handle valid.',
+    'inline constexpr std::uintptr_t planner_vtable_rva=0x23a1610;',
+    'inline constexpr std::size_t planner_slots=0x48, planner_slot_stride=0x10, planner_records=0x40, planner_record_stride=0xf0,',
+    '                             planner_valid=0x18, slot_handle=0x8, slot_done=0xc;',
 ]
 for n, (rva, size, description) in enumerate(SITES):
     lines.append(f'// {description}')
