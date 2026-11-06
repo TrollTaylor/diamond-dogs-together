@@ -1,33 +1,14 @@
--- M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4; op 51 = 0x33, host to guest, reliable,
--- world queue, level 3; docs/world-sync-protocol.md section 17). Vehicles nobody drives were per copy:
--- a jeep pushed, left or shot on the host's copy stayed untouched on the guest's (STATUS 7561ab63).
--- With lab.ini world_vehicle_state=1 (CFG r[15] bit 2; off in the lab, on in play unless named) on both copies
--- (30010, 30020; Mother Base 30050 in the lab only until a hidden run covers it, M4 review):
---   host:  scans its TppVehicle2 pool, SLICE ids every TICK_MS (a 24-vehicle pool in 1.5 s), plus at
---          once any id a Damage message names: IsAlive, GetPosition (pos, rotY), GetVehicleType and the
---          native read MGS_COOP_VEHICLE_LIFE_V1 (body life, zero-parts mask, the engine's ene_veh_state
---          word). It sends a live vehicle's state when it moved > 0.5 m / 5 deg or its life, state word
---          or parts changed (at most every MIN_GAP_MS per vehicle), all of them once after each PAIRED
---          (the sweep, flag 2) and each again after REFRESH_MS (flag 4: corrects a guest-local push).
---          Skipped (logged once per reason change): the local player's vehicle, an occupied rider[] seat
---          (an NPC, the local passenger), a vehicle the partner drives here (a RIDE_FAST track latched
---          10 s: world_vehicle.lua V.busy; the guest's seat chain never writes rider[]), an authored LRRP
---          truck (lrrpVehicle in f30010/f30020_enemy.lua: each copy's own AI drives it until M8).
---   guest: applies it only while linked, to the vehicle its locator hash names here (veh_lv_/trc_/wav_
---          and the Mother Base veh_clNN_clNN_0000), or for an unnamed one (never index 0, the relief
---          vehicle: M3) the same id when it is alive, of that type and the nearest of its type to the
---          reported position within 40 m (a named one too must lie within 40 m: far); never an LRRP
---          truck, one this copy lost or is watching (VEHICLE_GONE), and only while nobody rides it here
---          (V.busy) and, for a move, the local player stands more than 3.5 m from where it would go and
---          from where it stands: otherwise held (re-checked every tick) for HOLD_MS.
---          SetPosition{position, rotY} when it is > 0.5 m / 5 deg off (read back: err_mm; a failed
---          placement is refused place_failed), SetBodyLife{life} whenever this copy's body life differs
---          (host-authoritative both ways, so guest-only hits never add up to a guest-only destruction;
---          a host life of 0 is written as 1: destruction is VEHICLE_GONE's). With world_vehicle_damage the
---          guest reports its own drops first (world_vehicle_damage.lua: S.lifeHook / S.lifeSeen below).
--- Lab levers (lab mode only; native refuses them outside the one-PC lab): debug vehicle_push <id|nearest>
--- <dx> <dz> (this copy's vehicle moved, a stand-in for a shove), debug vehicle_life <id|nearest> <life>
--- (this copy's body life; 0 is the E5 wreck attempt); debug vehicle_state_status [id] is read-only.
+-- M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4; op 51 = 0x33, host to guest, reliable, world queue, level 3;
+-- protocol section 17). Lab key world_vehicle_state (CFG r[15] bit 2; 30010, 30020; Mother Base in the lab only).
+--   host:  scans its TppVehicle2 pool (SLICE ids per TICK_MS, and any id a Damage message names): pose, type and the native
+--          MGS_COOP_VEHICLE_LIFE_V1 read; sends a vehicle that moved > 0.5 m / 5 deg or whose life, state word or parts
+--          changed (MIN_GAP_MS apart), all once after PAIRED (flag 2), each again after REFRESH_MS (flag 4). Skipped (one
+--          line per reason): the local player's vehicle, an occupied seat, the partner's ride (V.busy), an LRRP truck.
+--   guest: only while linked, the vehicle its locator hash names here (an unnamed one: same id, alive, that type, the
+--          nearest of its type within 40 m; never index 0); never an LRRP truck, one it lost or watches, one ridden here;
+--          a move is held (HOLD_MS) while the local player stands within 3.5 m. SetPosition when > 0.5 m / 5 deg off (read
+--          back err_mm), SetBodyLife when this copy's life differs (host-authoritative; 0 is written as 1).
+-- Lab levers (lab only): debug vehicle_push <id|nearest> <dx> <dz>, vehicle_life <id|nearest> <life>, vehicle_state_status.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" then
@@ -401,6 +382,8 @@ function W.tick(...)
   end)
   if not ok then fail(err) end
 end
+
+-- lrrp_follow (enemy round 8 B / 9 B, design 7.21 / 7.25): lua/coop/world_lrrp.lua, spliced after this chunk.
 
 -- Lab levers (debug_vehicle.lua): this copy only.
 local function target(arg)

@@ -204,6 +204,19 @@ inline constexpr unsigned kDriveVertMax = 2;
 inline constexpr std::uint64_t kDriveVertWindowMs = 10000;
 bool DriveVertAllow(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept;
 void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept;
+// Enemy round 10 track A (design 7.27): a vert snap only while the owner copy is at rest in y. Round 7's two snaps
+// (ddcdec94: gap -2.40 m, then +1.88 m 1.7 s later) chased an owner copy going down and up (stairs or a ladder) and
+// none of their read-backs held. OwnerYAtRest takes the rendered target's y at each drive call: true once every y since
+// `since_ms` spans less than kDriveVertRestM (max - min) and that window is kDriveVertRestMs old; a wider span, a gap
+// of more than kDriveVertRestGapMs between calls or a non-finite y starts the window over at this sample.
+inline constexpr float kDriveVertRestM = 0.2f;
+inline constexpr std::uint64_t kDriveVertRestMs = 1000, kDriveVertRestGapMs = 600;
+struct OwnerRestY {
+    std::uint64_t since_ms{}, last_ms{};
+    float lo{}, hi{};
+    bool valid{};
+};
+bool OwnerYAtRest(float y, std::uint64_t now_ms, OwnerRestY& state) noexcept;
 // The receipts' refusal reply: return {refused="<why>"}, with ,b=<back_ms> (the ms left of that guard's relay backoff,
 // so Lua's realize hold retries when it ends) when back_ms > 0. False when it does not fit.
 bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept;
@@ -226,6 +239,25 @@ const char* DriveAdmit(const DriveRule& rule) noexcept;
 // false when neither is valid.
 float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
                     bool& self_nearer) noexcept;
+// Enemy round 8 track A (range_flat, docs/world-sync-design.md 7.22): the same on the ground plane (x/z; y ignored), as the
+// M3 owner rule (world_place.lua P.ownerOf); and the request's reference y set to its target's so Warp's range is flat too.
+float NearerSquaredFlat(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
+                        bool& self_nearer) noexcept;
+void FlattenRange(Request& request) noexcept;
+// Enemy round 9 track A (bug 2, docs/world-sync-design.md 7.24): the partner pose the nearer-player rules (the host's M3
+// placement and soft-follow range, PEER for the owner rule) use. The body driver's command while it has one (as before);
+// while this PC hides the partner's body for range (partner_range=hide, beyond 200 m) the driver has none, and the
+// partner's network pose sample, at most kRangePoseMaxAgeMs old, stands in (run 8b581a26: 142 of 142 host placements
+// refused while the guest's pose read 0). Unknown otherwise.
+// Round 9 land step (the review): the network sample only with net_allowed (range_flat named, both roles; off at the
+// defaults as 0.15.2). range_hidden also starts true at every 30010/30020 mission start until partner_range=near.
+enum class RemoteSource : unsigned char { none, cmd, net };
+inline constexpr unsigned kRangePoseMaxAgeMs = 1000;
+RemoteSource RemoteRangeSource(bool have_cmd, bool range_hidden, bool net_valid, unsigned net_age_ms, bool net_allowed) noexcept;
+const char* RemoteSourceName(RemoteSource source) noexcept;
+// The player point a nearer-player range is measured from: the same partner pose the nearer test used when the partner
+// is nearer, else this player's (the review: DriveReceipt took the command pose, 0,0,0 while hidden, and was refused).
+void RangePlayer(bool partner_nearer, const float (&own)[3], const float (&partner)[3], float (&out)[3]) noexcept;
 // Whether a guest process needs the startup Verify() byte gate for either rule.
 bool GuestMayWarp(bool lab, bool play, bool key) noexcept;
 

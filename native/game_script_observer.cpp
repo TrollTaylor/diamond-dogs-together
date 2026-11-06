@@ -2713,6 +2713,22 @@ void PublishDebugSnapshot() noexcept {
     }
     const auto sample = mgscoop::partner_net::SampleRemote(snapshot.interp_ms);
     snapshot.remote_age_ms = sample.age_ms;
+    // Enemy round 9 track A (bug 2, design 7.24): the nearer-player rules' partner pose; the network sample while this PC
+    // hides the partner's body for range (the driver then has no command). One line when the source changes.
+    {
+        namespace sw = mgscoop::soldier_warp;
+        // Round 9 land step (the review): the network sample only with range_flat named (off at the defaults, as 0.15.2).
+        const auto src = sw::RemoteRangeSource(mission.have_cmd, mission.range_hidden, sample.valid, sample.age_ms, config.range_flat);
+        snapshot.remote_range_src = static_cast<unsigned char>(src);
+        snapshot.remote_range_valid = src != sw::RemoteSource::none;
+        for (unsigned i = 0; i < 3; ++i)
+            snapshot.remote_range_pos[i] = src == sw::RemoteSource::cmd ? snapshot.remote_pos[i]
+                                         : src == sw::RemoteSource::net ? (i == 0 ? sample.x : i == 1 ? sample.y : sample.z) : 0.0f;
+        static std::atomic<unsigned> last_src{0};
+        if (last_src.exchange(static_cast<unsigned>(src)) != static_cast<unsigned>(src))
+            LogFormat("partner_range_pose=%s; hidden=%u; age_ms=%u\r\n", sw::RemoteSourceName(src), mission.range_hidden ? 1u : 0u,
+                      unsigned(sample.age_ms));
+    }
     snapshot.remote_action_flags = sample.flags;
     snapshot.remote_equip = sample.equip_id;
     snapshot.remote_act = sample.anim_valid ? sample.act : 0;
@@ -2863,7 +2879,8 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     };
     std::uint16_t seq = 0;
     sw::Request request{};
-    if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id)) return refuse("args");
+    bool quiet = false;  // enemy round 8 (quiet_place): the guest's Lua asks for the quiet move (off its player's screen)
+    if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id, quiet)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
     if (labc.role != mgscoop::LabRole::guest) return refuse("role");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
@@ -2919,9 +2936,28 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     // grant of an earlier host process that reused the same epoch and seq.
     if (!grant.serial || grant.serial > 0x7FFFFFFFu) return refuse("grant");
     const std::uint32_t id = 0x80000000u | grant.serial;
+    // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): a correction off this player's screen of a guard
+    // realized here is staged for the request manager hook, which moves him with the engine's network-position warp
+    // 0x136ece0 in its next update (soldier_act::QuietOne; no set-transform message). Same grant, gate, range and budget.
+    // Enemy round 9 track A (design 7.24): only a guard at rest in his own brain and in the realized list the warp reads
+    // (soldier_act::QuietCheck); any other gets the set-transform message as before (quiet=<why> on the warp line).
+    const unsigned quiet_idx = request.go_id & 0x1ffu;
+    const bool quiet_asked = quiet && labc.quiet_place && grant.kind == mgscoop::world::place::correct && (request.go_id >> 9) == 2u;
+    const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos) : mgscoop::soldier_act::QuietWhy::unknown;
+    const bool quiet_move = quiet_asked && quiet_why == mgscoop::soldier_act::QuietWhy::ok;
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
-    else {
+    else if (quiet_move) {
+        float squared = 0.0f;
+        for (unsigned i = 0; i < 3; ++i) squared += (request.pos[i] - request.player[i]) * (request.pos[i] - request.player[i]);
+        if (!(squared <= request.max_range * request.max_range)) result.refusal = "range";
+        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw)) result.refusal = "contract";
+        else {
+            result.out = 0;
+            result.handled = 1;
+            soldier_warp_gate.Record(result);
+        }
+    } else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
     }
@@ -2937,14 +2973,15 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
             char line[512]{};
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
-        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s\r\n", unsigned(seq),
+        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s%s%s\r\n", unsigned(seq),
                   unsigned(grant.kind), grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out,
-                  unsigned(result.handled), sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
+                  unsigned(result.handled), quiet_move ? "quiet" : sw::LeafName(result.chain), result.refusal ? result.refusal : "none",
+                  quiet_asked ? "; quiet=" : "", quiet_asked ? mgscoop::soldier_act::QuietWhyName(quiet_why) : "");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {r=%d,h=%u,leaf=\"%s\"}", unrealized ? -1 : result.out,
-                     unsigned(result.handled), result.chain.pinned ? "pinned" : "engine");
+                     unsigned(result.handled), quiet_move ? "quiet" : result.chain.pinned ? "pinned" : "engine");
     return debug_reply;
 }
 
@@ -2980,7 +3017,8 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
     const auto now = mgscoop::partner_net::NowMs();
-    const bool remote_fresh = snapshot.remote_valid && !(snapshot.remote_age_ms > 1000);
+    // Enemy round 9 track A (bug 2): the guest's network pose too while the host hides the guest's body for range.
+    const bool remote_fresh = snapshot.remote_range_valid && !(snapshot.remote_age_ms > 1000);
     if (!snapshot.host || !snapshot.world_paired || std::strcmp(snapshot.link_state, "connected") != 0 || now < snapshot.tick_ms ||
         now - snapshot.tick_ms > 1000 || !snapshot.pose_valid)
         return refuse("pose");
@@ -2988,12 +3026,14 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     bool guest_nearer = false;
     const float target[3] = {grant.pos[0], grant.pos[1], grant.pos[2]};
     const float own[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
-    const float guest[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
-    const float nearer = sw::NearerSquared(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer);
-    for (unsigned i = 0; i < 3; ++i) {
-        request.pos[i] = grant.pos[i];
-        request.player[i] = guest_nearer ? snapshot.remote_pos[i] : snapshot.player_pos[i];
-    }
+    const float guest[3] = {snapshot.remote_range_pos[0], snapshot.remote_range_pos[1], snapshot.remote_range_pos[2]};
+    // Enemy round 8 track A (range_flat, design 7.22): on the ground plane (x/z), as the M3 owner rule (a code fact; the
+    // seen near=host refusals of ddcdec94 / 8b581a26 came while the guest's body was hidden for range, pose unknown).
+    const float nearer = labc.range_flat ? sw::NearerSquaredFlat(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer)
+                                         : sw::NearerSquared(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer);
+    for (unsigned i = 0; i < 3; ++i) request.pos[i] = grant.pos[i];
+    sw::RangePlayer(guest_nearer, own, guest, request.player);
+    if (labc.range_flat) sw::FlattenRange(request);
     if (!(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
     request.yaw = grant.yaw;
     request.max_range = sw::kMaxRangeLimitM;
@@ -3018,9 +3058,14 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
             char line[512]{};
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
-        LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s\r\n", unsigned(seq),
+        // Enemy round 8: the guest's pose age and its height over the target (dgy_m; about -270 m while the guest's pose is
+        // unknown and read as 0, 8b581a26).
+        LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s; flat=%u; "
+                  "g_age_ms=%u; dgy_m=%.1f; g_src=%s\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),
-                  sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none");
+                  sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none",
+                  labc.range_flat ? 1u : 0u, snapshot.remote_age_ms, snapshot.remote_range_pos[1] - grant.pos[1],
+                  sw::RemoteSourceName(static_cast<sw::RemoteSource>(snapshot.remote_range_src)));
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
@@ -3039,10 +3084,13 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
 // Reply: {e=<error_cm>,s=<0 rest|1 step|2 hard>,r=<out>,h=<0|1>,v=<cm>} or {refused="<reason>"}; v (enemy gaps, the
 // Lua drive_sink check) = this copy's y minus the rendered target's y, in cm.
 namespace drive {
-struct SlotState { bool active; std::uint64_t last_ms; std::uint64_t vert_ms; std::uint64_t vert_win; unsigned vert_n; bool vert_stopped; };
+struct SlotState {
+    bool active; std::uint64_t last_ms; std::uint64_t vert_ms; std::uint64_t vert_win; unsigned vert_n; bool vert_stopped;
+    mgscoop::soldier_warp::OwnerRestY oy; bool vert_waited;  // enemy round 10 track A: the owner copy's rest in y
+};
 SlotState slots[mgscoop::world::kSnapSlots]{};
 std::uint64_t stats_at = 0;
-unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0, vert_stops = 0;
+unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0, vert_stops = 0, vert_waits = 0;
 }
 const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -3072,9 +3120,10 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const bool have = mgscoop::world_link::SnapPair(slot, now, cur, prev);
     if (!drive::stats_at || now - drive::stats_at >= 10000) {
         drive::stats_at = now;
-        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u; vert_stop=%u\r\n",
+        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u; vert_stop=%u; "
+                  "vert_wait=%u\r\n",
                   drive::calls, drive::steps, drive::hard, drive::rest, drive::stale, drive::refused, soldier_warp_gate.anomalies,
-                  drive::vert, drive::vert_stops);
+                  drive::vert, drive::vert_stops, drive::vert_waits);
     }
     if (!have) { ++drive::stale; return refuse("stale"); }
     sw::DriveSample a{}, b{};
@@ -3094,6 +3143,22 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     // Enemy gaps 3 (drive_vert, design 7.18): the soft follow also moves a copy at rest in x/z that stood more than 1.5 m
     // above or below the target for 1 s onto the target's spot (s=3; drive_sink at the defaults).
     bool vert = labc.drive_vert && !mirror && !puppet && sw::DriveVertDue(target[1] - here[1], now, st.vert_ms);
+    // Enemy round 10 track A (design 7.27): only while the owner copy is at rest in y (the rendered target within 0.2 m
+    // for 1 s; round 7's snaps chased an owner on stairs or a ladder); a due snap waits for it, logged once per due spell.
+    const bool owner_rest = sw::OwnerYAtRest(target[1], now, st.oy);
+    if (!st.vert_ms) st.vert_waited = false;
+    if (vert && !owner_rest) {
+        vert = false;
+        if (!st.vert_waited) {
+            st.vert_waited = true;
+            ++drive::vert_waits;
+            if (drive::vert_waits <= 32)
+                LogFormat("world_drive=vert_wait; go=%u; slot=%u; gap_cm=%d; rest_ms=%llu; span_cm=%d\r\n", request.go_id,
+                          unsigned(slot), static_cast<int>((target[1] - here[1]) * 100.0f),
+                          static_cast<unsigned long long>(st.oy.valid && now >= st.oy.since_ms ? now - st.oy.since_ms : 0),
+                          static_cast<int>((st.oy.hi - st.oy.lo) * 100.0f));
+        }
+    }
     // Enemy round 7 track A (design 7.20): at most 2 snaps of a copy in 10 s (no thrash); the third due is logged once.
     if (vert && !sw::DriveVertAllow(now, st.vert_win, st.vert_n)) {
         vert = false;
@@ -3118,17 +3183,21 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     }
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
-    const bool remote_fresh = snapshot.remote_valid && !(snapshot.remote_age_ms > 1000);
+    // Enemy round 9 track A (bug 2): the partner's network pose too while this PC hides their body for range.
+    const bool remote_fresh = snapshot.remote_range_valid && !(snapshot.remote_age_ms > 1000);
     if (!snapshot.world_paired || std::strcmp(snapshot.link_state, "connected") != 0 || !snapshot.pose_valid) return refuse("pose");
     bool remote_nearer = false;
     const float own[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
-    const float remote[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
-    const float nearer = sw::NearerSquared(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer);
+    const float remote[3] = {snapshot.remote_range_pos[0], snapshot.remote_range_pos[1], snapshot.remote_range_pos[2]};
+    // Enemy round 8 track A (range_flat): the host's soft follow of a guest-owned guard on the ground plane too.
+    const bool flat = labc.range_flat && labc.role == mgscoop::LabRole::host;
+    const float nearer = flat ? sw::NearerSquaredFlat(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer)
+                              : sw::NearerSquared(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer);
     if (!(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
-    for (unsigned i = 0; i < 3; ++i) {
-        request.pos[i] = step.pos[i];
-        request.player[i] = remote_nearer ? snapshot.remote_pos[i] : snapshot.player_pos[i];
-    }
+    for (unsigned i = 0; i < 3; ++i) request.pos[i] = step.pos[i];
+    // Round 9 land step (the review): from the pose the nearer test used (was the command pose, 0,0,0 while hidden).
+    sw::RangePlayer(remote_nearer, own, remote, request.player);
+    if (flat) sw::FlattenRange(request);
     request.yaw = yaw;
     request.max_range = sw::kMaxRangeLimitM;
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
@@ -3149,10 +3218,12 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
         st.vert_ms = 0;
         if (!st.vert_win || now - st.vert_win >= sw::kDriveVertWindowMs) st.vert_stopped = false;
         sw::DriveVertCount(now, st.vert_win, st.vert_n);
+        st.vert_waited = false;
         if (drive::vert <= 64)
-            LogFormat("world_drive=vert; go=%u; slot=%u; gap_cm=%d; e_cm=%d; r=%d; h=%u; n=%u\r\n", request.go_id, unsigned(slot),
-                      static_cast<int>((target[1] - here[1]) * 100.0f), static_cast<int>(step.error * 100.0f), result.out,
-                      unsigned(result.handled), drive::vert);
+            LogFormat("world_drive=vert; go=%u; slot=%u; gap_cm=%d; e_cm=%d; r=%d; h=%u; n=%u; rest_ms=%llu\r\n", request.go_id,
+                      unsigned(slot), static_cast<int>((target[1] - here[1]) * 100.0f), static_cast<int>(step.error * 100.0f),
+                      result.out, unsigned(result.handled), drive::vert,
+                      static_cast<unsigned long long>(st.oy.valid && now >= st.oy.since_ms ? now - st.oy.since_ms : 0));
     } else if (step.hard) ++drive::hard;
     else ++drive::steps;
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=%d,r=%d,h=%u,v=%d}", static_cast<int>(step.error * 100.0f),
@@ -3232,9 +3303,10 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
 const char* WorldPeerReceipt() noexcept {
     PublishDebugSnapshot();
     const auto snapshot = mgscoop::debug_menu::GetSnapshot();
-    const bool valid = snapshot.remote_valid && snapshot.world_paired && std::strcmp(snapshot.link_state, "connected") == 0;
-    if (!mgscoop::world::FormatPeerReply(valid, snapshot.remote_pos[0], snapshot.remote_pos[2], snapshot.remote_age_ms, debug_reply,
-                                         ARRAYSIZE(debug_reply)))
+    // Enemy round 9 track A (bug 2): the partner's network pose too while this PC hides their body for range (the owner rule).
+    const bool valid = snapshot.remote_range_valid && snapshot.world_paired && std::strcmp(snapshot.link_state, "connected") == 0;
+    if (!mgscoop::world::FormatPeerReply(valid, snapshot.remote_range_pos[0], snapshot.remote_range_pos[2], snapshot.remote_age_ms,
+                                         debug_reply, ARRAYSIZE(debug_reply)))
         return nullptr;
     return debug_reply;
 }
@@ -5262,10 +5334,11 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     if(!hd::Parse(buffer+sizeof(prefix)-1,size-(sizeof(prefix)-1),q)) return finish("return {ready=false,reason='request'}");
     const auto& labc=mgscoop::GetLabConfig();
     // cfg: world_horse_share (on), the M2 sub-key world_horse_cargo (cargo, lua/coop/world_horse_cargo.lua) and the M3
-    // sub-key world_horse_pillion (pillion, lua/coop/world_horse_pillion.lua).
+    // sub-key world_horse_pillion (pillion, lua/coop/world_horse_pillion.lua); M4's world_horse_shot (shot, with pillion).
     if(q.verb==hd::Verb::cfg) {
-        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {on=%u,cargo=%u,pillion=%u}",labc.world_horse_share?1u:0u,
-            labc.world_horse_cargo?1u:0u,labc.world_horse_pillion?1u:0u))) return finish("return {ready=false,reason='read'}");
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {on=%u,cargo=%u,pillion=%u,shot=%u}",labc.world_horse_share?1u:0u,
+            labc.world_horse_cargo?1u:0u,labc.world_horse_pillion?1u:0u,labc.world_horse_pillion && labc.world_horse_shot?1u:0u)))
+            return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
     // BODY0 free0: the write watch and pin on body 0 end before a take-down / lay-down Warp (never refused).
@@ -5335,6 +5408,13 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
+    // M4 pbox (world_horse_shot): this copy's player sits behind the partner; its placed horse's census root and yaw, leased
+    // to the partner driver's seated-shot publication (partner_seat_shot horse class). Nothing in the game is read or written.
+    if(q.verb==hd::Verb::pbox) {
+        if(!labc.world_horse_pillion || !labc.world_horse_shot) return refuse("off");
+        hd::NoteShotBox(q.x,q.y,q.z,q.yaw,mgscoop::partner_net::NowMs());
+        return finish("return {ready=true,box=true}");
+    }
     // M3 seat1 (world_horse_pillion): this copy's player rides the shared horse with the partner behind; the lease (on the
     // partner driver's clock) has the partner driver draw body 1 at the rear seat of this copy's body 0 every tick.
     if(q.verb==hd::Verb::seat1) {
@@ -5346,7 +5426,10 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             LogFormat("horse_drive=seat1; n=%u; back_mm=%ld; up_mm=%ld\r\n",horse_drive_log.seats,long(q.back),long(q.up));
             horse_drive_log.last=nullptr;
         }
-        return finish("return {ready=true,seat=1}");
+        // M4b (world_horse_shot): while the remote aims the partner driver leaves body 1 to its native aim at the rear seat and
+        // notes that seat; the reply hands it to Lua (aim=1, sx/sy/sz mm, syaw mrad), whose hold1 pins body 1 there.
+        if(!hd::SeatReply(mgscoop::partner_net::NowMs(),reply,sizeof(reply))) return finish("return {ready=true,seat=1,aim=0}");
+        return finish(reply);
     }
     // M2 hold0 (world_horse_cargo): this copy's own downed body 0 lying on its horse, moved as the partner driver's xform
     // mover moves body 1 (T.vt+0x70 then T.vt+0x68, no C0 / A0 reset; the partner contract's pinned T slots).
@@ -5355,18 +5438,35 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     if(q.verb==hd::Verb::hold0 || q.verb==hd::Verb::hold1) {
         const unsigned kb=q.verb==hd::Verb::hold1?1u:0u;
         hd::HoldScope hs{};
-        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=kb==0 && labc.world_horse_pillion;hs.pins=sc.pins;
+        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=labc.world_horse_pillion;hs.pins=sc.pins;
+        // M4b: body 1 under the pillion key only with world_horse_shot (the driver's copy: body 1 aiming at the rear seat).
+        hs.body1=kb==1;hs.shot=labc.world_horse_shot;
         hs.field=sc.field;
         pp::Census bodies{};
-        hs.body=!pp::ResolveCensus(partner_addresses,player,bodies) && bodies.k[0].id==0 && bodies.k[kb].id==kb && bodies.k[kb].t &&
-            bodies.k[kb].t68 && bodies.k[kb].t70;
+        const bool full=!pp::ResolveCensus(partner_addresses,player,bodies);
+        hs.body=full && bodies.k[0].id==0 && bodies.k[kb].id==kb && bodies.k[kb].t && bodies.k[kb].t68 && bodies.k[kb].t70;
+        const auto classOf=[](const pp::Block& k) noexcept {
+            hd::BodyClass c{};c.t_vt=k.t_vt;c.t68=k.t68;c.t70=k.t70;c.t58=k.t58;c.c0_vt=k.c0_vt;c.c090=k.c090;c.a0_vt=k.a0_vt;c.a080=k.a080;
+            return c;
+        };
+        // M2g: body 1's class from the last full census; a hold0 of body 0 alone uses it while body 1 does not resolve (the
+        // partner's mount unrealizes it for a frame on this copy: run f7e09c55 hold0_refused body, then the fall / squat).
+        // Only with world_horse_cargo (off unless named): the pillion's hold0 at the defaults is unchanged.
+        static hd::BodyClass lastBody1{};
+        hd::BodyClass c1=classOf(bodies.k[1]);
+        bool alone=false;
+        if(hs.body) lastBody1=c1;
+        else if(kb==0 && labc.world_horse_cargo && !full && !bodies.k[0].refusal && bodies.k[0].id==0 && bodies.k[0].t && bodies.k[0].t68 && bodies.k[0].t70 &&
+                hd::CachedBody1Usable(classOf(bodies.k[0]),lastBody1)) {
+            hs.body=alone=true;c1=lastBody1;
+        }
         hs.mounted=kb==0 && a.occupied && a.rider==0;
         if(const char* why=hd::HoldRefusal(hs)) return refuse(why);
-        const auto& b0=bodies.k[0];const auto& b1=bodies.k[1];const auto& bh=bodies.k[kb];
+        const auto& b0=bodies.k[0];const auto& bh=bodies.k[kb];
         // Warp's resets on request, only while body 0's and body 1's objects share their class and slot (ApplyTransform's guard).
         const bool wantC=(q.reset&2)!=0,wantA=(q.reset&1)!=0;
-        if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=b1.c0_vt || b0.c090!=b1.c090)) return refuse("reset");
-        if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=b1.a0_vt || b0.a080!=b1.a080)) return refuse("reset");
+        if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=c1.c0_vt || b0.c090!=c1.c090)) return refuse("reset");
+        if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=c1.a0_vt || b0.a080!=c1.a080)) return refuse("reset");
         // BODY0 round: the write watch (bit 2) and pin (bit 3) on body 0's transform (native/include/mgscoop/horse_body_watch.hpp),
         // set up before hold0's own write (its trap is order 0; the pin target is what it writes).
         namespace hbw=mgscoop::horse_body_watch;
@@ -5382,6 +5482,8 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             LogFormat("horse_drive=held; n=%u; body=%u\r\n",horse_drive_log.holds,kb);
             horse_drive_log.last=nullptr;
         }
+        static unsigned alones=0;
+        if(alone && (++alones<=20 || alones%100==0)) LogFormat("horse_drive=held_alone; n=%u; body=0; census=body1\r\n",alones);
         // Every 2 s: the writers of body 0's centre / foot y since the last report (rva, count, thread, order after hold0,
         // the first image return rvas on the writer's stack) and how often the pin put the body back.
         static std::uint64_t watchAt=0;
@@ -6268,6 +6370,23 @@ bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     else replacement={off,sizeof(off)-1};
     return true;
 }
+// Enemy round 8 / 9 / 10 track B (lua/coop/world_lrrp.lua S.lf, docs/world-sync-design.md 7.21, 7.25, 7.28): MGS_COOP_LRRP_CFG_V1
+// answers the native-only lab key lrrp_follow (1 named on, 2 on by the gun profile's default - Lua then runs it in
+// Afghanistan free roam 30010 only, 0 off; no CFG bit) on the runtime thread; otherwise nil (Lua asks again). No game read
+// or call.
+bool SelectLrrpReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_LRRP_CFG_V1'";
+    if(!buffer || size!=sizeof(query)-1 || std::memcmp(buffer,query,size)!=0) return false;
+    static constexpr char none[]="return nil", on[]="return 1", off[]="return 0", byDefault[]="return 2";
+    replacement={none,sizeof(none)-1};
+    if(!OnRuntimeThread()) return true;
+    const auto& cfg=mgscoop::GetLabConfig();
+    // Round 10 B: 2 = on by the gun profile's default (Lua runs it in Afghanistan free roam only), 1 = named on.
+    if(cfg.lrrp_follow) replacement=cfg.lrrp_follow_given ? mgscoop::script_bridge::Replacement{on,sizeof(on)-1}
+                                                          : mgscoop::script_bridge::Replacement{byDefault,sizeof(byDefault)-1};
+    else replacement={off,sizeof(off)-1};
+    return true;
+}
 // Enemy sync M7 (soldier_authority.hpp): MGS_COOP_SOLDIER_AUTH_V1 -- clear | status | <index 0..511> <remote 0|1>, on the
 // runtime thread: the ownership bits the damage callback reads. Reply return <enabled>,<remote count> (status, clear) or
 // return 1|0 (set). No game read or call.
@@ -6533,6 +6652,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if (SelectSupplyReceipt(buffer, size, replacement)) return true;
     if (SelectVspawnReceipt(buffer, size, replacement)) return true;
+    if (SelectLrrpReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -7206,6 +7326,13 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     if (labc.act_census) {
                         if (mgscoop::soldier_act::Install(base, game_span, Log)) mgscoop::soldier_act::SetCensus(true);
                     }
+                    // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the same hook runs the guest's
+                    // quiet corrections (GuestWarpReceipt stages them; soldier_act::QuietOne).
+                    if (labc.quiet_place && labc.soldier_follow && labc.role == mgscoop::LabRole::guest) {
+                        const bool hooked = mgscoop::soldier_act::Install(base, game_span, Log);
+                        mgscoop::soldier_act::SetQuietRest(hooked);  // round 9: the rest views QuietCheck reads
+                        LogFormat("soldier_act_quiet=%s; rest=%s\r\n", hooked ? "on" : "off", hooked ? "on" : "off");
+                    }
                     // FM1, the far mirror (soldier_act.hpp, lua/coop/world_mirror.lua): the same hook, the mirror on this
                     // copy's role, and the bullet / noise filters for the mirror puppets' shots (installed here, not only
                     // when body 1 shows a gun class).
@@ -7217,7 +7344,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s; phase=%s\r\n", hooked ? "on" : "off",
                                   labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok",
                                   labc.soldier_act_calm ? "calm" : "all");
-                    } else mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
+                        // Enemy round 8 track C (docs/world-sync-design.md 7.23): the puppets plan their own path (act_plan,
+                        // native only, off unless named; the puppet side runs it).
+                        mgscoop::soldier_act::SetPlan(hooked && labc.act_plan);
+                        LogFormat("soldier_act_plan=%s; given=%u\r\n", hooked && labc.act_plan ? "on" : "off", labc.act_plan_given ? 1u : 0u);
+                    } else {
+                        mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
+                        mgscoop::soldier_act::SetPlan(false);
+                    }
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.
                     const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();

@@ -4142,6 +4142,89 @@ void TickRideCamCensus(Driver& d, const Hooks& h, const pp::State& st, std::uint
                 cm(in.eye[2]));
 }
 
+// Horse plan M4 (world_horse_shot): the rear seat's publication. The class is horse (partner_seat_shot kHorseBox about the
+// placed census root), the vehicle field the D-Horse id 6656 and seat 1; refusals as the vehicle path (key off in play,
+// the owner, the fire hook). Lines: published (once per seating / apply change, with the body's offset in the horse frame)
+// and refused / withdrawn as the vehicle path.
+void TickHorseShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool apply, bool lever, const float (&box)[3],
+                   float yaw) noexcept {
+    namespace pss = partner_seat_shot;
+    Mission& m = d.mission;
+    auto& s = m.seat_shot;
+    const auto cm = [](float v) noexcept {
+        return std::isfinite(v) && v > -2.0e7f && v < 2.0e7f ? static_cast<int>(std::lround(v * 100.0f)) : INT32_MIN;
+    };
+    const char* why = nullptr;
+    if (!apply && d.settings.play_mode) why = "key_off";
+    else if ((st.ids[0] & 0xFE00u) != 0) why = "owner";
+    else if (!std::isfinite(box[0]) || !std::isfinite(box[1]) || !std::isfinite(box[2]) || !std::isfinite(yaw)) why = "box";
+    else {
+        partner_fire_filter::Stats fs{};
+        if (h.fire_stats) h.fire_stats(h.context, fs);
+        if (!fs.installed || !fs.live) why = "fire_hook";
+    }
+    if (why) {
+        s.speed_have = false;
+        if (s.published) {
+            h.seat_shot_withdraw(h.context);
+            s.published = false;
+            EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot", "partner_seat_shot=withdrawn; vehicle=%u; seat=%u; reason=%s\r\n",
+                        unsigned(s.vehicle), unsigned(s.seat), why);
+        }
+        if (why != s.refusal_logged) {
+            s.refusal_logged = why;
+            EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot", "partner_seat_shot=refused; vehicle=%u; seat=1; reason=%s; cat=255\r\n",
+                        unsigned(horse_drive::kHorseId), why);
+        }
+        return;
+    }
+    s.refusal_logged = nullptr;
+    pss::Pub pub{};
+    pub.owner = static_cast<std::uint16_t>(st.ids[0] & 0x1FFu);
+    pub.vehicle = horse_drive::kHorseId;
+    pub.seat = 1;
+    pub.cls = pss::Class::horse;
+    pub.apply = apply;
+    std::memcpy(pub.pos, box, sizeof(pub.pos));
+    pub.yaw = yaw;
+    if (s.speed_have && s.speed_vehicle == horse_drive::kHorseId && now > s.speed_ms && now - s.speed_ms <= 1000) {
+        const float dx = pub.pos[0] - s.speed_pos[0], dy = pub.pos[1] - s.speed_pos[1], dz = pub.pos[2] - s.speed_pos[2];
+        const float v = std::sqrt(dx * dx + dy * dy + dz * dz) * 1000.0f / static_cast<float>(now - s.speed_ms);
+        if (std::isfinite(v)) pub.speed = v;
+    }
+    if (!s.speed_have || s.speed_vehicle != horse_drive::kHorseId || now != s.speed_ms) {
+        s.speed_have = true;
+        s.speed_vehicle = horse_drive::kHorseId;
+        s.speed_ms = now;
+        std::memcpy(s.speed_pos, pub.pos, sizeof(s.speed_pos));
+    }
+    pp::AimRead aim{};
+    const bool aim_ok = h.read_aim && h.read_aim(h.context, st, aim);
+    if (aim_ok && aim.q_ok && pss::Finite3(aim.q10[0])) {
+        pub.target_ok = true;
+        std::memcpy(pub.target, aim.q10[0], sizeof(pub.target));
+    }
+    h.seat_shot_publish(h.context, pub);
+    if (!s.published || s.vehicle != horse_drive::kHorseId || s.seat != 1 || s.apply != apply) {
+        float body[3]{};
+        const bool body_ok = aim_ok && aim.body_ok[0] && pss::Finite3(aim.body[0]);
+        if (body_ok) {
+            const float rel[3] = {aim.body[0][0] - pub.pos[0], aim.body[0][1] - pub.pos[1], aim.body[0][2] - pub.pos[2]};
+            pss::ToLocal(pub.yaw, rel, body);
+        }
+        EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot",
+                    "partner_seat_shot=published; vehicle=%u; seat=1; class=horse; cat=255; apply=%u; source=%s; veh_cm=%d,%d,%d; "
+                    "yaw_mrad=%d; body_cm=%d,%d,%d; target=%u\r\n",
+                    unsigned(horse_drive::kHorseId), apply ? 1u : 0u, lever ? "lever" : "key", cm(pub.pos[0]), cm(pub.pos[1]), cm(pub.pos[2]),
+                    static_cast<int>(std::lround(yaw * 1000.0f)), body_ok ? cm(body[0]) : INT32_MIN, body_ok ? cm(body[1]) : INT32_MIN,
+                    body_ok ? cm(body[2]) : INT32_MIN, pub.target_ok ? 1u : 0u);
+    }
+    s.published = true;
+    s.vehicle = horse_drive::kHorseId;
+    s.seat = 1;
+    s.apply = apply;
+}
+
 void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
     namespace pss = partner_seat_shot;
     Mission& m = d.mission;
@@ -4185,6 +4268,20 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t 
                     unsigned(ss.max_ms));
     }
     const partner_board::LocalPassenger& lp = d.local_passenger;
+    // Horse plan M4 (world_horse_shot): this copy's player sits behind the partner on the shared D-Horse (the pbox lease
+    // from lua/coop/world_horse_pillion.lua: the placed census root and yaw): the horse box, while no vehicle seat is live.
+    float box_pos[3]{}, box_yaw = 0.f;
+    if (d.settings.horse_shot && !lp.valid && !terminating && horse_drive::ShotBox(now, box_pos, box_yaw)) {
+        TickHorseShot(d, h, st, now, apply, lever, box_pos, box_yaw);
+        return;
+    }
+    if (s.vehicle == horse_drive::kHorseId && s.published) {
+        h.seat_shot_withdraw(h.context);
+        s.published = false;
+        s.speed_have = false;
+        EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot", "partner_seat_shot=withdrawn; vehicle=%u; seat=1; reason=horse_box\r\n",
+                    unsigned(horse_drive::kHorseId));
+    }
     // The refusal, in order (nullptr: publish).
     const char* why = nullptr;
     partner_vehicle::Read vr{};
@@ -5565,6 +5662,8 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     in.horse = set.horse_share && m.visibility.horse;
     // Horse plan M3: body 1 rides behind this copy's player (the seat1 lease): seated whatever the remote's act.
     in.pillion = m.pillion_pose;
+    // M4: the stopped pillion seat re-enters only with world_horse_shot named (the review of M4).
+    in.pillion_reseat = set.horse_shot;
     if (pending) in.debug = d.overlay_request;
     in.blocked = OverlayBlocked(d, h, st, terminating, parts_loaded, anim_ok, anim);
     in.body_present = !terminating && set.stage >= 3 && parts_loaded && !m.range_hidden && !m.visibility.hidden && !m.visibility_logged;
@@ -6775,10 +6874,10 @@ void TickSeatGun(Driver& d, const Hooks& h, const Clock& clock, bool realized, b
     g.seated = m.ride_seated && m.seat.phase == SeatPhase::seated;
     g.passenger = psg::PassengerSeat(ride_live && rp.kind == partner_ride_wire::Kind::vehicle, rp.seat);
     g.realized = realized && parts_loaded;
-    g.block = m.carry_hold                                     ? "carry"
-            : mgscoop::partner_dm_overlay::Active(m.overlay)  ? "overlay"
-            : RemoteDowned(clock.tick_ms)                      ? "downed"
-                                                               : nullptr;
+    // Horse plan M4 (world_horse_shot): body 1 behind this copy's player (the seat1 lease, the overlay seating it).
+    g.pillion = d.settings.horse_shot && m.pillion_pose;
+    g.enabled = g.enabled && (d.settings.seat_gun || g.pillion);
+    g.block = psg::Block(m.carry_hold, mgscoop::partner_dm_overlay::Active(m.overlay), RemoteDowned(clock.tick_ms), g.pillion);
     g.other_gesture = (m.gesture_active && m.gesture_active_seq != m.seat_gun_seq) ||
                       (m.gesture_request.seq && m.gesture_request.seq != m.seat_gun_seq);
     const char* refusal = psg::Gate(g);
@@ -6792,9 +6891,10 @@ void TickSeatGun(Driver& d, const Hooks& h, const Clock& clock, bool realized, b
                                           clock.tick_ms};
         ++m.gesture_requests;
         EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
-                    "partner_seat_gun=hold; seq=%u; vehicle=%u; seat=%u; pose_aim=%u; input_aim=%u; flags=0x%x; starts=%u\r\n", m.seat_gun_seq,
-                    unsigned(rp.vehicle), unsigned(rp.seat), ai.pose_live && ai.pose_aiming ? 1u : 0u, ai.input_aiming ? 1u : 0u,
-                    unsigned(remote_flags), m.seat_gun.starts);
+                    "partner_seat_gun=hold; seq=%u; vehicle=%u; seat=%u; pose_aim=%u; input_aim=%u; flags=0x%x; starts=%u; pillion=%u\r\n",
+                    m.seat_gun_seq, g.pillion ? unsigned(horse_drive::kHorseId) : unsigned(rp.vehicle), g.pillion ? 1u : unsigned(rp.seat),
+                    ai.pose_live && ai.pose_aiming ? 1u : 0u, ai.input_aiming ? 1u : 0u, unsigned(remote_flags), m.seat_gun.starts,
+                    g.pillion ? 1u : 0u);
     } else if (so.edge == psg::Edge::release) {
         EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
                     "partner_seat_gun=release; seq=%u; cause=%s; refusal=%s; ms=%llu; releases=%u\r\n", m.seat_gun_seq, so.cause,
@@ -6875,7 +6975,9 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
         m.gesture_request = pges::Request{};
     }
     psg::RatesOut seat_rates{};
-    if (set.seat_gun) TickSeatGun(d, h, clock, realized, parts_loaded, installed, st, remote_flags, remote_live, seat_rates);
+    // M7 seat gun (partner_seat_gun key) or, horse plan M4 (world_horse_shot), body 1 in the shared horse's rear seat.
+    const bool seat_gun_on = set.seat_gun || (set.horse_shot && (m.pillion_pose || m.seat_gun.want));
+    if (seat_gun_on) TickSeatGun(d, h, clock, realized, parts_loaded, installed, st, remote_flags, remote_live, seat_rates);
     if (m.gesture_pending) {
         m.gesture_pending = false;
         const gpol::Packet& p = m.gesture_rx_packet;
@@ -6918,7 +7020,7 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
     if (!installed) return;
     pges::Command command{};
     // M7: a held (or still running) seat gun keeps the command live while the seat owns body 1 (native drive blocked).
-    const bool seat_gun_live = set.seat_gun && m.seat_gun_seq &&
+    const bool seat_gun_live = seat_gun_on && m.seat_gun_seq &&
                                (m.seat_gun.want || (m.gesture_active && m.gesture_active_seq == m.seat_gun_seq));
     command.enabled = (set.native_active && realized && parts_loaded && !block && !m.gesture_uncertain) ||
                       (seat_gun_live && realized && parts_loaded && !m.gesture_uncertain);
@@ -6927,7 +7029,7 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
     command.request = m.gesture_request;
     command.remote_known = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
     command.remote_speed = remote_anim.speed;
-    command.hold_seq = set.seat_gun && m.seat_gun.want ? m.seat_gun_seq : 0;
+    command.hold_seq = seat_gun_on && m.seat_gun.want ? m.seat_gun_seq : 0;
     command.rates_valid = seat_rates.ok;
     command.r5c = seat_rates.r5c;
     command.r60 = seat_rates.r60;
@@ -6935,7 +7037,7 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
     h.gesture_step(h.context, command, status);
     DrainGesture(m, h, status);
     // M7: the hook ended or refused the hold while the driver still holds it (node override, a refusal): retry later.
-    if (set.seat_gun && m.seat_gun_seq && m.seat_gun.want) {
+    if (seat_gun_on && m.seat_gun_seq && m.seat_gun.want) {
         for (unsigned i = 0; i < status.count && i < pges::kReceipts; ++i) {
             const pges::Receipt& r = status.receipts[i];
             if (r.seq != m.seat_gun_seq || (r.stage != pges::Stage::ended && r.stage != pges::Stage::refused && r.stage != pges::Stage::uncertain &&
@@ -7253,6 +7355,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nmount = lab.partner_native_mount;
     // Horse plan M1 shared D-Horse (docs/mounts.md "Shared D-Horse"): lab and play, off unless named until its gate.
     d.settings.horse_share = lab.world_horse_share;
+    // Horse plan M4 (docs/mounts.md "Shoot from the back of the horse"): lab and play, off unless named (the gate not
+    // reached); it also carries the rear seat's holds (HoldSeat grace, the overlay re-entry, the Lua track wait).
+    d.settings.horse_shot = lab.world_horse_shot && lab.world_horse_pillion && lab.world_horse_share;
     // G5 (docs/native-puppet.md "Ride hides"): lab only, default off (lab_config forces it off in play).
     d.settings.unrealize_all = lab.partner_native_unrealize_all;
     // Play never calls SetCurrentSlot for a gun slot (docs/native-puppet.md "Release gating"):
@@ -7886,9 +7991,13 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // placed a latency behind; the DM overlay seats it (In::pillion). The lease's end hands body 1 back to the stream.
     {
         bool pillion = false, seat_pose = true;
-        float back = 0.f, up = 0.f, lp[4]{}, lq[4]{};
-        if (set.horse_share && set.source == PartnerSource::net && st.local == 0 && h.read_local_body &&
-            horse_drive::SeatLease(now, back, up, seat_pose) && h.read_local_body(h.context, st, lp, lq)) {
+        float back = 0.f, up = 0.f, lp[4]{}, lq[4]{}, seat_yaw = 0.f;
+        // M4: a lease live on the previous tick survives kSeatGraceTicks lapsed ticks (run d935beae: a capture's stall),
+        // only with world_horse_shot named (the review: no play pass of the driver's get-off with it).
+        m.pillion_hold.grace = set.horse_shot;
+        const bool lease = set.horse_share && set.source == PartnerSource::net && st.local == 0 &&
+                           horse_drive::HoldSeat(m.pillion_hold, horse_drive::SeatLease(now, back, up, seat_pose), back, up, seat_pose);
+        if (lease && h.read_local_body && h.read_local_body(h.context, st, lp, lq)) {
             const float yaw = partner::QuatToYaw(lq);
             const float rider[3] = {lp[0], lp[1], lp[2]};
             float seat[3]{};
@@ -7898,10 +8007,23 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 pose = partner::PoseFromMetres(seat[0], seat[1], seat[2], yaw);
                 pose_valid = true;
                 pillion = true;
+                seat_yaw = yaw;
                 std::memcpy(m.pillion_seat, seat, sizeof(m.pillion_seat));
             }
         }
         m.pillion_seat_ok = pillion;
+        // M4b (world_horse_shot; runs 28015a91 / 48d31500: under the overlay seat the seat gun's hold never showed the gun):
+        // while the remote aims (its live pose's Aiming flag, kAimLingerMs past the last) the DM overlay does not seat body
+        // 1, so its native drive runs the remote's squat-aim at the rear seat (the pose above); the seat1 reply hands the
+        // seat to Lua, whose hold1 pins body 1 there (C0 + the write watch + pin). Off: 0.15.2's overlay seat whatever the aim.
+        const bool remote_aim = sample_status == pose::Status::live && (remote_flags & sync::ActionFlag::Aiming) != 0;
+        const bool aim = horse_drive::AimSeat(m.pillion_aim, set.horse_shot && pillion, remote_aim, now);
+        horse_drive::NoteSeatAim(aim, m.pillion_seat, seat_yaw, now);
+        if (aim != m.pillion_aim_on) {
+            m.pillion_aim_on = aim;
+            EmitCapped(m.mount_cap, h, "partner_mount", "partner_pillion=aim; on=%u; x_mm=%d; z_mm=%d\r\n", aim ? 1u : 0u, pose.x_mm,
+                       pose.z_mm);
+        }
         if (pillion != m.pillion || !m.pillion_logged) {
             m.pillion_logged = true;
             if (pillion || m.pillion)
@@ -7910,7 +8032,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                            pose.x_mm, pose.z_mm);
         }
         m.pillion = pillion;
-        m.pillion_pose = pillion && seat_pose;
+        m.pillion_pose = pillion && seat_pose && !aim;
     }
     dmobs.yaw = static_cast<float>(pose.yaw_mrad) * 0.001f;
     // Sender: publish the local body facing (LocalBodyYaw), else vars.playerRotY.

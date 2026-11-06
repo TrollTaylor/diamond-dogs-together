@@ -10,8 +10,8 @@
 // rides the horse (rec+0x2DD: the rider beats the owner) or a call is pending, and checks every site and slot of
 // native/horse_drive_contract.hpp (tools/generate_horse_drive_contract.py) before the one engine call.
 // Verbs (Lua -> native, after "return 'MGS_COOP_HORSE_DRIVE_V1' -- "):
-//   cfg                                         -> {on=0|1,cargo=0|1,pillion=0|1}  (world_horse_share, M2's world_horse_cargo,
-//                                                  M3's world_horse_pillion)
+//   cfg                                         -> {on=0|1,cargo=0|1,pillion=0|1,shot=0|1}  (world_horse_share, M2's
+//                                                  world_horse_cargo, M3's world_horse_pillion, M4's world_horse_shot)
 //   read <mission> <epoch>                      -> {ready=true,x,y,z,yaw,occupied,rider,gen,life,maxlife} | {ready=false,reason}
 //     (M3c: life / maxlife of record 0 from the receiver's life table, -1 when unreadable; SetMaxLife's loop, a pinned site)
 //   place <mission> <epoch> <x> <y> <z> <yaw> <anchor 0|1>
@@ -35,6 +35,9 @@
 //   seat1 <mission> <epoch> <back_mm> <up_mm> <pose 0|1> -> {ready=true,seat=1} | refusal  (M3: this copy's player rides the
 //     shared horse with the partner behind; leases kSeatMs: the partner driver draws body 1 at RearSeat of this copy's
 //     own body 0 every tick, the DM overlay seating it, instead of the partner's stream.)
+//   pbox <mission> <epoch> <x> <y> <z> <yaw>    -> {ready=true,box=true} | refusal  (M4, world_horse_shot: this copy's player
+//     sits behind the partner; the placed census root and yaw of this copy's horse, leased kBoxMs to the seated-shot hook
+//     (partner_seat_shot Class::horse): the player's own bullets start past the horse and the driver in front of them.)
 // mm / mrad. anchor 1: when the partner driver shows body 1 as a horse rider (partner_mount_policy) and its body
 // sample is fresh, the horse goes under that body (HorseUnderRider), the yaw from the stream: the rider sits in the
 // saddle on this screen whatever the two streams' delays are.
@@ -58,7 +61,7 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
 
-enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1 };
+enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox };
 struct Request {
     Verb verb{};
     std::uint32_t mission{}, epoch{};
@@ -83,8 +86,18 @@ const char* PlaceRefusal(const PlaceScope& s) noexcept;
 struct HoldScope {
     bool share{}, cargo{}, pins{}, field{}, body{}, mounted{};
     bool pillion{};  // M3: world_horse_pillion admits hold0 too (the passenger's body 0 at the rear seat)
+    // M4b: hold1 (body1) on the driver's copy: world_horse_pillion admits it only with world_horse_shot (shot): body 1
+    // aiming at the rear seat while the overlay leaves it to the native drive.
+    bool body1{}, shot{};
 };
 const char* HoldRefusal(const HoldScope& s) noexcept;
+// M2g (run f7e09c55: at the partner's mount the victim's copy unrealized body 1 for a frame; the census refused, hold0
+// refused "body", the fall check 0x14128E010 ran on body 0 and it squatted on the horse): a hold0 of body 0 alone may use
+// body 1's class from the last full census (T, A0 and C0 vtables and slots) while body 0's own T class equals it.
+struct BodyClass {
+    std::uintptr_t t_vt{}, t68{}, t70{}, t58{}, c0_vt{}, c090{}, a0_vt{}, a080{};
+};
+bool CachedBody1Usable(const BodyClass& body0, const BodyClass& cached) noexcept;
 
 // Horse plan M3 (lab key world_horse_pillion): ride behind your partner. The prologue's rear rider sits about 0.4-0.5 m
 // behind the front rider at the same height (vehicles-companions-design 3.3); probe P2 put a guard 0.44 m behind the
@@ -105,6 +118,41 @@ void RearSeat(const float (&rider)[3], float yaw, float back, float up, float (&
 void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, bool pose, std::uint64_t now_ms) noexcept;
 // The live lease (kSeatMs after the last seat1), its offsets in metres and whether the overlay seats body 1.
 bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcept;
+// M4 (run d935beae): a capture stalled the driver's game past kSeatMs and the lease lapsed for one tick, which ended the
+// overlay seat. The partner driver keeps a lease that was live on its previous tick kSeatGraceTicks more ticks with its
+// last offsets (in: this tick's SeatLease and its values; out: the values to use); a lease gone longer ends the seat.
+inline constexpr unsigned kSeatGraceTicks = 2;
+// The review of M4: no play run passed the driver's get-off with the hold in, so the grace is part of world_horse_shot
+// (off unless named): grace false (the defaults) ends the seat on the first lapsed tick, as in 0.15.2.
+struct SeatHold {
+    bool grace{};  // world_horse_shot named on this copy (set by the partner driver each tick)
+    bool live{};
+    unsigned miss{};
+    float back{}, up{};
+    bool pose{true};
+};
+bool HoldSeat(SeatHold& h, bool lease, float& back, float& up, bool& pose) noexcept;
+// M4b (world_horse_shot; runs 28015a91 / 48d31500: the seat gun's hold ran under the overlay seat and no frame showed the
+// gun): while the remote aims (its live pose's Aiming flag) the DM overlay does not seat body 1, so body 1's native drive
+// runs the remote's squat-aim at the rear seat (the partner driver's pose), kAimLingerMs past the last aiming tick (the
+// gaps between shots keep it). on: the shot key with a live seat this tick; a false on clears it.
+inline constexpr std::uint32_t kAimLingerMs = 1500;
+struct SeatAim {
+    std::uint64_t last_ms{};
+};
+bool AimSeat(SeatAim& s, bool on, bool aiming, std::uint64_t now_ms) noexcept;
+// The partner driver notes the rear seat (metres, yaw radians) each tick it leaves body 1 to the native aim; the seat1
+// receipt hands it to Lua for kSeatMs (mm / mrad; |x|, |z| <= 1e6 m), whose hold1 pins body 1 there (C0 + watch + pin).
+void NoteSeatAim(bool aim, const float (&seat)[3], float yaw, std::uint64_t now_ms) noexcept;
+bool SeatAimTarget(std::uint64_t now_ms, std::int32_t (&mm)[3], std::int32_t& yaw_mrad) noexcept;
+// seat1's reply: "return {ready=true,seat=1,aim=0}" or with the aim seat (aim=1,sx,sy,sz mm,syaw mrad); false: no room.
+bool SeatReply(std::uint64_t now_ms, char* out, std::size_t size) noexcept;
+// Horse plan M4 (lab key world_horse_shot): the passenger's horse box for the seated-shot hook (pbox, mm / mrad), live
+// kBoxMs after the last pbox on the partner driver's clock; the partner driver publishes it as partner_seat_shot's horse
+// class while no vehicle passenger seat is live.
+inline constexpr std::uint32_t kBoxMs = 300;
+void NoteShotBox(std::int32_t x_mm, std::int32_t y_mm, std::int32_t z_mm, std::int32_t yaw_mrad, std::uint64_t now_ms) noexcept;
+bool ShotBox(std::uint64_t now_ms, float (&pos)[3], float& yaw) noexcept;
 // hold0's two engine calls: the T vtable and its +0x70 / +0x68 targets, pinned in native/partner_player_contract.hpp
 // (vtable_slots {0x24c8ef0,0x70,0x1ad4450} / {0x24c8ef0,0x68,0x1ad56d0}, code_sites 0x1ad4450 / 0x1ad56d0: the partner
 // code gate checks them at start); HoldBody refuses any other vtable or target.

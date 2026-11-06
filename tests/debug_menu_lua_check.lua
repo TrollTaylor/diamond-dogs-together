@@ -289,10 +289,17 @@ do
         math.abs(cam[2].rotY - 90) < 1e-6 and math.abs(cam[2].rotX - math.deg(math.atan(0.4))) < 1e-6 and cam[2].interpTime == 0.2,
         'aim nearest: the camera request toward the nearest living soldier')
     check(c:send('enemy_aim_nearest 5')[3] == 'enemy_args' and c:send('enemy_aim_nearest x')[3] == 'enemy_args' and
-        c:send('enemy_aim_nearest 1 2')[3] == 'enemy_args', 'aim nearest: one height in metres, 0..2')
+        c:send('enemy_aim_nearest 1 2 1 1')[3] == 'enemy_args' and c:send('enemy_aim_nearest 1 4')[3] == 'enemy_args' and
+        c:send('enemy_aim_nearest 1 1 x')[3] == 'enemy_args', 'aim nearest: a height 0..2, an eye 0..3 m up, 0..3 m back')
     r = c:send('enemy_aim_nearest 0.3')
     cam = c.calls[#c.calls]
     check(r[2] == 1 and math.abs(cam[2].rotX - math.deg(math.atan(1.2))) < 1e-6, 'aim nearest: a lying target 0.3 m up')
+    -- Horse plan M4b: the camera's place (an eye up and back along the line; the rear seat's camera sits ~1.35 m up and
+    -- ~1.2 m behind the body, play run 28015a91's miss) instead of the 1.5 m eye on the body.
+    r = c:send('enemy_aim_nearest 0.3 1.35 1.2')
+    cam = c.calls[#c.calls]
+    check(r[2] == 1 and math.abs(cam[2].rotX - math.deg(math.atan2(1.05, 2.2))) < 1e-6 and math.abs(cam[2].rotY - 90) < 1e-6 and
+        r[3]:find(';eye=1.35,1.20;', 1, true), 'aim nearest: from the camera eye given (up, back)')
     local saved = c.env.Player.RequestToSetCameraRotation
     c.env.Player.RequestToSetCameraRotation = nil
     check(c:send('enemy_aim_nearest')[3] == 'camera_unavailable', 'aim nearest: no camera API, no fake success')

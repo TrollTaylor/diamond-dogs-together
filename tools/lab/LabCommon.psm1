@@ -465,6 +465,8 @@ $script:LabPartnerKeys = @(
     # Horse plan M2: a downed partner on the shared D-Horse (lab and play, off unless named until proven).
     @{ Key = 'world_horse_cargo'; Json = 'world_horse_cargo'; Kind = 'bool' },
     @{ Key = 'world_horse_pillion'; Json = 'world_horse_pillion'; Kind = 'bool' },
+    # Horse plan M4: shoot from the back of the horse and the rear seat's holds (lab and play, off unless named).
+    @{ Key = 'world_horse_shot'; Json = 'world_horse_shot'; Kind = 'bool' },
     # M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): the host's relief vehicle on both
     # copies (lab and play, default 0: on from 5a6bac8 until the review of 2026-10-29; written only when set).
     @{ Key = 'world_relief'; Json = 'world_relief'; Kind = 'bool' },

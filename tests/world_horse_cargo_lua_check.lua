@@ -8,7 +8,7 @@ local function fixture(o)
  local f = {now = 1000, tx = {}, logs = {}, cargo = {}, warps = {}, places = {}, holds = {}, hostage = false, mounted = false, role = 0,
   physical = {ready = true, carrying = false, carried = false, localCarried = false, peerCarrying = false},
   horse = {ready = true, id = HORSE, realized = true, occupied = false, pending = 0, x = 101000, y = 3000, z = 300000, yaw = 0, gen = 5},
-  share = o.share ~= false, key = o.key ~= false}
+  share = o.share ~= false, key = o.key ~= false, stanceReq = {}}
  local host = o.host ~= false
  local D = {records = {}, target = 0, progress = 0}
  local W = {OP = {}, handlers = {}, startHooks = {}, unpairedHooks = {}, paired = true, eff = 3, mission = 30010, epoch = 7,
@@ -59,7 +59,11 @@ local function fixture(o)
   end
  end
  local env = setmetatable({e = {MgsCoopWorld = W}, vars = {playerPosX = 100, playerPosY = 2, playerPosZ = 300, playerRotY = 90},
-  PlayerInfo = {OrCheckStatus = function(s) return s[1] == 25 and f.mounted end}, PlayerStatus = {ON_HORSE = 25},
+  PlayerInfo = {OrCheckStatus = function(s)
+   if s[1] == 25 then return f.mounted end
+   return f.stance ~= nil and s[1] == ({STAND = 31, SQUAT = 32, CRAWL = 33})[f.stance]
+  end}, PlayerStatus = {ON_HORSE = 25, STAND = 31, SQUAT = 32, CRAWL = 33}, PlayerStance = {STAND = 1, SQUAT = 2, CRAWL = 3},
+  Player = {RequestToSetTargetStance = function(id) f.stanceReq[#f.stanceReq + 1] = id end},
   GameObject = {SendCommand = function(a, b)
    if b.id == "Warp" then f.warps[#f.warps + 1] = {index = a.index, x = b.pos[1], y = b.pos[2], z = b.pos[3], rotY = b.rotY}; return true end
    if b.id == "IsCarriedHostage" then return f.hostage end
@@ -162,8 +166,18 @@ check(f.logged("event=horse_cargo;step=loaded;seat=2;gen=22;role=carrier"), "ste
 check(not f.C.downedPosture(), "the carrier's own downed posture is never the cargo's")
 local w = f.lastWarp(1)
 check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-6 and
- math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and w.rotY == 0, "body 1 on the cargo point (behind the root, up), the horse's yaw")
+ math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6, "body 1 on the cargo point (behind the root, up)")
+-- M2g (runs 770368d0 / d4aec0a2 host-h2-loaded, 4585cc5a host-h2-ride-walk: on the carrier's screen body 1 lay ALONG the horse
+-- over the saddle, held at the horse's yaw; body 0 at a quarter turn lies across it on the victim's own screen): body 1 at a
+-- quarter turn from the horse's yaw too.
+check(math.abs(w.rotY - math.pi / 2) < 1e-3, "body 1 a quarter turn from the horse's yaw (it lies across the horse)")
 check(w.via == "hold1" and f.lastHold1:find(" 14$"), "the carrier's copy holds body 1 by hold1 (C0 + watch + pin)")
+-- M2f (runs 144d99bb / 4585cc5a frames: on the carrier's screen the body sat a little high over the rump at the load, the walk
+-- and after the dismount): 0.1 m lower over the census, the rider and the carrier's ground.
+check(f.C.RISE_MM == 450 and f.C.GROUND_MM == 1350, "body 1 0.45 m over the census, kept 1.35 m over the ground")
+-- M2g (runs 770368d0 host-h2-mounted / -ride-walk, 4585cc5a host-h2-ride-walk: riding, its back at the rider's mid-back, about
+-- 0.3 m over the rump): 0.15 m over the rider's own position.
+check(f.C.RIDE_RISE_MM == 150, "riding: body 1 0.15 m over the rider")
 f.horse.x, f.horse.yaw = 102000, 1571
 f.mounted = true
 f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 2.5
@@ -172,6 +186,7 @@ w = f.lastWarp(1)
 check(math.abs(w.x - (102.1 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3 and
  math.abs(w.y - (2.5 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
 check(f.logged("step=pin;how=rider;mounted=1"), "the pin stats line names the rider anchor")
+check(math.abs(w.rotY - (1.571 + math.pi / 2)) < 2e-3, "riding: body 1 a quarter turn from the horse's yaw")
 -- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low behind the rider at a gallop): while riding, body 1 leads by the
 -- rider's last per-tick move (it is drawn after this tick's own move), never by a jump over 0.6 m.
 f.env.vars.playerPosX = 102.4
@@ -235,6 +250,16 @@ w = f.lastWarp(1)
 check(math.abs(w.y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6 and f.logged("how=ground"), "a census 2 m high: the body kept 1.45 m over the ground")
 f.horse.y = 3000; f.tick(50)
 check(math.abs(f.lastWarp(1).y - (2.0 + f.C.RISE_MM / 1000 + 1.0)) < 1e-6, "a census in the window: the census cargo point")
+-- M2f (run 5a92c73f (c), the carrier's copy after the dismount: census root 0.52 m over the carrier's ground, so 0.45 m over it
+-- fell under the old 1.0 m edge and the body went 1.35 m over the ground, 0.38 m high over the rump): the window's low
+-- edge is 0.8 m.
+check(f.C.GROUND_LO_MM == 800, "the ground window's low edge is 0.8 m")
+f.horse.y = 2520; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (2.52 + f.C.RISE_MM / 1000)) < 1e-6,
+ "a census 0.52 m over the carrier's ground: still the census cargo point")
+f.horse.y = 2300; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6, "a census 0.3 m over the ground: kept 1.35 m over the ground")
+f.horse.y = 3000; f.tick(50)
 -- Out of reach: nothing.
 f = fixture(); load(f); f.env.vars.playerPosX = 110; f.hold("R", 1200)
 check(f.C.state == "carrier", "the R hold out of reach: still on")
@@ -346,9 +371,28 @@ check(f.holds[#f.holds]:find(" 2$"), "setVictimPose: the reset goes to hold0")
 check(f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET), "setVictimPose back to the defaults")
 check(f.logged("step=victim_pin;want_cm=") and f.logged(";lag_cm=") and f.logged(";src="),
  "the victim_pin line carries the body's lag behind its last target and the target's source")
+-- M2g (runs 5a92c73f (c), 4585cc5a (a): right at M1's final placement body 0 went into fall / land, coop_carry=watch a=19 /
+-- 1a every frame, and ended crouched): the cargo tick held it again only 200 ms after the last placement, while hold0's C0
+-- reset ("no fall" for that frame) is what keeps it lying. Once M1's track has ended body 0 is held every tick.
+f.C.placed(173000, 2600, 310000, 0)
 f.W.horseShare = {}
+nw = #f.warps
+f.tick(50)
+check(#f.warps == nw + 1 and f.lastWarp(0).via == "hold0", "the tick right after M1's final placement holds body 0 (no 200 ms gap)")
+f.tick(50)
+check(#f.warps == nw + 2, "and every tick after it")
+-- M2f (run 131f88c6 (c): 1 ms after the final placement the victim's copy re-placed its horse on a KEEP pose sent before
+-- it, 11 m back, and that horse fell Unconscious 0.25 s later; three more 1 Hz jumps followed while the carrier's horse
+-- slowed): for 2 s after M1's track ended nothing is re-placed, then only on a KEEP pose sent after those 2 s.
+f.W.horseShare = {}
+f.tick(50)
+check(#f.places == 1, "M1's track just ended: the KEEP pose sent before it is not placed")
+for i = 1, 38 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
+check(#f.places == 1, "for 2 s after the track ended: nothing re-placed")
+for i = 1, 4 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
+check(#f.places == 2, "then a KEEP pose sent after those 2 s, drifted over 0.5 m: re-placed")
 for i = 1, 25 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
-check(#f.places == 2, "unridden and drifted over 0.5 m from the KEEP pose: re-placed (at most 1 Hz)")
+check(#f.places == 2, "on the KEEP pose: not re-placed again")
 -- A refused hold0 (an old native, the cargo key off while cargo_test runs it): the Lua Warp as before, one line a reason.
 f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, 1)
 f.tick(50)
@@ -379,6 +423,48 @@ nw = #f.warps
 f.rx(5, 4, 33, 0, 0, 0, 0)
 check(f.C.state == "off" and #f.warps == nw and f.logged("why=taken_down;side=cargo;placed=0"), "UNLOADED without a point: body 0 left to the carry")
 check(f.count(5) == 1, "a remote end sends nothing back")
+
+-- M2f (BODY0 runs 911ce293 .. 4585cc5a: lying on the horse through the ride, crouched on it on the victim's own screen once
+-- the carrier got off, both orders): body 0's stance (PlayerStance STAND 1 / SQUAT 2 / CRAWL 3) is logged on each change
+-- with the target's source and the time since M1's track ended; a SQUAT or STAND body held as cargo is asked back to
+-- CRAWL by the stock stance request at most every 500 ms; the lever's 0 only logs.
+f = fixture({host = false})
+f.D.records[2].down, f.D.records[2].generation = true, 33
+f.D.records[1].down = false
+f.stance = "CRAWL"
+f.rx(4, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
+check(f.C.state == "cargo" and f.logged("step=stance;s=CRAWL;was=none;") and #f.stanceReq == 0, "cargo: the lying stance logged, no request")
+f.W.horseShare = {track = {}}
+f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
+f.W.horseShare, f.stance = {}, "SQUAT"
+f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
+check(f.logged("step=stance;s=SQUAT;was=CRAWL;src=census;tracked=0;off_ms=0"), "the crouch logged with the time since M1's track ended")
+check(#f.stanceReq == 1 and f.stanceReq[1] == 3 and f.logged("step=relie;from=SQUAT;n=1;ok=1"), "a crouched cargo body: asked back to CRAWL")
+f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
+check(#f.stanceReq == 1, "at most every 500 ms")
+for i = 1, 10 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
+check(#f.stanceReq == 2, "still crouched 500 ms later: asked again")
+f.stance = "CRAWL"
+f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
+check(f.logged("step=stance;s=CRAWL;was=SQUAT;"), "lying again: logged")
+for i = 1, 12 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
+check(#f.stanceReq == 2 and f.C.status():find(";stance=CRAWL;relie=1$"), "lying: no request; cargo_status carries the stance and the lever")
+check(f.C.setRelie(0) and not f.C.setRelie(2) and not f.C.setRelie(0.5) and not f.C.setRelie(nil), "setRelie: 0 or 1 only")
+f.stance = "STAND"
+for i = 1, 12 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
+check(#f.stanceReq == 2 and f.logged("step=stance;s=STAND;was=CRAWL;"), "the lever's 0: a standing cargo body logged only")
+check(f.C.setRelie(1), "setRelie 1")
+f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50)
+check(#f.stanceReq == 3 and f.logged("step=relie;from=STAND;n=3;ok=1"), "the lever's 1 again: a standing cargo body asked to CRAWL")
+for i = 1, 40 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
+check(f.logged(";stance=STAND") and f.logged("step=victim_pin;"), "the victim_pin line carries the stance")
+f.rx(5, 4, 33, 151000, 2400, 309000, 1571)
+local nr = #f.stanceReq
+for i = 1, 12 do f.tick(50) end
+check(f.C.state == "off" and #f.stanceReq == nr, "off: never asked")
+f = fixture(); load(f); f.stance = "SQUAT"
+for i = 1, 12 do f.tick(50) end
+check(#f.stanceReq == 0 and not f.logged("step=stance;"), "the carrier's own stance is never touched")
 
 -- Automatic lay-downs.
 local function loaded(o) local x = fixture(o); load(x); return x end

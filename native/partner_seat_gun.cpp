@@ -20,8 +20,8 @@ const char* Gate(const GateIn& in) noexcept {
     if (!in.enabled) return "key_off";
     if (!in.installed) return "not_installed";
     if (in.uncertain) return "uncertain";
-    if (!in.seated) return "not_seated";
-    if (!in.passenger) return "driver";
+    if (!in.seated && !in.pillion) return "not_seated";
+    if (!in.passenger && !in.pillion) return "driver";
     if (!in.realized) return "unrealized";
     if (in.block) return in.block;
     if (in.other_gesture) return "busy";

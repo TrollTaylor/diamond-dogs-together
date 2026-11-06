@@ -8,7 +8,9 @@ end
 local HORSE, OP = 6656, 80
 local function fixture(o)
     o = o or {}
-    local f = {now = 1000, tx = {}, logs = {}, places = {}, masks = {}, warps = {}, holds = {}, seats = {}, stances = {}, rides = false,
+    local f = {now = 1000, tx = {}, logs = {}, places = {}, masks = {}, warps = {}, holds = {}, seats = {}, stances = {}, boxes = {}, rides = false,
+        holds1 = {}, frees = {},
+        shot = o.shot == true,
         key = o.key ~= false, pillion = o.pillion ~= false, gen = 5, e = false, padOk = true, seatOk = true, placeOk = true, masked = false, mag = 0,
         horse = {x = 10000, y = 2000, z = 30000, yaw = 0, occupied = false}}
     local W = {OP = {}, handlers = {}, stopHooks = {}, pairedHooks = {}, startHooks = {}, unpairedHooks = {}, paired = true, eff = 3,
@@ -25,7 +27,12 @@ local function fixture(o)
     W.receipt = function(text)
         local verb = text:match("MGS_COOP_HORSE_DRIVE_V1' %-%- (.*)$")
         if not verb then return nil end
-        if verb == "cfg" then return {on = f.key and 1 or 0, cargo = 0, pillion = f.pillion and 1 or 0} end
+        if verb == "cfg" then return {on = f.key and 1 or 0, cargo = 0, pillion = f.pillion and 1 or 0, shot = f.shot and 1 or 0} end
+        local bx, by, bz, byaw = verb:match("^pbox 30010 7 (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)$")
+        if bx then
+            f.boxes[#f.boxes + 1] = {tonumber(bx), tonumber(by), tonumber(bz), tonumber(byaw)}
+            return {ready = true, box = true}
+        end
         local h = f.horse
         if verb:find("^read ") then
             return {ready = true, id = HORSE, realized = true, occupied = h.occupied, rider = 0, pending = 0, x = h.x, y = h.y, z = h.z, yaw = h.yaw, gen = f.gen,
@@ -40,8 +47,17 @@ local function fixture(o)
         if sb then
             f.seats[#f.seats + 1] = {tonumber(sb), tonumber(su), tonumber(sp)}
             if not f.seatOk then return {ready = false, reason = "not_riding"} end
-            return {ready = true, seat = 1}
+            -- M4b: the partner driver's noted aim seat (f.aim = {x, y, z, yaw} mm / mrad) while the remote aims.
+            local a = f.aim
+            if a then return {ready = true, seat = 1, aim = 1, sx = a[1], sy = a[2], sz = a[3], syaw = a[4]} end
+            return {ready = true, seat = 1, aim = 0}
         end
+        local ax, ay, az, ayaw, ar = verb:match("^hold1 30010 7 (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
+        if ax then
+            f.holds1[#f.holds1 + 1] = {tonumber(ax), tonumber(ay), tonumber(az), tonumber(ayaw), tonumber(ar)}
+            return {ready = true, held = true}
+        end
+        if verb:find("^free0 ") then f.frees[#f.frees + 1] = verb; return {ready = true, freed = true} end
         local hx, hy, hz, hyaw, hr = verb:match("^hold0 30010 7 (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
         if hx then
             f.holds[#f.holds + 1] = {tonumber(hx), tonumber(hy), tonumber(hz), tonumber(hyaw), tonumber(hr)}
@@ -286,6 +302,35 @@ seatBoth(h, g)
 g.final(g.horse.x, g.horse.y, g.horse.z, 0)
 g.tick(33)
 check(g.P.state == "off" and g.logged("why=track_end;side=passenger;placed=1"), "the track's end: laid off")
+-- M4 (play run 28015a91, -WanSim bad): a gap in the driver's RIDE_FAST ended this copy's track (stream_lost) for 0.9 s
+-- while the ride went on, and the seat with it. A stream loss is held up to 2 s (body 0 at its last target, step=
+-- track_wait); the stream back keeps the seat; a loss past 2 s still lays the passenger off. The review of M4: the hold is
+-- part of world_horse_shot (off unless named): at the defaults a stream loss lays off at once, as in 0.15.2.
+h, g = fixture(), fixture({host = false})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+local guard0 = 0
+while g.S.track and guard0 < 60 do g.tick(50); guard0 = guard0 + 1 end
+g.tick(50)
+check(g.P.state == "off" and not g.logged("step=track_wait") and g.logged("why=track_end;side=passenger;placed=1"),
+    "shot key off: a stream loss lays off at once")
+h, g = fixture(), fixture({host = false, shot = true})
+h.rides, h.horse.occupied = true, true
+g.ride(3)
+seatBoth(h, g)
+local guard = 0
+while g.S.track and guard < 60 do g.tick(50); guard = guard + 1 end
+check(g.S.track == nil and g.P.state == "seated" and g.logged("event=horse_pillion;step=track_wait;why=stream_lost"),
+    "a stream loss: still seated, waiting for the track")
+g.t = g.t + 1500
+g.ride(20)
+check(g.S.track ~= nil and g.P.state == "seated" and g.count("step=unseated") == 0, "the stream back (1 s later): still seated")
+guard = 0
+while g.S.track and guard < 60 do g.tick(50); guard = guard + 1 end
+for _ = 1, 50 do g.tick(50) end
+check(g.P.state == "off" and (g.logged("why=track_end;side=passenger;placed=1") or g.logged("why=stream_lost;side=passenger;placed=1")),
+    "a loss past 2 s (no ride, no KEEP): laid off")
 -- Link drop: no KEEP for 3.5 s on either side.
 h, g = fixture(), fixture({host = false})
 h.rides, h.horse.occupied = true, true
@@ -460,4 +505,85 @@ check(bo.S.hold ~= true, "band: approached from outside, 2.65 m is not held")
 bo.e = false; bo.ride(1); bo.e = true; bo.ride(1)
 check(bo.P.state == "off" and #bo.seatTx() == 0, "band: unheld at 2.65 m, E claims nothing (it reaches the game)")
 check(g.W.horsePillion.status():find("pillion;state=off;key=1;", 1, true) ~= nil, "status line")
+-- Horse plan M4 (world_horse_shot): the seated passenger's copy leases its placed horse's box to the seated-shot hook with
+-- every placement (pbox: the census root and yaw), only with the key; one step=shot_box line per seating.
+th, tg = fixture(), fixture({host = false, shot = true})
+th.rides, th.horse.occupied = true, true
+tg.ride(3)
+seatBoth(th, tg)
+check(tg.P.state == "seated", "shot: seated")
+local nb = #tg.boxes
+tg.ride(3)
+local bx, pb = tg.boxes[#tg.boxes], tg.places[#tg.places]
+check(#tg.boxes >= nb + 3 and bx[1] == pb.x and bx[2] == pb.y and bx[3] == pb.z and bx[4] == pb.yaw,
+    "shot key: pbox with the placed census root and yaw every placement")
+check(tg.count("event=horse_pillion;step=shot_box;ok=1;") == 1, "step=shot_box once per seating")
+check(tg.P.status():find(";shot=1", 1, true) ~= nil, "the status line names the shot key")
+local nsh, nsg = fixture(), fixture({host = false})
+nsh.rides, nsh.horse.occupied = true, true
+nsg.ride(3)
+seatBoth(nsh, nsg)
+nsg.ride(3)
+check(nsg.P.state == "seated" and #nsg.boxes == 0 and nsg.P.status():find(";shot=0", 1, true) ~= nil, "shot key off: no pbox")
+check(#th.boxes == 0, "the driver's copy sends no pbox")
+-- M4b (world_horse_shot): the driver sees the gun. While the remote aims, the partner driver's DM overlay leaves body 1 to
+-- its native squat-aim at the rear seat and notes that seat; the seat1 receipt hands it over (aim=1, sx/sy/sz mm, syaw
+-- mrad) and the driver's copy pins body 1 there every tick with hold1 (C0 + the write watch + pin: 14); the aim's end
+-- frees the watch (free0) and the overlay seats body 1 again.
+local ah, ag = fixture({shot = true}), fixture({host = false, shot = true})
+ah.rides, ah.horse.occupied = true, true
+ag.ride(3)
+seatBoth(ah, ag)
+ah.tick(33)
+check(ah.P.state == "driver" and #ah.holds1 == 0 and #ah.frees == 0, "aim: no aim, no hold1")
+ah.aim = {12000, 3400, 29500, 1571}
+ah.tick(33)
+local a1 = ah.holds1[#ah.holds1]
+check(a1 and a1[1] == 12000 and a1[2] == 3400 and a1[3] == 29500 and a1[4] == 1571 and a1[5] == 14,
+    "aim: the remote aims: hold1 at the partner driver's rear seat (C0 + watch + pin)")
+ah.tick(33)
+check(#ah.holds1 == 2 and ah.count("event=horse_pillion;step=aim_hold;on=1;n=1;ok=1") == 1, "aim: hold1 every tick, one line per aim")
+ah.aim = nil
+ah.tick(33)
+check(#ah.holds1 == 2 and #ah.frees == 1 and ah.logged("event=horse_pillion;step=aim_hold;on=0;n=1;ticks=2"),
+    "aim: its end frees the watch and pin once (free0)")
+ah.tick(33)
+check(#ah.frees == 1, "aim: freed once")
+ah.aim = {12000, 3400, 29500, 1571}
+ah.tick(33)
+ah.rides = false
+ah.tick(33)
+check(ah.P.state == "off" and #ah.frees == 2, "aim: the seat's end while aiming frees the watch too")
+local nah, nag = fixture(), fixture({host = false})
+nah.rides, nah.horse.occupied = true, true
+nag.ride(3)
+seatBoth(nah, nag)
+nah.aim = {12000, 3400, 29500, 1571}
+nah.tick(33)
+check(nah.P.state == "driver" and #nah.holds1 == 0, "aim: shot key off: no hold1 (0.15.2's seat)")
+-- M4b (play run 1a7c5d0e: the driver's E after the passenger's hop-off left the host riding, a=79): the driver's copy
+-- watches its own raw E for 8 s after a seat ends while its player still rides, and logs when the ride ends.
+local eh, eg = fixture({shot = true}), fixture({host = false, shot = true})
+eh.rides, eh.horse.occupied = true, true
+eg.ride(3)
+seatBoth(eh, eg)
+eh.tick(33)
+eg.e = false; eg.ride(1); eg.e = true
+for _ = 1, 12 do eg.ride(1) end
+check(eg.P.state == "off" and eg.logged("why=passenger;side=passenger"), "driver_e: the passenger hopped off")
+deliver(eh, lastSeat(eg))
+check(eh.P.state == "off" and eh.logged("why=passenger;side=driver"), "driver_e: the driver's copy ended the seat")
+eh.e = false
+eh.tick(33)
+eh.e = true
+eh.tick(500)
+check(eh.logged("event=horse_pillion;step=driver_e;e=1;after_ms=533;rides=1"), "driver_e: the raw E while still riding, ms after the end")
+eh.rides = false
+eh.tick(300)
+check(eh.logged("event=horse_pillion;step=driver_e_off;after_ms=833"), "driver_e: the ride's end after it")
+local nh2 = fixture()
+nh2.rides, nh2.horse.occupied = true, true
+nh2.e = true
+for _ = 1, 5 do nh2.tick(33) end
+check(not nh2.logged("step=driver_e"), "driver_e: no seat ended: nothing")
 print("world_horse_pillion_lua_check: " .. checks .. " checks passed")
