@@ -1440,6 +1440,15 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   command is known.** Next: decompile *(this+0x1c8) vt[0x78] to learn whether speed 0 holds a crew-driven truck, then find
   its name (or reach it natively, a new contract site).
 
+- **Sessions**: none ran in the round. Session 1 (join + crew10 at 20509a91, no key) and session 2 (Africa, `lrrp_follow=1`)
+  were queued at 21:19-21:21; the queue runner held every job on its resource floors (C: 6 GB, commit 15 GB) while C: had
+  0.3-5.9 GB free (docs/STATUS.md). The changes act at the defaults in 30010, so they wait for session 1 before landing.
+- **Next**: session 1's gate: `139a1440`'s rows, 0 `log_cap` drops on both roles, crews within 5 m (p90) 20-40 s after
+  the host's get-out, 0 origin jumps, the moving-truck error and the along-track lead p90 under 1 m; whether `crew_hold`
+  shows depends on the guest's player being nearer a crew than the host's (none in `86d6045f`). Session 2: Africa's rows
+  as D-B10's (a user decision; `lrrp_follow` stays off there unless named). Item 5: decompile the 0x9fcfc16ce0ce
+  component's vt[0x78] and find the speed command's name.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
