@@ -898,12 +898,13 @@ do
     check(hm <= 14 and rm <= 7, 'flood: a manned truck at rest: host lines every 5 s, riders every 10 s (' .. hm .. ', ' .. rm .. ')')
     check(h:count('event=lrrp;step=host;id=25604;') <= 3, 'flood: an empty parked truck every 30 s (' .. h:count('event=lrrp;step=host;id=25604;') .. ')')
     local all = h:count('event=lrrp;')
-    check(all <= 180, 'flood: the host\'s lrrp lines of 60 s, 3 trucks (' .. all .. '; 4 Hz and riders lines were ~600)')
+    check(all <= 280, 'flood: the host\'s lrrp lines of 60 s, 3 trucks, the crews\' first 60 s logged (' .. all .. '; was 802)')
     -- 25603's crew gets out: a host line at once; the crew in one line per truck every 2 s for 60 s.
     local k0 = #h.logs
     h.pool[25603].riders = nil
     for _ = 1, 30 do h:poll(50) end
-    check(after(h, k0, 'event=lrrp;step=host;id=25603;') == 1 and after(h, k0, ';riders=0;') == 1, 'flood: a rider count change logs a host line at once')
+    check(after(h, k0, 'event=lrrp;step=host;id=25603;') == 1 and after(h, k0, 'event=lrrp;step=host;id=25603;x=900.00;y=1.00;z=200.00;yaw=0;v=0;riders=0;') == 1,
+        'flood: a rider count change logs a host line at once')
     for _ = 1, 1200 do h:poll(50) end
     local cl = after(h, k0, 'event=lrrp;step=crew;id=25603;rl=0;c=')
     check(cl >= 25 and cl <= 32 and after(h, k0, 'event=lrrp;step=crew;id=25603;ent=') == 0, 'flood: one crew line per truck every 2 s for 60 s (' .. cl .. ')')
