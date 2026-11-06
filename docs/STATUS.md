@@ -5,8 +5,9 @@ named, at the code head `6b5518fa`, both orders (the host carrying the guest and
 the way in lab and in the play rehearsal under a bad network: load the downed partner on the horse, ride 124-141 m at
 walk, trot and gallop, get off, take them down (laid at the same spot on both screens), revive them; when the
 carrier's link went off the downed partner was laid on the ground beside the horse on both screens and stayed down.
-What blocks the flip: on the downed player's own screen the horse was out of the frame at the walk and the trot (their
-camera looks over their own body), so the gate's "frames that show the horse at each gait on both screens" is not met.
+What blocks the flip: on the downed player's own screen the horse was out of the frame at the walk in all 5 tries and
+showed only at the frame's edge at the trot in 2 of 5 (their camera looks over their own body), so the gate's "frames
+that show the horse at each gait on both screens" is not met.
 docs/mounts.md section 20.
 
 - **Code** (all behind world_horse_cargo except one log line): `cb33c317` red / `3d0e9549` green - after the dismount

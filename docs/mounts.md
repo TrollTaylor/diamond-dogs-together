@@ -1383,14 +1383,17 @@ session observer logs `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).
     `host-h2c-dropped-side` and `guest-h2c-dropped-side` both show them lying on the ground beside the horse [O].
   - Frames looked at (attempt 2, both orders, lab and play): the carrier's screen shows the body across the horse at
     the load, walk, trot, gallop, gallop4, the stop, both stays frames, and the revived partner standing [O]; on the
-    victim's own screen the horse is in view at the gallop, the stop and both stays frames, but NOT at the walk, the
-    trot or the load (`guest-h2-ride-walk-victim`, `-trot-victim`, `host-h2b-ride-walk-victim`, `-trot-victim` in
-    `00c966c1` and `619d982c`, and `guest-h2p-walk` / `-trot` in `f7871604`: the body lying in the air with the rider's
-    head below it, the horse out of the frame) [O]; logs at those moments: body 0 held at the cargo point, CRAWL [O].
+    victim's own screen the horse is in view at the gallop, the stop and both stays frames; at the trot only at the
+    frame's edge in 2 of 5 (`619d982c` `guest-h2-ride-trot-victim`: the mane and saddle under the body; `00c966c1`
+    `host-h2b-ride-trot-victim`: the mane's tip), at the walk in none of 5 (`guest-h2-ride-walk-victim` /
+    `host-h2b-ride-walk-victim` in `00c966c1` and `619d982c`, `guest-h2p-walk` in `f7871604`: the body lying in the
+    air with the rider's head below it), nor at the load [O]; logs at those moments: body 0 held at the cargo point,
+    CRAWL [O].
 - **Gate not passed, by its frame rule only:** everything else holds at the code head `6b5518fa`: both carrier orders
   in lab and play through the ride (124-141 m), the dismount, the take-down at the same spot on both copies and the
   revive; the link drop lays them down at the same spot on both screens, still down; no horse fell; 0 recon places
-  inside the hold. Missing: frames from the victim's own copy that show the horse at the walk and the trot. Three
+  inside the hold. Missing: frames from the victim's own copy that show the horse at the walk (0 of 5) and plainly at
+  the trot (2 of 5, at the frame's edge). Three
   attempts used; world_horse_cargo stays off unless named; no default change.
 - **Never seen live:** the loop-gap drain (`revive_reset`), `load_e` / `refuse;why=carry`, a late-status drain
   (`revive_late`), a 2 m drop after the dismount with the anchor held (none in 5 sessions; one 185 cm sample at a ride
