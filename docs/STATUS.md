@@ -42,11 +42,11 @@ no game ran. Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\86d6
     ahead, across under 0.31 m), 12 of the 15 within 29 s (t=385302701-385331742); same link as the earlier runs (rtt 180 ms, loss 1.9 %); the moving
     path is unchanged but for the origin check [I]. `139a1440` / `f256bf29` / `fc141dc1` had 0.53 / 0.55 / 0.63 m.
   - PASS crews 20-40 s after the host's get-out (18 samples each): p90 2.46 / 2.67 m (25605's two).
-  - PASS get-outs / boardings matched: 25605 2 -> 1 -> 0 on both copies (the guest's last get-out 4.5 s before the host's),
+  - PASS get-outs / boardings matched: 25605 2 -> 1 -> 0 on both copies (per guard the guest's get-outs 0.7 / 0.1 s before the host's),
     25606 2 throughout on both; 0 trucks moving with the crews differing.
   - PASS unseats 24 (6 per rest truck, the lrrp-only runs' 24) and 8 `unseat_hold`. Rest-truck placements 17 / 17 / 2 / 1
     (25602 / 25603 / 25604 / 25607; joint runs 77-89, lrrp-only 1-2): 25602 and 25603 were driven by their own crews from
-    5 s after `step=on` until the crews left at 28-29 s, 1-12 m between the once-a-second placements; ForceStop again did
+    5 s after `step=on` until the crews left 25-26 s after it, 1-12 m between the once-a-second placements; ForceStop again did
     not stop them (5 `restop` lines each, the first 5 logged); 25604 stopped after one.
   - PASS 0 origin jumps (0 jump / settle of 1 km+, 0 follow or host lines at 0,0).
   - PASS 0 latches / faults / game overs / roster mismatches (enemy_div_report, every row PASS).
@@ -62,8 +62,8 @@ no game ran. Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\86d6
 - **Seen besides** [O]: the host stopped streaming 25606 at t=385419975 (137 s, parked manned at -1687.5, 976.3, the spot
   where `f256bf29`'s guest copy read the origin at 136 s); its pose then read nothing usable or the origin, the log does
   not say which [U]; the guest's track went stale and released it as designed. 0 `log_cap`; `step=cost` avg <= 0.034 ms.
-- **Checks**: `world_align_lua_check` 465, `world_vehicle_state_lua_check` 180; full build and CTest at 86f997d9: 354/355 (the one failure, `world_vehicle_state_lua_check`, was
-  this round's red settle check, committed while that CTest ran); every
+- **Checks**: `world_align_lua_check` 465, `world_vehicle_state_lua_check` 180; full build and CTest 355/355 at 6e54593a (code as 3ae7a6aa; an earlier CTest at 86f997d9 was
+  354/355, its one failure this round's red settle check, committed while it ran); every
   contract `--check` as before (known base failures only; horse_drive and vehicle_controller pass with `--executable`).
 - **Next**: the moving-truck lead of 25606 (the clock-offset estimate's drift is a guess) [U]; stop a far parked truck its
   own crew drives (ForceStop does not) or get that crew out in a way that works (none of the commands did); the M3 hold of
