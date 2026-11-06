@@ -2944,14 +2944,17 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     const unsigned quiet_idx = request.go_id & 0x1ffu;
     const bool quiet_asked = quiet && labc.quiet_place && grant.kind == mgscoop::world::place::correct && (request.go_id >> 9) == 2u;
     const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos) : mgscoop::soldier_act::QuietWhy::unknown;
-    const bool quiet_move = quiet_asked && quiet_why == mgscoop::soldier_act::QuietWhy::ok;
+    // Enemy round 11 track A (design 7.31): a walker goes quiet too (QuietWhy walk) and is re-planned after the move: the
+    // message's handler posts action 0xa6 naming this PC's player for every stance 1-2 guard (the normal stance).
+    const bool quiet_walk = quiet_why == mgscoop::soldier_act::QuietWhy::walk;
+    const bool quiet_move = quiet_asked && (quiet_why == mgscoop::soldier_act::QuietWhy::ok || quiet_walk);
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
     else if (quiet_move) {
         float squared = 0.0f;
         for (unsigned i = 0; i < 3; ++i) squared += (request.pos[i] - request.player[i]) * (request.pos[i] - request.player[i]);
         if (!(squared <= request.max_range * request.max_range)) result.refusal = "range";
-        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw)) result.refusal = "contract";
+        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw, quiet_walk)) result.refusal = "contract";
         else {
             result.out = 0;
             result.handled = 1;

@@ -351,11 +351,15 @@ QuietWhy QuietChoose(const RestView& r, const float (&target)[3], std::uint64_t 
     if (now_ms > r.at && now_ms - r.at > kRestStaleMs) return QuietWhy::stale;
     if (!r.realized) return QuietWhy::unrealized;
     if (!r.listed) return QuietWhy::unlisted;
-    if (!(r.speed_mps >= 0.0f) || r.speed_mps > kRestSpeedMps) return QuietWhy::moving;
+    // Round 11 (design 7.31): the set-transform handler rotates a stance 3-4 pose and posts no action there: those keep the
+    // message, as an unread stance does. Stance 0-2 go quiet (1-2 is where the handler posts action 0xa6).
+    if (r.stance > 2u) return QuietWhy::stance;
+    // A walker (or a guard with a path ahead) goes quiet too and is re-planned after the move (QuietPlanOne).
+    if (!(r.speed_mps >= 0.0f) || r.speed_mps > kRestSpeedMps) return QuietWhy::walk;
     if (r.has) {
         const float ex = r.end[0] - r.pos[0], ez = r.end[2] - r.pos[2], tx = r.end[0] - target[0], tz = r.end[2] - target[2];
         const float lim = kRestPathM * kRestPathM;
-        if (!(ex * ex + ez * ez <= lim) && !(tx * tx + tz * tz <= lim)) return QuietWhy::path;
+        if (!(ex * ex + ez * ez <= lim) && !(tx * tx + tz * tz <= lim)) return QuietWhy::walk;
     }
     return QuietWhy::ok;
 }
@@ -369,6 +373,28 @@ const char* QuietWhyName(QuietWhy why) noexcept {
     case QuietWhy::unlisted: return "unlisted";
     case QuietWhy::moving: return "moving";
     case QuietWhy::path: return "path";
+    case QuietWhy::walk: return "walk";
+    case QuietWhy::stance: return "stance";
+    }
+    return "?";
+}
+
+QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle, bool slot_read) noexcept {
+    if (!slot_read || !PlanGate(dest_mode, r19c, r19e, true)) return QuietPlan::none;
+    switch (PlanSlot(slot_hash, slot_handle)) {
+    case SlotStep::plan: return QuietPlan::plan;
+    case SlotStep::cancel_then_plan: return QuietPlan::cancel_then_plan;
+    default: return QuietPlan::busy;
+    }
+}
+
+const char* QuietPlanName(QuietPlan step) noexcept {
+    switch (step) {
+    case QuietPlan::none: return "none";
+    case QuietPlan::busy: return "busy";
+    case QuietPlan::plan: return "plan";
+    case QuietPlan::cancel_then_plan: return "cancel_plan";
     }
     return "?";
 }
@@ -530,7 +556,13 @@ Probe g_probe{};
 std::atomic<std::uint32_t> g_probeRuns{0};
 
 // Enemy round 8 (quiet_place): staged quiet moves (the runtime thread writes under g_quietLock, the hook runs them).
-struct QuietMove { bool due; std::uint32_t go; std::uint16_t seq; float pos[3]; float yaw; };
+struct QuietMove { bool due; std::uint32_t go; std::uint16_t seq; float pos[3]; float yaw; bool replan; };
+// Enemy round 11 (quiet_place, design 7.31; hook thread only): a quiet-moved walker's re-plan, run after the original
+// manager update (QuietPlanStep), and the plan checks it arms (PlanCheckStep, kPlanCheckMs after).
+struct QuietPlanAsk { bool due; std::uint32_t go; std::uint16_t seq; };
+QuietPlanAsk g_qplan[kMaxSoldiers]{};
+bool g_qwatch[kMaxSoldiers]{};
+unsigned g_qplanLive = 0;
 QuietMove g_quiet[kMaxSoldiers]{};
 SRWLOCK g_quietLock = SRWLOCK_INIT;
 std::atomic<bool> g_quietPending{false};
@@ -1549,6 +1581,11 @@ void QuietOne(const View& v, unsigned i, const QuietMove& q) noexcept {
     }
     char line[160]{};
     if (FormatQuietLine(q.go, q.seq, moved, bias, err, dy, line, sizeof(line))) Emit(line);
+    // Round 11 (design 7.31): a moved walker is re-planned after this update's original (QuietPlanStep).
+    if (moved && q.replan && i < kMaxSoldiers) {
+        if (!g_qplan[i].due) ++g_qplanLive;
+        g_qplan[i] = QuietPlanAsk{true, q.go, q.seq};
+    }
 }
 void QuietStep(std::uintptr_t m) noexcept {
     g_quietPending.store(false, std::memory_order_relaxed);
@@ -1562,6 +1599,72 @@ void QuietStep(std::uintptr_t m) noexcept {
         if (g_quiet[i].due) { q = g_quiet[i]; g_quiet[i].due = false; }
         ReleaseSRWLockExclusive(&g_quietLock);
         if (q.due) QuietOne(v, i, q);
+    }
+}
+
+// Enemy round 11 (quiet_place, design 7.31; hook thread, after the original manager update): a walker the quiet warp moved
+// is re-planned from where he now stands to his own brain's destination R+0x80 with act_plan's shadow plan 0x1413725f0
+// (his brain's live planner slot of another type is cancelled first), so his follower no longer holds the old path that
+// walked him back (1befcef4: 9.4-14.1 m on). One world_place=quiet_plan line per move; the plan check follows
+// kPlanCheckMs after (soldier_act_plan line, read only).
+void QuietPlanOne(const View& v, unsigned i, const QuietPlanAsk& a, std::uintptr_t slots, std::uint64_t now) noexcept {
+    const std::uintptr_t r = Record(v, i);
+    std::uint32_t bits = 0;
+    std::uint16_t r19c = 0xffff, r19e = 0;
+    Rd(r + c::r_bits, bits);
+    Rd(r + c::r_handle, r19c);
+    Rd(r + c::r_flags, r19e);
+    const unsigned mode = (bits >> 9) & 0xfu;
+    Follower f{};
+    Slot sl{0, 0xffff, 0xffff};
+    const bool fol = slots && FollowerFor(v, i, f) && PlannerKnown(f.planner);
+    const bool slot_read = fol && PlannerSlot(f.planner, i, sl);
+    const QuietPlan step = fol ? QuietPlanChoose(mode, r19c, r19e, sl.hash, sl.handle, slot_read) : QuietPlan::none;
+    bool started = false;
+    std::uint16_t got = 0xffff;
+    if (step == QuietPlan::cancel_then_plan) CancelSlot(f.planner, i, sl.handle);
+    if (step == QuietPlan::plan || step == QuietPlan::cancel_then_plan) {
+        if (!g_shadowBuilt) { BuildShadow(g_shadow); g_shadowBuilt = true; }
+        got = PlanShadow(v, i, r, bits, f, slots, now, started);
+        if (started && got != 0xffff) g_qwatch[i] = true;
+    }
+    float p[3]{}, dest[3]{};
+    Pos(v, i, p);
+    std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
+    char line[400]{};
+    const int n = std::snprintf(line, sizeof(line),
+        "world_place=quiet_plan; go=%u; seq=%u; idx=%u; mode=%u; r19c=0x%04x; r19e=0x%04x; slot=0x%012llx; slot_h=0x%04x; "
+        "fol=%u; step=%s; started=%u; handle=0x%04x; p=%.2f,%.2f,%.2f; dest=%.2f,%.2f,%.2f\r\n",
+        unsigned(a.go), unsigned(a.seq), i, mode, r19c, r19e, static_cast<unsigned long long>(sl.hash & 0xffffffffffffull),
+        sl.handle, fol ? 1u : 0u, QuietPlanName(step), started ? 1u : 0u, got, p[0], p[1], p[2], dest[0], dest[1], dest[2]);
+    if (n > 0) Emit(line);
+}
+void QuietPlanStep(std::uintptr_t m) noexcept {
+    __try {
+        View v{};
+        if (!Resolve(m, v)) return;
+        const std::uint64_t now = NowMs();
+        std::uintptr_t slots = 0;
+        Rd(v.s + c::s_slots, slots);
+        unsigned live = 0;
+        for (unsigned i = 0; i < v.count && i < kMaxSoldiers; ++i) {
+            if (g_qplan[i].due) {
+                const QuietPlanAsk a = g_qplan[i];
+                g_qplan[i].due = false;
+                QuietPlanOne(v, i, a, slots, now);
+            }
+            if (g_qwatch[i]) {
+                PlanCheckStep(v, i, now);
+                if (!g_planCheck[i].pending) g_qwatch[i] = false;
+                else ++live;
+            }
+        }
+        g_qplanLive = live;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        std::memset(g_qplan, 0, sizeof(g_qplan));
+        std::memset(g_qwatch, 0, sizeof(g_qwatch));
+        g_qplanLive = 0;
     }
 }
 
@@ -1583,6 +1686,12 @@ void RestStep(const View& v, std::uint64_t now) noexcept {
         if (!r.realized || !Pos(v, i, p)) { h = {}; continue; }
         r.pos[0] = p[0]; r.pos[1] = p[1]; r.pos[2] = p[2];
         r.listed = list && ListHas(reinterpret_cast<const std::uint16_t*>(list), listCount, i);
+        // Round 11: the stance nibble the set-transform handler reads (S+0x98 records +0x34 & 0xf; the census's st).
+        if (v.recData && i < v.recCount) {
+            std::uint32_t st = 0;
+            if (Rd(v.recData + static_cast<std::uintptr_t>(i) * c::rec_stride + c::rec_stance, st))
+                r.stance = static_cast<std::uint8_t>(st & 0xfu);
+        }
         if (h.at[0] && now > h.at[0] && now - h.at[0] <= 4 * kRestMs) {
             const float dx = p[0] - h.pos[0][0], dz = p[2] - h.pos[0][2];
             r.speed_mps = std::sqrt(dx * dx + dz * dz) * 1000.0f / static_cast<float>(now - h.at[0]);
@@ -1650,6 +1759,8 @@ void __fastcall UpdateDetour(void* m) {
         g_probe.pending.load(std::memory_order_relaxed))
         StepSafe(reinterpret_cast<std::uintptr_t>(m));
     g_original(m);
+    // Round 11 (quiet_place, design 7.31): the quiet-moved walkers' re-plans and their plan checks.
+    if (g_qplanLive) QuietPlanStep(reinterpret_cast<std::uintptr_t>(m));
     // Round 8 track C (act_plan): after the engine's own start of each puppet's new request.
     if (g_planOn.load(std::memory_order_relaxed) && g_actOn.load(std::memory_order_relaxed) && !g_actHost.load(std::memory_order_relaxed))
         PlanStep(reinterpret_cast<std::uintptr_t>(m));
@@ -1724,10 +1835,10 @@ QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept {
 }
 void SetQuietRest(bool on) noexcept { g_restOn.store(on); }
 
-bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept {
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan) noexcept {
     if (!g_installed.load() || idx >= kMaxSoldiers) return false;
     AcquireSRWLockExclusive(&g_quietLock);
-    g_quiet[idx] = QuietMove{true, go, seq, {pos[0], pos[1], pos[2]}, yaw};
+    g_quiet[idx] = QuietMove{true, go, seq, {pos[0], pos[1], pos[2]}, yaw, replan};
     ReleaseSRWLockExclusive(&g_quietLock);
     g_quietPending.store(true, std::memory_order_release);
     return true;
