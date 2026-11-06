@@ -32,9 +32,17 @@ owner distance).
   - n/a guest place error p90 (no guard within 60 m of the guest); part 1's radio-spot correction of 246 was refused
     `far` (not exercised); the on-screen and M3 quiet paths were not exercised (0 `view=on`, 0 host placements).
   - Passed: 0 latches / faults / Game Overs, `plans_lost` 0, 0 log_cap drops.
-- **Session 2** (job 20261106-081816-598-e72569, no key, queued before the result): runs the same parts at the defaults
-  as a baseline of the message corrections; their read-backs now carry `dho_m` too (world_readback.lua, log only;
-  enemy_div_report `place_owner_2s`). Not a flip proof.
+- **Run 257cd87d** (job 20261106-081816-598-e72569, no key, at 16967d8d = code 922b5875; queued before the first
+  result, so a baseline of the defaults, not a flip proof; both copies in gameplay and connected):
+  - [O] the false caution again at the defaults: 246's off-screen set-transform correction (39.4 m, `leaf=typed`) at
+    t=410244360; 47 s later the guest's outpost changed phase, the guest asked for CAUTION (`req_phase`) and the host
+    applied it (`src=req`). Frame guest q246-c (1.3 s before that line): the subtitle "Soviet CP: Entering alert
+    status" on the guest's screen; host q246-c at the same moment: none. [I] 246's startle (no census without the key).
+  - [O] the far message corrections' 2 s read-backs (new `dho_m`): 12 of 17 within 3 m of the owner copy (6 guards;
+    other guards than the quiet run's, so not a like-for-like walker row). Later the host's own copies went to ALERT
+    (`src=host`) in the walker part, as in c66b10b6.
+  - Report: 28 of 30 corrections applied (2 `vehicle_local`), place error p50 2.75 / p90 10.8 m over 6 samples (FAIL
+    rows at the defaults), 0 latches / faults / Game Overs / place_sink. Audited CTest of the job: 340/340.
 - **Next**: a walker's two copies with different routes cannot meet by a quiet move alone. Try re-planning a moved
   walker toward the owner copy (its sample position plus speed) instead of his own brain's destination, and re-plan
   every move (over our own earlier plan's handle); give the radio spot's correction a run where it is not refused

@@ -1475,6 +1475,9 @@ only); [I] inferred; [U] unknown.
     re-plan goes to the guard's own brain destination (246: 444, 2137; his host copy walked south) and only a guard's
     first move re-plans (then `r19c` holds our plan's handle: `step=none`). Not exercised: the radio-spot correction
     (refused `far`), `view=on`, the host's M3 placements.
+  - Run 257cd87d (no key, the defaults): [O] the false caution reproduced (246's 39.4 m off-screen message
+    correction; 47 s later the guest's outpost went to caution, "Soviet CP: Entering alert status" on the guest's
+    screen only, the host applied the guest's request); far message corrections 12/17 within 3 m at 2 s.
   - Blocks: a walker whose two copies walk different routes does not stay with the owner copy after a quiet move (the
     message's startle stopped him instead). Next: plan a moved walker toward the owner copy (sample position plus speed)
     and re-plan over our own earlier plan; a run where the radio-spot correction applies, plus an on-screen and an M3
