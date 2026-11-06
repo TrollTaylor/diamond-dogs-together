@@ -65,6 +65,13 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 // An anchored target is used only within kAnchorMaxM of the stream's (a stale or unrealized body never drags the horse).
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
+// M2j (lab 2a41c416 guest: body 0 2.03 m under its target just after the carrier got off; act 122, the get-off, holds a
+// shown ride, so each anchored place put the horse under the body getting off): with world_horse_cargo
+// (Settings.horse_cargo) the rider body anchors nothing during a valid act 122 and the stream pose places the horse.
+inline constexpr std::uint16_t kGetOffAct = 122;
+constexpr bool AnchorNote(bool cargo, bool act_valid, std::uint16_t act) noexcept {
+    return !(cargo && act_valid && act == kGetOffAct);
+}
 
 enum class Verb : std::uint8_t { none, cfg, read, place, hold0, pad, seat1, free0, hold1, pbox, rrec, getoff };
 struct Request {

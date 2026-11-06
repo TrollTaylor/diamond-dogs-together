@@ -8131,8 +8131,17 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             EmitCapped(m.mount_cap, h, "partner_mount", "partner_mount=%s; mount=horse; act=%u; valid=%u; kind=%u; live=%u; fresh=%u; "
                        "reason=shared_horse\r\n", m.visibility.horse ? "show" : "show_end", unsigned(visibility_sample.act),
                        visibility_sample.anim_valid ? 1u : 0u, unsigned(vi.kind), vi.ride_live ? 1u : 0u, vi.horse_shown ? 1u : 0u);
-        // The rider's body anchors the next horse placement (the saddle under body 1 on this screen).
-        if (m.visibility.horse && body_read && pp::Realized(st, partner::partner_index) && st.parts[1] == c::parts_loaded_state) {
+        // The rider's body anchors the next horse placement (the saddle under body 1 on this screen); with
+        // world_horse_cargo not during the get-off act 122 (M2j: horse_drive::AnchorNote), one line at each edge.
+        const bool anchor_note =
+            horse_drive::AnchorNote(set.horse_cargo, visibility_sample.anim_valid, visibility_sample.act);
+        if (m.visibility.horse && !anchor_note != m.anchor_hold) {
+            m.anchor_hold = !anchor_note;
+            EmitCapped(m.mount_cap, h, "partner_mount", "horse_drive=anchor_hold; on=%u; act=%u\r\n", m.anchor_hold ? 1u : 0u,
+                       unsigned(visibility_sample.act));
+        }
+        if (anchor_note && m.visibility.horse && body_read && pp::Realized(st, partner::partner_index) &&
+            st.parts[1] == c::parts_loaded_state) {
             const float rider[3] = {body_pos[0], body_pos[1], body_pos[2]};
             horse_drive::NoteRiderBody(rider, now);
         }

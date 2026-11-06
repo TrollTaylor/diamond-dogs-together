@@ -766,6 +766,7 @@ struct Mission {
     // partner_native_mount=hide: the act-rule episode (partner_mount=hide|end lines, capped).
     partner_mount_policy::Episode mount;
     LogCap mount_cap;
+    bool anchor_hold; // M2j: the rider body anchors no horse place (act 122 with world_horse_cargo; horse_drive=anchor_hold)
     // partner_native_unrealize_all (G5): the other ride hides' episode (heli, vehicle, horse kind 3;
     // partner_ride=unrealize|unrealize_end lines) and the partner_ride=net_rebased line of the
     // link-quality rebase after a ride (net_quality_rebase, below), on their own cap.
