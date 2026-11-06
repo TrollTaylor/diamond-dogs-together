@@ -1478,7 +1478,11 @@ only); [I] inferred; [U] unknown.
   - Blocks: a walker whose two copies walk different routes does not stay with the owner copy after a quiet move (the
     message's startle stopped him instead). Next: plan a moved walker toward the owner copy (sample position plus speed)
     and re-plan over our own earlier plan; a run where the radio-spot correction applies, plus an on-screen and an M3
-    case. `quiet_place` stays off unless named.
+    case. `quiet_place` stays off unless named. Open [U]: M4's soft-follow steps (DriveReceipt) send the same
+    set-transform message through the same handler, so they post 0xa6 for a stance 1-2 guard too; no census has been
+    read for a startle after drive steps (c66b10b6 had none: no guard within 60 m of the guest). A walking patrol
+    truck's crew seated on the host is corrected on the guest as walkers (`mode=2`, no re-plan; 9.5-12.4 m off 2 s
+    later as the truck drove on): such a correction could wait while the owner copy is seated.
 
 ### 8. Soldier transforms (W6)
 
