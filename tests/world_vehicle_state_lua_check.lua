@@ -100,6 +100,7 @@ local function Fixture(role, opts)
         return true
     end}
     W.M, W.kind = {}, {}
+    if opts.place then W.place = opts.place end
     env.e = {MgsCoopWorld = W}
     setfenv(assert(loadstring(GONE)), env)()
     setfenv(assert(loadstring(SRC)), env)()
@@ -527,8 +528,10 @@ do
         'host: a step=host line and a riders line for the moving truck')
     h.pool[25602].riders = {1195}
     for i = 1, 30 do h:poll(50) end
-    check(h:has('event=lrrp;step=crew;id=25602;ent=1194;') and h:has('event=lrrp;step=crew;id=25602;ent=1195;') and h:has(';in=0;rl=1'),
-        'host: a rider got out: the crew\'s positions once a second (step=crew)')
+    -- Enemy round 11 B (the log flood): one crew line per truck, its members packed (c=ent:x:z:in,...).
+    local cl = h:has('event=lrrp;step=crew;id=25602;rl=1;c=')
+    check(cl and cl:find('1194:?:?:0', 1, true) and cl:find('1195:?:?:1', 1, true),
+        'host: a rider got out: the crew\'s positions in one line per truck (step=crew;c=ent:x:z:in)')
     h.pool[25602].riders = {1194, 1195}
     h.riding = true; h.env.vars.playerVehicleGameObjectId = 25602
     local before = #lf(h, 25602)
@@ -611,8 +614,10 @@ do
     for _ = 1, 20 do s2(100000, 0, 0, 0) end
     -- Every known crew member's position once a second for 40 s after this copy's rider count changed (the gate's
     -- "within 5 m 20 s after they get out", far crews too: the patrol scan reads only 55 / 60 m around the players).
-    check(g:has('event=lrrp;step=crew;id=25602;ent=1194;') and g:has('event=lrrp;step=crew;id=25602;ent=1195;') and
-        g:has(';in=0;rl=0') and g:count('event=lrrp;step=crew;id=25602;ent=1194;') <= 45, 'crew: positions of the crew out of the truck, 1 Hz')
+    -- Enemy round 11 B (the log flood): one line per truck every 2 s (was one per guard every second).
+    local gl = g:has('event=lrrp;step=crew;id=25602;rl=0;c=')
+    check(gl and gl:find('1194:?:?:0', 1, true) and gl:find('1195:?:?:0', 1, true) and g:count('event=lrrp;step=crew;id=25602;') <= 23,
+        'crew: positions of the crew out of the truck, one line per truck every 2 s (' .. g:count('event=lrrp;step=crew;id=25602;') .. ')')
     -- Round 9 B session 1 (68491f7f): SetRelativeVehicle rideFromBeginning seated nobody mid-mission (40 tries) and the
     -- guest's 25606 drove off empty for 123 s. Now: while the host's truck drives manned and this copy's crew is out, the
     -- truck is released to this copy's own AI (its crew boards it on its own clock); taken again once manned here.
@@ -819,6 +824,9 @@ do
     g.pool[25606].x, g.pool[25606].z = 0, 0
     s6(-1687490, 976260, 0, 2, 0)
     check(not g:has('event=lrrp;step=jump;id=25606') and #placedOf(g, 25606) == n0, 'origin: a pose read at x=0, z=0 is no sample (no jump, no placement)')
+    -- Enemy round 11 B: the first origin read of each id is logged, once.
+    s6(-1687490, 976260, 0, 2, 0); s6(-1687490, 976260, 0, 2, 0)
+    check(g:count('event=lrrp;step=origin;role=guest;id=25606') == 1, 'origin: one step=origin line per id (guest; ' .. g:count('step=origin') .. ')')
     g.pool[25606].x, g.pool[25606].z = -1687.49, 976.26
     for _ = 1, 3 do s6(-1687490, 976260, 0, 2, 0) end
     check(not g:has('event=lrrp;step=jump;id=25606') and forces(g, 25606, false) == 0, 'origin: read back on the spot: nothing to do')
@@ -828,6 +836,7 @@ do
     h:start(); h:pair()
     h:polls(20, 50)
     check(#h:sent(93) == 0, 'origin: the host never streams a truck read at x=0, z=0')
+    check(h:count('event=lrrp;step=origin;role=host;id=25606') == 1, 'origin: one step=origin line per id (host; ' .. h:count('step=origin') .. ')')
     h.pool[25606].x = 10.0
     h:polls(20, 50)
     check(#h:sent(93) >= 1, 'origin: read off the origin it is streamed')
@@ -864,5 +873,160 @@ do
     np = #placedOf(g, 25607)
     check(np >= 12, 'rest near: placed back each time it is 1 m off, as before (' .. np .. ')')
     check(forces(g, 25607, true) >= 3 and forces(g, 25607, true) <= 5, 'rest near: ForceStop again at most once a second (' .. forces(g, 25607, true) .. ')')
+end
+-- Enemy round 11 B (docs/world-sync-design.md 7.32). (1) The log flood: with lrrp_follow on a crew10 session's host wrote
+-- ~1640-1800 step=host lines (4 Hz moving, 1 Hz manned) with a riders line each, and horse run 2a41c416's host lost 1788
+-- Lua lines to world=log_cap (a horse step=unloaded among them). Now: host lines 2 Hz moving, 5 s manned at rest, 30 s
+-- empty, at once on a rider count change; riders lines on a change, else 2 s moving / 10 s; one crew line per truck every
+-- 2 s; the guest's follow lines 1 Hz moving, 10 s otherwise, at once on a mode or count change. (2) The crew hold: for
+-- 10 s after a host get-out the host keeps a crew member it owns (P.ownerOf answers 0). (4) The clock offset follows a
+-- step up within 2 s (86d6045f: 25606's guest copy led by 1.1-2.4 m for 29 s). Red first (c788d65c): 19 of the 23
+-- checks below failed; 'a guest rider count change logs a follow line at once', 'hold: a seated crew member', 'hold:
+-- lrrp_follow off' and 'offset: steady' passed at red (controls). The green commit 20509a91 loosened the 60 s total from
+-- <= 180 to <= 280 (green: 260; the crews' first 60 s of lines) and named the whole host line in the count-change check.
+-- Land fix (review): the hold and the offset window only with lrrp_follow named (cfg 1); at the defaults (the gun
+-- profile, 30010) the 0.15.3 owner decision and offset filter (the last checks of this block; red at 20509a91).
+-- Enemy round 12 B (review): the 60 s total and the count-change line as they stand fail at the old world_lrrp.lua
+-- (261432af: 802 lines; the count-change check too) and pass now; the cut kinds get their own bound from the design rates
+-- (230). The offset window runs at the defaults too (the lead fix lands with lrrp_follow); a step up is logged
+-- (step=off: rise_ms, lag0_ms = how far the 0.15.3 filter would lag) and the follow line carries ah / ah0 (the lead used
+-- and the 0.15.3 filter's, ms), so a run can show the cause. The hold stays named-only.
+do
+    local function after(c, k, pat) local n = 0 for i = k + 1, #c.logs do if c.logs[i]:find(pat, 1, true) then n = n + 1 end end return n end
+    local function placedOf(t, id) local r = {} for _, p in ipairs(t.placed) do if p.id == id then r[#r + 1] = p end end return r end
+    -- Host: 25602 drives manned at 10 m/s, 25603 waits manned, 25604 is parked empty; 60 s.
+    local h = Fixture('host', {lrrp = true})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:add(25603, 900.0, 200.0, 4, 'veh_trc_0001', {riders = {1196, 1197}})
+    h:add(25604, 1900.0, 200.0, 4, 'veh_trc_0002')
+    h:start(); h:pair()
+    for i = 1, 1200 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    local hl, rl = h:count('event=lrrp;step=host;id=25602;'), h:count('event=lrrp;step=riders;id=25602;')
+    check(hl >= 100 and hl <= 125, 'flood: a moving truck\'s host lines 2 Hz (' .. hl .. ')')
+    check(rl >= 25 and rl <= 32, 'flood: its riders line every 2 s (' .. rl .. ')')
+    local hm, rm = h:count('event=lrrp;step=host;id=25603;'), h:count('event=lrrp;step=riders;id=25603;')
+    check(hm <= 14 and rm <= 7, 'flood: a manned truck at rest: host lines every 5 s, riders every 10 s (' .. hm .. ', ' .. rm .. ')')
+    check(h:count('event=lrrp;step=host;id=25604;') <= 3, 'flood: an empty parked truck every 30 s (' .. h:count('event=lrrp;step=host;id=25604;') .. ')')
+    local all = h:count('event=lrrp;')
+    check(all <= 280, 'flood: the host\'s lrrp lines of 60 s, 3 trucks, the crews\' first 60 s logged (' .. all .. '; was 802)')
+    local cut = h:count('event=lrrp;step=host;') + h:count('event=lrrp;step=riders;') + h:count('event=lrrp;step=crew;')
+    check(cut <= 235, 'flood: the cut kinds of 60 s at the design rates: host 2 Hz moving 120, 5 s manned 12, 30 s empty 2-3; riders 30 + 6; crews 2 x 30 = 230 (' .. cut .. ')')
+    -- 25603's crew gets out: a host line at once; the crew in one line per truck every 2 s for 60 s.
+    local k0 = #h.logs
+    h.pool[25603].riders = nil
+    for _ = 1, 30 do h:poll(50) end
+    check(after(h, k0, 'event=lrrp;step=host;id=25603;') == 1 and after(h, k0, 'event=lrrp;step=host;id=25603;x=900.00;y=1.00;z=200.00;yaw=0;v=0;riders=0;') == 1,
+        'flood: a rider count change logs a host line at once')
+    for _ = 1, 1200 do h:poll(50) end
+    local cl = after(h, k0, 'event=lrrp;step=crew;id=25603;rl=0;c=')
+    check(cl >= 25 and cl <= 32 and after(h, k0, 'event=lrrp;step=crew;id=25603;ent=') == 0, 'flood: one crew line per truck every 2 s for 60 s (' .. cl .. ')')
+    -- Guest: the host's truck drives manned 30 s, then waits manned 30 s.
+    local g = Fixture('guest', {lrrp = true})
+    g:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    g:start(); g:pair()
+    local tick = 1000
+    for i = 1, 300 do tick = tick + 100; g.H[93]({tick, 25602, 100000 + i * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
+    local fl, gr = g:count('event=lrrp;step=follow;id=25602;'), g:count('event=lrrp;step=riders;id=25602;')
+    check(fl >= 28 and fl <= 33 and gr >= 14 and gr <= 17, 'flood: guest follow lines 1 Hz while it moves, riders every 2 s (' .. fl .. ', ' .. gr .. ')')
+    local k1 = #g.logs
+    for _ = 1, 300 do tick = tick + 100; g.H[93]({tick, 25602, 400000, 1000, 200000, 0, 0, 2, 0}); g:poll(100) end
+    fl, gr = after(g, k1, 'event=lrrp;step=follow;id=25602;'), after(g, k1, 'event=lrrp;step=riders;id=25602;')
+    check(fl >= 3 and fl <= 5 and gr <= 4, 'flood: manned at rest: guest follow lines every 10 s, riders every 10 s (' .. fl .. ', ' .. gr .. ')')
+    local k2 = #g.logs
+    g.pool[25602].riders = {1195}
+    for _ = 1, 6 do tick = tick + 100; g.H[93]({tick, 25602, 400000, 1000, 200000, 0, 0, 2, 0}); g:poll(100) end
+    check(after(g, k2, 'event=lrrp;step=follow;id=25602;') == 1 and after(g, k2, ';rl=1;') >= 1, 'flood: a guest rider count change logs a follow line at once')
+
+    -- (2) The crew hold: the host keeps a crew member it owns for 10 s after his get-out on the host.
+    local seen = {}
+    local P = {own = {}, ownerOf = function(hh) seen[#seen + 1] = hh; return 1 end}
+    h = Fixture('host', {lrrp = true, place = P})
+    h.W.byId = {[1194] = str32('sol_a'), [1195] = str32('sol_b')}
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    h:polls(40, 50)
+    check(h.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, h.clock) == 1 and #seen == 1, 'hold: a seated crew member: the owner decision as before')
+    h.pool[25602].riders = {1195}
+    h:polls(30, 50)
+    check(h:has('event=lrrp;step=crew_out;id=25602;ent=' .. str32('sol_a')) and h.W.crewOutAt[str32('sol_a')] ~= nil,
+        'hold: the host\'s get-out is logged (step=crew_out) and kept (W.crewOutAt)')
+    check(h.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, h.clock) == 0 and #seen == 1 and h:has('event=lrrp;step=crew_hold;ent=' .. str32('sol_a') .. ';'),
+        'hold: within 10 s of his get-out the host keeps him (no hand-over to the guest; step=crew_hold)')
+    check(h.W.place.ownerOf(str32('sol_b'), 1e10, 1e8, h.clock) == 1 and #seen == 2, 'hold: a guard still seated is not held')
+    P.own[str32('sol_a')] = {o = 1, at = 0}
+    check(h.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, h.clock) == 1 and #seen == 3, 'hold: one the guest owns already is left to the owner decision')
+    P.own[str32('sol_a')] = nil
+    h:polls(200, 50)
+    check(h.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, h.clock) == 1 and #seen == 4, 'hold: 10 s after the get-out the owner decision as before')
+    seen = {}
+    P.ownerOf = function(hh) seen[#seen + 1] = hh; return 1 end
+    local hOff = Fixture('host', {place = P})
+    -- Land fix (review): a get-out on record, so the check needs the guard (it passed without one before).
+    hOff.W.crewOutAt[str32('sol_a')] = hOff.clock
+    check(hOff.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, hOff.clock) == 1 and #seen == 1, 'hold: lrrp_follow off: no hold (a get-out on record)')
+
+    -- (4) The clock offset: the host's clock falls 1 s behind the guest's (a 1.3 s guest step while the host's moved
+    -- 300 ms). Before: the offset rose 2 % a sample and ahead sat at its 400 ms cap: the copy led 2 m at 10 m/s for seconds.
+    g = Fixture('guest', {lrrp = true})
+    g:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    g:start(); g:pair()
+    local ht = 50000
+    local function s(dh, dg) ht = ht + dh; g.H[93]({ht, 25602, 100000 + (ht - 50000) * 10, 1000, 200000, 0, 10000, 2, 1}); g:poll(dg) end
+    for _ = 1, 30 do s(100, 100) end
+    local tr = g.S.lf.tr[25602]
+    local p = placedOf(g, 25602)
+    local lead0 = p[#p].x - tr.b.x
+    check(lead0 >= 1700 and lead0 <= 2300, 'offset: steady, the copy is placed ahead by the sample\'s age (' .. lead0 .. ' mm)')
+    check(g:count('event=lrrp;step=off;') == 0, 'offset: no step=off line while the offset is steady')
+    s(300, 1300)
+    for _ = 1, 30 do s(100, 100) end
+    p = placedOf(g, 25602)
+    local lead1 = p[#p].x - tr.b.x
+    check(math.abs(lead1 - lead0) <= 300, 'offset: 3 s after the host\'s clock fell 1 s behind, the lead is back (' .. lead1 .. ' mm, was ' .. lead0 .. ')')
+    local function offLine(c)
+        local l0 = nil
+        for _, l in ipairs(c.logs) do if l:find('event=lrrp;step=off;id=25602;', 1, true) then l0 = l0 and 'twice' or l end end
+        return l0, tonumber((l0 or ''):match(';rise_ms=(%-?%d+);')), tonumber((l0 or ''):match(';lag0_ms=(%-?%d+)'))
+    end
+    local function lastAhead(c)
+        local last = ''
+        for _, l in ipairs(c.logs) do if l:find('event=lrrp;step=follow;id=25602;', 1, true) then last = l end end
+        return tonumber(last:match(';ah=(%-?%d+);')), tonumber(last:match(';ah0=(%-?%d+)'))
+    end
+    local ol, rise, lag0 = offLine(g)
+    check(ol and ol ~= 'twice' and rise == 1200 and lag0 and lag0 >= 500, 'offset: the step up is logged once (step=off; rise_ms=1200: the step sample first dips the offset 200 ms, host +300 for guest +100; the 0.15.3 filter lagging 500 ms+) (' .. tostring(ol) .. ')')
+    local ah, ah0 = lastAhead(g)
+    check(ah and ah <= 300 and ah0 == 400, 'offset: the follow line carries the lead used (ah) and the 0.15.3 filter\'s (ah0, still at its 400 ms cap 3 s after the step) (' .. tostring(ah) .. ', ' .. tostring(ah0) .. ')')
+
+    -- Land fix (review, design 7.32): at the defaults (lrrp_follow by the gun profile, 30010) the hold does not run
+    -- (round 12 B: the offset window does, below). The hold keeps the host's copy the brain and host copies do not perceive the guest
+    -- (soldier_perceive is off): fc141dc1's crew got out 25-27 m from the guest, so it could leave the guest less seen
+    -- than 0.15.3 (the user's decision, D-B11): named-only (lrrp_follow=1).
+    seen = {}
+    local P2 = {own = {}, ownerOf = function(hh) seen[#seen + 1] = hh; return 1 end}
+    h = Fixture('host', {lrrpDefault = true, mission = 30010, place = P2})
+    h.W.byId = {[1194] = str32('sol_a'), [1195] = str32('sol_b')}
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    h:polls(40, 50)
+    h.pool[25602].riders = {1195}
+    h:polls(30, 50)
+    check(h:has('event=lrrp;step=crew_out;id=25602;ent=' .. str32('sol_a')) and h.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, h.clock) == 1 and
+        #seen == 1 and not h:has('step=crew_hold'), 'hold: at the defaults (30010, the gun profile) no hold: the owner decision as in 0.15.3')
+    g = Fixture('guest', {lrrpDefault = true, mission = 30010})
+    g:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    g:start(); g:pair()
+    ht = 50000
+    for _ = 1, 30 do s(100, 100) end
+    tr = g.S.lf.tr[25602]
+    p = placedOf(g, 25602)
+    local d0 = p[#p].x - tr.b.x
+    s(300, 1300)
+    for _ = 1, 30 do s(100, 100) end
+    p = placedOf(g, 25602)
+    local d1 = p[#p].x - tr.b.x
+    check(d0 >= 1700 and d0 <= 2300 and math.abs(d1 - d0) <= 300, 'offset: at the defaults (30010, the gun profile) the window too: 3 s after the step the lead is back (' .. d0 .. ' then ' .. d1 .. ' mm)')
+    ol, rise = offLine(g)
+    check(ol and ol ~= 'twice' and rise == 1200, 'offset: at the defaults the step up is logged once (step=off) (' .. tostring(ol) .. ')')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')

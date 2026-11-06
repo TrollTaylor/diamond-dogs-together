@@ -2942,8 +2942,10 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     // 0x136ece0 in its next update (soldier_act::QuietOne; no set-transform message). Same grant, gate, range and budget.
     // Enemy round 9 track A (design 7.24): only a guard at rest in his own brain and in the realized list the warp reads
     // (soldier_act::QuietCheck); any other gets the set-transform message as before (quiet=<why> on the warp line).
+    // Enemy round 12 track A (design 7.31): on this player's screen too (soldier_act::QuietAsk; view= on the warp line).
     const unsigned quiet_idx = request.go_id & 0x1ffu;
-    const bool quiet_asked = quiet && labc.quiet_place && grant.kind == mgscoop::world::place::correct && (request.go_id >> 9) == 2u;
+    const bool quiet_asked = mgscoop::soldier_act::QuietAsk(labc.quiet_place, quiet, false,
+                                                            grant.kind == mgscoop::world::place::correct, request.go_id);
     const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos) : mgscoop::soldier_act::QuietWhy::unknown;
     // Enemy round 11 track A (design 7.31): a walker goes quiet too (QuietWhy walk) and is re-planned after the move: the
     // message's handler posts action 0xa6 naming this PC's player for every stance 1-2 guard (the normal stance).
@@ -2977,10 +2979,11 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
             char line[512]{};
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
-        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s%s%s\r\n", unsigned(seq),
+        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s%s%s%s\r\n", unsigned(seq),
                   unsigned(grant.kind), grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out,
                   unsigned(result.handled), quiet_move ? "quiet" : sw::LeafName(result.chain), result.refusal ? result.refusal : "none",
-                  quiet_asked ? "; quiet=" : "", quiet_asked ? mgscoop::soldier_act::QuietWhyName(quiet_why) : "");
+                  quiet_asked ? "; quiet=" : "", quiet_asked ? mgscoop::soldier_act::QuietWhyName(quiet_why) : "",
+                  quiet_asked ? (quiet ? "; view=off" : "; view=on") : "");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
@@ -3044,9 +3047,28 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
     if (!grant.serial || grant.serial > 0x7FFFFFFFu) return refuse("grant");
     const std::uint32_t id = 0x80000000u | grant.serial;
+    // Enemy round 12 track A (quiet_place, design 7.31): the host's M3 placement goes quiet too, as the guest's corrections
+    // (the message's handler posts action 0xa6 naming this PC's player for a stance 1-2 guard): the same QuietCheck, hook
+    // (soldier_act::QuietHook: a host with soldier_owner), walker re-plan, grant, gate, range and budget.
+    const unsigned quiet_idx = request.go_id & 0x1ffu;
+    const bool quiet_asked = mgscoop::soldier_act::QuietAsk(labc.quiet_place, false, true,
+                                                            grant.kind == mgscoop::world::place::correct, request.go_id);
+    const auto quiet_why = quiet_asked ? mgscoop::soldier_act::QuietCheck(quiet_idx, request.pos) : mgscoop::soldier_act::QuietWhy::unknown;
+    const bool quiet_walk = quiet_why == mgscoop::soldier_act::QuietWhy::walk;
+    const bool quiet_move = quiet_asked && (quiet_why == mgscoop::soldier_act::QuietWhy::ok || quiet_walk);
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
-    else {
+    else if (quiet_move) {
+        float squared = 0.0f;
+        for (unsigned i = 0; i < 3; ++i) squared += (request.pos[i] - request.player[i]) * (request.pos[i] - request.player[i]);
+        if (!(squared <= request.max_range * request.max_range)) result.refusal = "range";
+        else if (!mgscoop::soldier_act::StageQuiet(quiet_idx, request.go_id, seq, request.pos, request.yaw, quiet_walk)) result.refusal = "contract";
+        else {
+            result.out = 0;
+            result.handled = 1;
+            soldier_warp_gate.Record(result);
+        }
+    } else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
     }
@@ -3064,17 +3086,19 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
         }
         // Enemy round 8: the guest's pose age and its height over the target (dgy_m; about -270 m while the guest's pose is
         // unknown and read as 0, 8b581a26).
+        // Round 12 (quiet_place): leaf=quiet and quiet=<why> as on the guest's warp line.
         LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s; flat=%u; "
-                  "g_age_ms=%u; dgy_m=%.1f; g_src=%s\r\n", unsigned(seq),
+                  "g_age_ms=%u; dgy_m=%.1f; g_src=%s%s%s\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),
-                  sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none",
+                  quiet_move ? "quiet" : sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none",
                   labc.range_flat ? 1u : 0u, snapshot.remote_age_ms, snapshot.remote_range_pos[1] - grant.pos[1],
-                  sw::RemoteSourceName(static_cast<sw::RemoteSource>(snapshot.remote_range_src)));
+                  sw::RemoteSourceName(static_cast<sw::RemoteSource>(snapshot.remote_range_src)),
+                  quiet_asked ? "; quiet=" : "", quiet_asked ? mgscoop::soldier_act::QuietWhyName(quiet_why) : "");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {r=%d,h=%u,leaf=\"%s\"}", unrealized ? -1 : result.out,
-                     unsigned(result.handled), result.chain.pinned ? "pinned" : "engine");
+                     unsigned(result.handled), quiet_move ? "quiet" : result.chain.pinned ? "pinned" : "engine");
     return debug_reply;
 }
 
@@ -7391,11 +7415,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         if (mgscoop::soldier_act::Install(base, game_span, Log)) mgscoop::soldier_act::SetCensus(true);
                     }
                     // Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the same hook runs the guest's
-                    // quiet corrections (GuestWarpReceipt stages them; soldier_act::QuietOne).
-                    if (labc.quiet_place && labc.soldier_follow && labc.role == mgscoop::LabRole::guest) {
+                    // quiet corrections (GuestWarpReceipt stages them; soldier_act::QuietOne). Round 12 (design 7.31): and the
+                    // host's M3 placements (HostWarpReceipt) on a host with soldier_owner (soldier_act::QuietHook).
+                    const bool quiet_host = labc.role == mgscoop::LabRole::host;
+                    if (mgscoop::soldier_act::QuietHook(labc.quiet_place, labc.soldier_follow, labc.soldier_owner, quiet_host)) {
                         const bool hooked = mgscoop::soldier_act::Install(base, game_span, Log);
                         mgscoop::soldier_act::SetQuietRest(hooked);  // round 9: the rest views QuietCheck reads
-                        LogFormat("soldier_act_quiet=%s; rest=%s\r\n", hooked ? "on" : "off", hooked ? "on" : "off");
+                        LogFormat("soldier_act_quiet=%s; rest=%s; role=%s\r\n", hooked ? "on" : "off", hooked ? "on" : "off",
+                                  quiet_host ? "host" : "guest");
                     }
                     // FM1, the far mirror (soldier_act.hpp, lua/coop/world_mirror.lua): the same hook, the mirror on this
                     // copy's role, and the bullet / noise filters for the mirror puppets' shots (installed here, not only

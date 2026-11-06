@@ -92,8 +92,8 @@ do
                         -- Enemy round 8 (quiet_place): x/z from the target too (dxz_m) when the placement is known.
                         local dxz = b.c and type(b.c.x) == "number" and type(b.c.z) == "number" and flat(x, z, b.c.x, b.c.z) or nil
                         -- Round 11: a quiet move against the owner copy too (the host's last sample moved on by its speed
-                        -- for at most 400 ms: dho_m; that sample's age: oage_ms).
-                        local o, ho = b.src == "quiet" and P.lastS[h] or nil, ""
+                        -- for at most 400 ms: dho_m; that sample's age: oage_ms). Round 12: a message correction's too.
+                        local o, ho = (b.src == "quiet" or b.src == "place") and P.lastS[h] or nil, ""
                         if o and type(o.at) == "number" and type(o.x) == "number" and type(o.z) == "number" then
                             local u = min(now - o.at, 400)
                             ho = fmt(";dho_m=%.2f;oage_ms=%d", flat(x, z, o.x + (o.vx or 0) * u, o.z + (o.vz or 0) * u) / 1000,
