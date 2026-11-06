@@ -145,6 +145,15 @@ do
             if type(px) ~= "number" or type(pz) ~= "number" or type(list) ~= "table" or #list == 0 then return end
             px, pz = px * 1000, pz * 1000
             local quiet = not (M.shotAt and now - M.shotAt < M.SHOT_MS)
+            -- Round 12 C (D-FM1 (a)): the calm limit ends on any CP at EVASION / ALERT on this PC, not only the guard's own
+            -- (an LRRP crew whose CP stayed calm fought in CP 557's ALERT and was taken at 97-117 m, runs 516e3ef7 / 4735fee5).
+            local lim = false
+            if M.lim then
+                for _, ch in ipairs(W.cpOrder or {}) do
+                    local cc = W.cp and W.cp[ch]
+                    if cc and (cc.localPhase or 0) >= 2 then lim = true; break end
+                end
+            end
             -- Every puppet is checked every update (the round robin below visits a guard only every ~0.8 s with ~280
             -- roster entries): the guest within R, a guest-local phase rise in his CP, and the guest's own shot release at
             -- once. One ACT_V1 m per update goes to the puppet asked longest ago (his lease and the shot count).
@@ -156,7 +165,7 @@ do
                     local x, _, z = pos(en.id)
                     local d = x and flat(x, z, px, pz)
                     local R, c = M.rOf(en)
-                    if M.lim and (c and c.localPhase or 0) >= 2 then M.set(h, en, false, "phase_limit", d, R)
+                    if lim or M.lim and (c and c.localPhase or 0) >= 2 then M.set(h, en, false, "phase_limit", d, R)
                     elseif not d or d < R * 1000 then M.set(h, en, false, "near", d, R)
                     elseif c and c.ownAt and c.ownAt >= p.at then M.set(h, en, false, "phase", d, R)
                     elseif not dueAt or (p.mAt or 0) < dueAt then due, dueAt = h, p.mAt or 0 end
@@ -188,7 +197,7 @@ do
                     elseif P.state(en) ~= 0 then why = "state"
                     elseif not d or d < R * 1000 then why = "near"
                     elseif d > M.RANGE * 1000 then why = "range"
-                    elseif M.lim and (c and c.localPhase or 0) >= 2 then why = "phase_limit"
+                    elseif lim or M.lim and (c and c.localPhase or 0) >= 2 then why = "phase_limit"
                     elseif M.rides(en) then why = "vehicle"
                     elseif not quiet then why = "shot"
                     elseif p and rise and rise >= p.at then why = "phase" end
