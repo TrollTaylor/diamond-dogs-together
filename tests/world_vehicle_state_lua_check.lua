@@ -880,7 +880,12 @@ end
 -- empty, at once on a rider count change; riders lines on a change, else 2 s moving / 10 s; one crew line per truck every
 -- 2 s; the guest's follow lines 1 Hz moving, 10 s otherwise, at once on a mode or count change. (2) The crew hold: for
 -- 10 s after a host get-out the host keeps a crew member it owns (P.ownerOf answers 0). (4) The clock offset follows a
--- step up within 2 s (86d6045f: 25606's guest copy led by 1.1-2.4 m for 29 s). Red first: every check below failed.
+-- step up within 2 s (86d6045f: 25606's guest copy led by 1.1-2.4 m for 29 s). Red first (c788d65c): 19 of the 23
+-- checks below failed; 'a guest rider count change logs a follow line at once', 'hold: a seated crew member', 'hold:
+-- lrrp_follow off' and 'offset: steady' passed at red (controls). The green commit 20509a91 loosened the 60 s total from
+-- <= 180 to <= 280 (green: 260; the crews' first 60 s of lines) and named the whole host line in the count-change check.
+-- Land fix (review): the hold and the offset window only with lrrp_follow named (cfg 1); at the defaults (the gun
+-- profile, 30010) the 0.15.3 owner decision and offset filter (the last checks of this block; red at 20509a91).
 do
     local function after(c, k, pat) local n = 0 for i = k + 1, #c.logs do if c.logs[i]:find(pat, 1, true) then n = n + 1 end end return n end
     local function placedOf(t, id) local r = {} for _, p in ipairs(t.placed) do if p.id == id then r[#r + 1] = p end end return r end
@@ -949,7 +954,9 @@ do
     seen = {}
     P.ownerOf = function(hh) seen[#seen + 1] = hh; return 1 end
     local hOff = Fixture('host', {place = P})
-    check(hOff.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, hOff.clock) == 1, 'hold: lrrp_follow off: no hold')
+    -- Land fix (review): a get-out on record, so the check needs the guard (it passed without one before).
+    hOff.W.crewOutAt[str32('sol_a')] = hOff.clock
+    check(hOff.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, hOff.clock) == 1 and #seen == 1, 'hold: lrrp_follow off: no hold (a get-out on record)')
 
     -- (4) The clock offset: the host's clock falls 1 s behind the guest's (a 1.3 s guest step while the host's moved
     -- 300 ms). Before: the offset rose 2 % a sample and ahead sat at its 400 ms cap: the copy led 2 m at 10 m/s for seconds.
@@ -968,5 +975,34 @@ do
     p = placedOf(g, 25602)
     local lead1 = p[#p].x - tr.b.x
     check(math.abs(lead1 - lead0) <= 300, 'offset: 3 s after the host\'s clock fell 1 s behind, the lead is back (' .. lead1 .. ' mm, was ' .. lead0 .. ')')
+
+    -- Land fix (review, design 7.32): at the defaults (lrrp_follow by the gun profile, 30010) neither the hold nor the
+    -- offset window runs. The hold keeps the host's copy the brain and host copies do not perceive the guest
+    -- (soldier_perceive is off): fc141dc1's crew got out 25-27 m from the guest, so it could leave the guest less seen
+    -- than 0.15.3 (the user's decision). The window has no game run yet. Both stay named-only (lrrp_follow=1).
+    seen = {}
+    local P2 = {own = {}, ownerOf = function(hh) seen[#seen + 1] = hh; return 1 end}
+    h = Fixture('host', {lrrpDefault = true, mission = 30010, place = P2})
+    h.W.byId = {[1194] = str32('sol_a'), [1195] = str32('sol_b')}
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    h:polls(40, 50)
+    h.pool[25602].riders = {1195}
+    h:polls(30, 50)
+    check(h:has('event=lrrp;step=crew_out;id=25602;ent=' .. str32('sol_a')) and h.W.place.ownerOf(str32('sol_a'), 1e10, 1e8, h.clock) == 1 and
+        #seen == 1 and not h:has('step=crew_hold'), 'hold: at the defaults (30010, the gun profile) no hold: the owner decision as in 0.15.3')
+    g = Fixture('guest', {lrrpDefault = true, mission = 30010})
+    g:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    g:start(); g:pair()
+    ht = 50000
+    for _ = 1, 30 do s(100, 100) end
+    tr = g.S.lf.tr[25602]
+    p = placedOf(g, 25602)
+    local d0 = p[#p].x - tr.b.x
+    s(300, 1300)
+    for _ = 1, 30 do s(100, 100) end
+    p = placedOf(g, 25602)
+    local d1 = p[#p].x - tr.b.x
+    check(d0 >= 1700 and d0 <= 2300 and d1 >= 3000, 'offset: at the defaults the 0.15.3 filter (the window is named-only; ' .. d0 .. ' then ' .. d1 .. ' mm)')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')
