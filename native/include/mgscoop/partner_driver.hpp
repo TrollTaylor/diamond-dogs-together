@@ -733,7 +733,14 @@ struct Settings {
     // Horse plan M4 (lab.ini world_horse_shot, with world_horse_pillion): the local passenger's shots start past the horse
     // (the pbox lease, partner_seat_shot horse class) and body 1 raises its gun in the rear seat (partner_seat_gun pillion).
     bool horse_shot;
-    bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
+    // Step S (lab.ini world_horse_pillion with world_horse_share, on with the gun profile): the rear seat's holds
+    // (horse_drive::SeatHold.grace, the DM overlay's pillion re-entry; the Lua track wait follows the same key).
+    bool horse_seat_holds;
+    // Horse plan M2h (lab.ini world_horse_cargo with world_horse_share, off unless named): while the horse cargo holds body 1
+    // on this copy (coop_carry's cargo hold, not a stock carried body 1) the reconciliation leaves it alone (pr::In
+    // body_owned: no placement or correction, a neutral armed window): run a53a243a's 32 place lines beside hold1.
+    bool horse_cargo;
+    bool ui_filter;   // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
     // a ride logs partner_ride=net_rebased (partner_native_unrealize_all, "Ride hides").
     bool unrealize_all;
@@ -1109,6 +1116,7 @@ struct Mission {
     bool hold_stripped; // live remote HOLD refused by the effective native mask/gate
     bool dash_fix;
     bool carry_hold; // instance 1 is in the stock carried state (coop_carry): recon holds
+    bool recon_owned; // M2h: the horse cargo's hold owns instance 1 (Settings.horse_cargo): the recon's body_owned
     bool vehicle_job; // current verified demand keeps native Arm until original exit
     partner_native::DashState dash;
     std::uint32_t recon_in_age_ms;

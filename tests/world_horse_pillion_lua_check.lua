@@ -304,8 +304,9 @@ g.tick(33)
 check(g.P.state == "off" and g.logged("why=track_end;side=passenger;placed=1"), "the track's end: laid off")
 -- M4 (play run 28015a91, -WanSim bad): a gap in the driver's RIDE_FAST ended this copy's track (stream_lost) for 0.9 s
 -- while the ride went on, and the seat with it. A stream loss is held up to 2 s (body 0 at its last target, step=
--- track_wait); the stream back keeps the seat; a loss past 2 s still lays the passenger off. The review of M4: the hold is
--- part of world_horse_shot (off unless named): at the defaults a stream loss lays off at once, as in 0.15.2.
+-- track_wait); the stream back keeps the seat; a loss past 2 s still lays the passenger off. Step S: the hold is part of
+-- world_horse_pillion's default (play 22926dbf: the driver's E got them off after a hop-off with it, both orders), not of
+-- world_horse_shot: at the defaults (the shot key off) a stream loss is held too.
 h, g = fixture(), fixture({host = false})
 h.rides, h.horse.occupied = true, true
 g.ride(3)
@@ -313,8 +314,8 @@ seatBoth(h, g)
 local guard0 = 0
 while g.S.track and guard0 < 60 do g.tick(50); guard0 = guard0 + 1 end
 g.tick(50)
-check(g.P.state == "off" and not g.logged("step=track_wait") and g.logged("why=track_end;side=passenger;placed=1"),
-    "shot key off: a stream loss lays off at once")
+check(g.P.state == "seated" and g.logged("event=horse_pillion;step=track_wait;why=stream_lost") and g.count("step=unseated") == 0,
+    "shot key off (the defaults): a stream loss is held (track_wait)")
 h, g = fixture(), fixture({host = false, shot = true})
 h.rides, h.horse.occupied = true, true
 g.ride(3)

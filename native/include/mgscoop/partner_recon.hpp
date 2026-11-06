@@ -286,6 +286,10 @@ struct In {
     // the runaway stay off (a placement disarms the window or neutralizes the
     // pad, which drops the ACTION tap). Teleports and body jumps still place.
     bool traverse_hold{};
+    // Horse plan M2h (lab a53a243a: 32 place lines beside horse_drive=held body=1): an outside hold owns body 1 (the horse
+    // cargo's hold1 on the carrier's copy, world_horse_cargo). No placement, verification, correction, stance fix or
+    // runaway; the window stays armed with a neutral pad (mode track); pending placements are dropped.
+    bool body_owned{};
 };
 
 struct Report {
