@@ -128,6 +128,21 @@ bool CachedBody1Usable(const BodyClass& b0, const BodyClass& c) noexcept {
     return c.t_vt && c.t68 && c.t70 && c.t58 && b0.t_vt == c.t_vt && b0.t68 == c.t68 && b0.t70 == c.t70 && b0.t58 == c.t58;
 }
 
+bool HoldRunA0(HoldRun& r, std::uint64_t now) noexcept {
+    if (!r.last || now < r.last || now - r.last > kHoldRunGapMs) {
+        r.start = now;
+        r.a0 = false;
+    }
+    r.last = now;
+    if (r.a0 || now - r.start < kA0DelayMs) return false;
+    r.a0 = true;
+    return true;
+}
+
+bool A0Usable(const BodyClass& b0, const BodyClass& b1) noexcept {
+    return b1.a0_vt && b1.a080 && b0.a0_vt == b1.a0_vt && b0.a080 == b1.a080;
+}
+
 const char* PlaceRefusal(const PlaceScope& s) noexcept {
     if (!s.key) return "off";
     if (!s.pins) return "pins";

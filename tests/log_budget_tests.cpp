@@ -88,11 +88,24 @@ void BucketCases() {
     Check(!lb::TakeToken(c, 2, 20, 5000).emit, "step back: no refill");
     Check(lb::TakeToken(c, 2, 20, 5050).emit, "refills from the new clock");
 }
+// Horse step S2 (play b228d163: the host's world log dropped 441 runs of lines to world=log_cap under the default
+// lrrp_follow flood, the horse's first_move / stall lines with them): horse lines take their own bucket.
+void HorseLineCases() {
+    Check(lb::HorseLine("world_lua=event=horse_pillion; step=stall; ms=2035"), "a horse_pillion line is a horse line");
+    Check(lb::HorseLine("world_lua=event=horse_share; step=here; placed=1"), "a horse_share line is a horse line");
+    Check(lb::HorseLine("world_lua=horse_place=stats; placed=108"), "the horse_place stats line is a horse line");
+    Check(lb::HorseLine("world_lua=event=horse_cargo; step=pin"), "a horse_cargo line is a horse line");
+    Check(!lb::HorseLine("world_lua=event=lrrp; step=follow"), "an lrrp line is not");
+    Check(!lb::HorseLine("world_lua=event=downed; step=entered"), "a downed line is not");
+    Check(!lb::HorseLine("xworld_lua=event=horse_pillion"), "only at the start");
+    Check(!lb::HorseLine(nullptr), "null is not");
+}
 } // namespace
 
 int main() {
     RotatingCases();
     BucketCases();
+    HorseLineCases();
     std::printf("log_budget_tests: %u passed\n", g_checks);
     return 0;
 }

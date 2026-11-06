@@ -5686,6 +5686,11 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     }
     in.q18[0] = dm.q18[0];
     in.q18[1] = dm.q18[1];
+    // Step S2: body 1's DM record while the overlay seats it behind this copy's rider (the pillion stats line).
+    if (in.pillion) {
+        m.pillion_dm = dm;
+        m.pillion_dm_ok = in.dm_ok;
+    }
     in.g388 = dm.g388;
     in.rec18 = dm.rec18;
     in.cam_ok = dm.cam_ok;
@@ -8010,6 +8015,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.pillion_hold.grace = set.horse_seat_holds;
         const bool lease = set.horse_share && set.source == PartnerSource::net && st.local == 0 &&
                            horse_drive::HoldSeat(m.pillion_hold, horse_drive::SeatLease(now, back, up, seat_pose), back, up, seat_pose);
+        if (lease && m.pillion_hold.miss) ++m.pillion_grace_n;  // step S2: a lapsed lease kept by the grace this tick
         if (lease && h.read_local_body && h.read_local_body(h.context, st, lp, lq)) {
             const float yaw = partner::QuatToYaw(lq);
             const float rider[3] = {lp[0], lp[1], lp[2]};
@@ -8540,12 +8546,26 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     if ((m.pillion_seat_ok || m.pillion_err_n) && now - m.pillion_stats_ms >= 1000) {
         if (m.pillion_err_n && m.pillion_stats_lines < 600) {
             ++m.pillion_stats_lines;
-            EmitFormat(h, "partner_pillion=stats; xz_cm=%d; dy_cm=%d; n=%u\r\n", static_cast<int>(std::lround(m.pillion_xz_max * 100.f)),
-                       static_cast<int>(std::lround(m.pillion_dy_max * 100.f)), m.pillion_err_n);
+            // Step S2 (play 79287a27 (b), body 1 standing on the rump after a rock stall): body 1's act / stance / speed /
+            // upper act this tick, the overlay's phase, its DM record as last read while seating, the grace ticks used.
+            std::uint8_t upper[2]{};
+            const bool upper_ok = pp::ReadUpper(st, upper);
+            const pp::DmState& dm = m.pillion_dm;
+            EmitFormat(h,
+                       "partner_pillion=stats; xz_cm=%d; dy_cm=%d; n=%u; act=%u; st=%u; sp=%u; q28=%u; qd8=%u; up=%d; ov=%s; dm=%u; "
+                       "q18=0x%x,0x%x; ps2d8=%d; rec10=%u; rec11=%u; rec18=0x%llx; rec1a0=%u; rec248=0x%02x; grace=%u; pose=%u\r\n",
+                       static_cast<int>(std::lround(m.pillion_xz_max * 100.f)), static_cast<int>(std::lround(m.pillion_dy_max * 100.f)),
+                       m.pillion_err_n, anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.stance[1]) : 0u,
+                       anim_ok ? unsigned(anim.speed[1]) : 0u, anim_ok ? unsigned(anim.q28[1]) : 0u, anim_ok ? unsigned(anim.qd8[1]) : 0u,
+                       upper_ok ? int(upper[1]) : -1, pdo::PhaseName(m.overlay.phase), m.pillion_dm_ok ? 1u : 0u, unsigned(dm.q18[0]),
+                       unsigned(dm.q18[1]), int(dm.ps2d8[1]), unsigned(dm.rec10), unsigned(dm.rec11),
+                       static_cast<unsigned long long>(dm.rec18), unsigned(dm.rec1a0), unsigned(dm.rec248), m.pillion_grace_n,
+                       m.pillion_pose ? 1u : 0u);
         }
         m.pillion_stats_ms = now;
         m.pillion_xz_max = m.pillion_dy_max = 0.f;
         m.pillion_err_n = 0;
+        m.pillion_grace_n = 0;
     }
     // lost -> live on the net source this tick (hybrid and apply=input relink).
     const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;

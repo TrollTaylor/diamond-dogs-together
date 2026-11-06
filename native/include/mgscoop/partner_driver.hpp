@@ -847,6 +847,11 @@ struct Mission {
     bool pillion_aim_on;
     float pillion_xz_max, pillion_dy_max;
     unsigned pillion_err_n, pillion_stats_lines;
+    // Step S2 (play 79287a27 (b): body 1 STANDING on the rump after a rock stall, the overlay still playing): the seat's
+    // grace ticks used in the stats window and body 1's DM record as the overlay last read it while seating it.
+    unsigned pillion_grace_n;
+    partner_player::DmState pillion_dm;
+    bool pillion_dm_ok;
     std::uint64_t pillion_stats_ms;
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
     // kRideCensusMs (the local one and the remote driver's copy), own cap.
