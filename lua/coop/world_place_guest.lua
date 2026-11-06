@@ -232,7 +232,8 @@ do
             -- Native placements only, as the host's pick; a route placement re-enables
             -- the guard on both PCs (the retail sequence) and never checks a vehicle.
             if c.kind == 1 or c.kind == 3 then
-                if P.seated(en.id) then return "vehicle_local" end
+                local ok, v = pcall(send, en.id, {id = "GetVehicleGameObjectId"})
+                if ok and type(v) == "number" and v ~= W.api.null then return "vehicle_local" end
                 local off = W.get(TppGameObject, "NPC_STATE_DISABLE")
                 local good, s = pcall(send, en.id, {id = "GetStatus"})
                 -- Enemy gaps 2 (body_dead): a dead body's placement goes (run 41f2b07f: 6.8 m apart).
