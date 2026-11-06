@@ -53,7 +53,7 @@ local function Fixture(role, opts)
     W.tick32 = function(ms) return ms % 4294967296 end
     W.receipt = function(source)
         -- Enemy round 8 track B: the native-only lab key lrrp_follow (1 on, 0 off).
-        if source == "return 'MGS_COOP_LRRP_CFG_V1'" then c.cfgAsked = (c.cfgAsked or 0) + 1; return opts.lrrp and 1 or 0 end
+        if source == "return 'MGS_COOP_LRRP_CFG_V1'" then c.cfgAsked = (c.cfgAsked or 0) + 1; return opts.lrrpDefault and 2 or opts.lrrp and 1 or 0 end
         local first, n = source:match("^return 'MGS_COOP_VEHICLE_LIFE_V1' %-%- (%d+) (%d+)$")
         assert(first, 'only the life receipt: ' .. source)
         c.reads = (c.reads or 0) + 1
@@ -573,21 +573,23 @@ do
     -- The host's truck drives again, this copy's crew still seated: still stopped here, placed every frame.
     n = #placedOf(g, 25602)
     for i = 86, 90 do g.H[93]({6100 + i * 100, 25602, 111000 + (i - 85) * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
-    check(forces(g, 25602, true) == 1 and #placedOf(g, 25602) >= n + 5, 'guest: driving again: followed, ForceStop never lifted')
+    -- Enemy harden (design 7.30): the 20 m move at rest above sent ForceStop once more (step=restop): 2 sends, never lifted.
+    check(forces(g, 25602, true) == 2 and forces(g, 25602, false) == 0 and g:count('event=lrrp;step=restop;id=25602') == 1 and
+        #placedOf(g, 25602) >= n + 5, 'guest: driving again: followed, ForceStop never lifted')
     check(g:has('event=lrrp;step=riders;id=25602;n=2;r1=1194:?'), 'guest: a riders line of its own')
     -- Stale 3 s: ForceStop off, the track dropped.
     g:polls(35, 100)
     check(forces(g, 25602, false) == 1 and g:has('event=lrrp;step=stale;id=25602') and g.S.lf.tr[25602] == nil, 'guest: 3 s stale: released')
     -- The local player's ride, unpaired and stop release it too.
     for i = 0, 3 do g.H[93]({20000 + i * 100, 25602, 200000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
-    check(forces(g, 25602, true) == 2, 'guest: a new track stops it again')
+    check(forces(g, 25602, true) == 3, 'guest: a new track stops it again')
     g.riding = true; g.env.vars.playerVehicleGameObjectId = 25602
     n = #placedOf(g, 25602)
     for i = 4, 7 do g.H[93]({20000 + i * 100, 25602, 200000 + i * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
     check(forces(g, 25602, false) == 2 and #placedOf(g, 25602) == n, 'guest: the local player rides it: released, never moved')
     g.riding = false; g.env.vars.playerVehicleGameObjectId = 65535
     for i = 8, 10 do g.H[93]({20000 + i * 100, 25602, 200000 + i * 1000, 1000, 200000, 0, 10000, 2, 1}); g:poll(100) end
-    check(forces(g, 25602, true) == 3, 'guest: off it again: followed again')
+    check(forces(g, 25602, true) == 4, 'guest: off it again: followed again')
     for _, f in ipairs(g.W.stopHooks) do f(true) end
     check(forces(g, 25602, false) == 3 and next(g.S.lf.tr) == nil, 'guest: stop releases every truck it stopped')
 
@@ -774,5 +776,93 @@ do
     for i = 6, 20 do s3(5600000 + i * 1000, 10000, 1) end
     check(#cmdsOf(g, 1194, 'StartTravel') == 0 and g:has('event=lrrp;step=tstep_hold;id=25603;ent=' .. str32('sol_a') .. ';why=wait'),
         'guest: its truck waits near this player: the crew keeps its own step')
+end
+-- Enemy round 10 B flip (design 7.28): at the defaults (gun profile, not named) the receipt answers 2 and lrrp_follow runs
+-- in Afghanistan free roam (30010) only, the map its gate ran on; a named 1 runs on any map.
+do
+    local h = Fixture('host', {lrrpDefault = true, mission = 30010})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(h.S.lf.on() and #h:sent(93) >= 5, 'defaults (receipt 2): on in 30010')
+    h = Fixture('host', {lrrpDefault = true, mission = 30020})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(not h.S.lf.on() and #h:sent(93) == 0, 'defaults (receipt 2): off in Africa (30020)')
+    h = Fixture('host', {lrrpDefault = true, mission = 30050})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(not h.S.lf.on() and #h:sent(93) == 0, 'defaults (receipt 2): off at Mother Base (30050)')
+    h = Fixture('host', {lrrp = true, mission = 30020})
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(h.S.lf.on() and #h:sent(93) >= 5, 'named 1: on in Africa too')
+end
+-- Enemy harden (design 7.30). Red first: the checks below failed before the fix, but for three controls that passed
+-- then too ('read off the origin it is streamed', 'the first settle places it', 'rest near: placed back each time').
+do
+    local function forces(t, id, on) local n = 0 for _, f in ipairs(t.force) do if f.id == id and f.on == on then n = n + 1 end end return n end
+    local function placedOf(t, id) local r = {} for _, p in ipairs(t.placed) do if p.id == id then r[#r + 1] = p end end return r end
+    local function cmdsOf(t, gid, cmd) local r = {} for _, s in ipairs(t.cmds) do if s.id == gid and s.cmd == cmd then r[#r + 1] = s end end return r end
+    -- (2) f256bf29: the guest's copy of manned 25606 read x=0, z=0 for one frame and logged a 1949.5 m jump (the distance
+    -- to the map origin) and was placed. A pose at the origin is no sample (world_snap.lua's readers): no jump, no move.
+    local g = Fixture('guest', {lrrp = true})
+    g:add(25606, -1687.49, 976.26, 4, 'veh_trc_0004', {riders = {1194, 1195}})
+    g:start(); g:pair()
+    local tick = 1000
+    local function s6(x, z, v, nn, f) tick = tick + 100; g.H[93]({tick, 25606, x, 305730, z, 385, v, nn, f}); g:poll(100) end
+    for _ = 1, 5 do s6(-1687490, 976260, 0, 2, 0) end
+    local n0 = #placedOf(g, 25606)
+    g.pool[25606].x, g.pool[25606].z = 0, 0
+    s6(-1687490, 976260, 0, 2, 0)
+    check(not g:has('event=lrrp;step=jump;id=25606') and #placedOf(g, 25606) == n0, 'origin: a pose read at x=0, z=0 is no sample (no jump, no placement)')
+    g.pool[25606].x, g.pool[25606].z = -1687.49, 976.26
+    for _ = 1, 3 do s6(-1687490, 976260, 0, 2, 0) end
+    check(not g:has('event=lrrp;step=jump;id=25606') and forces(g, 25606, false) == 0, 'origin: read back on the spot: nothing to do')
+    -- The host never streams a truck it reads at the origin.
+    local h = Fixture('host', {lrrp = true})
+    h:add(25606, 0, 0, 4, 'veh_trc_0004', {riders = {1194, 1195}})
+    h:start(); h:pair()
+    h:polls(20, 50)
+    check(#h:sent(93) == 0, 'origin: the host never streams a truck read at x=0, z=0')
+    h.pool[25606].x = 10.0
+    h:polls(20, 50)
+    check(#h:sent(93) >= 1, 'origin: read off the origin it is streamed')
+    -- (3) f256bf29 / fc141dc1: rest trucks 0.8-3.4 km from both players whose crew still sat here moved 1 m+ again and
+    -- again and were placed 77-89 times in about 20 s (ForceStop sent once, at the first frame); every crew was unseated
+    -- every 5 s until the crews got out (4-5 rounds, 32-38 commands). Now a rest truck found 1 m+ off again after its
+    -- settle gets ForceStop again (step=restop, at most once a second); far from this player (400 m) it is placed back at
+    -- most once a second; a guard is unseated at most 3 times per rest spell (then step=unseat_hold, once).
+    g = Fixture('guest', {lrrp = true})
+    g:add(25607, -722.1, -1414.4, 4, 'veh_trc_0005', {riders = {4005, 2280}})
+    g:start(); g:pair()
+    tick = 1000
+    local function s7(x, z) tick = tick + 100; g.H[93]({tick, 25607, x, 526050, z, -742, 0, 0, 0}); g:poll(100) end
+    s7(-775800, -1341860)
+    check(#placedOf(g, 25607) == 1 and g:has('event=lrrp;step=settle;id=25607'), 'rest: the first settle places it')
+    -- Its own AI drives it on at 6 m/s (0.6 m a frame) between placements.
+    local function creep() g.pool[25607].x = g.pool[25607].x + 0.6 end
+    for _ = 1, 30 do creep(); s7(-775800, -1341860) end
+    local np = #placedOf(g, 25607) - 1
+    check(np >= 2 and np <= 4, 'rest far: a truck that keeps moving is placed back at most once a second (' .. np .. ' in 3 s)')
+    check(g:count('event=lrrp;step=settle;id=25607') <= np + 1, 'rest far: a settle line only with a placement, never each held frame (' .. g:count('event=lrrp;step=settle;id=25607') .. ')')
+    check(forces(g, 25607, true) >= 3 and g:has('event=lrrp;step=restop;id=25607;'), 'rest: ForceStop again with each re-placement (step=restop)')
+    for _ = 1, 300 do s7(-775800, -1341860) end
+    check(#cmdsOf(g, 4005, 'UnsetRelativeVehicle') == 3 and #cmdsOf(g, 2280, 'UnsetRelativeVehicle') == 3 and
+        g:count('event=lrrp;step=unseat_hold;id=25607;ent=4005') == 1, 'rest: a crew still seated is unseated 3 times per rest spell, then held (one line)')
+    -- Near this player (within 400 m) a rest truck stays pinned every frame; ForceStop again at most once a second.
+    g = Fixture('guest', {lrrp = true})
+    g.env.vars.playerPosX, g.env.vars.playerPosZ = -770, -1340
+    g:add(25607, -775.0, -1342.5, 4, 'veh_trc_0005', {riders = {4005, 2280}})
+    g:start(); g:pair()
+    tick = 1000
+    s7(-775800, -1341860)
+    for _ = 1, 30 do creep(); s7(-775800, -1341860) end
+    np = #placedOf(g, 25607)
+    check(np >= 12, 'rest near: placed back each time it is 1 m off, as before (' .. np .. ')')
+    check(forces(g, 25607, true) >= 3 and forces(g, 25607, true) <= 5, 'rest near: ForceStop again at most once a second (' .. forces(g, 25607, true) .. ')')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')

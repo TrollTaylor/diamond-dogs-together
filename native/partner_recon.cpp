@@ -634,6 +634,32 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         if (!st.need_place) { st.need_place = true; st.place_reason = reason; }
     };
 
+    // ---- M2h: an outside hold owns body 1 (the horse cargo's hold1) ------------
+    // Lab a53a243a: the recon logged 32 teleport / retry placements while hold1 held body 1 on the horse, and the native
+    // window drove body 1 with the remote's pad. Nothing here moves body 1: no placement (pending ones are dropped: the
+    // held victim's stream jumps are no reason to move it), verification, nudge, pin, snap, turn, stance fix or runaway;
+    // the window stays armed with a neutral pad (block 1's deferred job keeps its window). The observations above keep
+    // running, so the tracker resumes from the body's pose when the hold ends.
+    if (in.body_owned) {
+        st.need_place = false;
+        st.place_reason = PlaceReason::none;
+        st.tries = 0;
+        st.runaway_since = 0;
+        st.runaway_exit_since = 0;
+        st.runaway_active = false;
+        st.lag = false;
+        st.lag_since = 0;
+        st.input_pin = false;
+        st.stuck_since = 0;
+        st.vertical_since = 0;
+        st.frozen = Frozen::none;
+        st.armable_prev = in.armable;
+        if (governor) face_stop("owned");
+        o.arm = in.armable;
+        o.neutral = in.armable;
+        return finish(in.armable ? Mode::track : Mode::fallback);
+    }
+
     // ---- Not armable: the driver keeps the proven fallback --------------------
     if (!in.armable) {
         if (st.armable_prev || !st.started) {

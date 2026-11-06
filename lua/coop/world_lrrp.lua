@@ -1,5 +1,6 @@
 -- Enemy round 8 B / round 9 B (docs/world-sync-design.md 7.21, 7.25; protocol sections 38, 42; native lab key lrrp_follow,
--- off unless named; no CFG bit): the LRRP trucks (the patrol trucks of lrrpVehicle) follow the host's. Spliced after
+-- on with the gun profile in Afghanistan free roam 30010 only since round 10's flip (D-B10), named 1 any map, named 0 off;
+-- no CFG bit): the LRRP trucks (the patrol trucks of lrrpVehicle) follow the host's. Spliced after
 -- world_vehicle_state.lua (W.vehicleState: S.lrrp, S.pose, S.alive, S.on, S.lever); moved out of it in round 9 B.
 --   host:  streams each live LRRP truck no player rides (LRRP_FAST 93: 10 Hz moving, 1 Hz still, 50 ms apart).
 --   guest: holds its copy (ForceStop) and puts it on the host's every frame while it moves or is manned there, pinned
@@ -41,7 +42,8 @@ local function me()
 end
 local LF = {OP = 93, SEND_MS = 50, MOVE_MS = 100, REST_MS = 1000, STALE_MS = 3000, JUMP_MM = 5000, SETTLE_MM = 3000,
   MOVING = 500, AHEAD_MS = 100, MAX_AHEAD_MS = 400, UNSEAT_MS = 2000, CMD_MS = 5000, NEAR_MM = 400000,
-  STEP_MM = 1000, CATCH_MM = 30000, COST_MS = 10000, STEP_OP = 94, TS_MS = 1000, TS_SEND_MS = 5000, TS_LIVE_MS = 15000}
+  STEP_MM = 1000, CATCH_MM = 30000, COST_MS = 10000, STEP_OP = 94, TS_MS = 1000, TS_SEND_MS = 5000, TS_LIVE_MS = 15000,
+  UNSEAT_TRIES = 3}
 S.lf = LF
 W.OP.LRRP_FAST, W.OP.LRRP_STEP = LF.OP, LF.STEP_OP
 function LF.reset()
@@ -55,11 +57,18 @@ function LF.on()
   if LF.cfg == nil and (not LF.askAt or t - LF.askAt >= 5000) then
     LF.askAt = t
     local ok, r = pcall(W.receipt, "return 'MGS_COOP_LRRP_CFG_V1'")
-    if ok and (r == 0 or r == 1) then LF.cfg = r == 1 end
+    if ok and (r == 0 or r == 1 or r == 2) then LF.cfg = r end
   end
-  return LF.cfg == true
+  -- Round 10 B: 2 = on by the gun profile's default, Afghanistan free roam (30010) only; 1 = named, any map.
+  return LF.cfg == 1 or LF.cfg == 2 and W.mission == 30010
 end
 local function ent(v) return type(W.byId) == "table" and W.byId[v] and fmt("%.0f", W.byId[v]) or tostring(v) end
+-- Enemy harden (design 7.30): a pose at the map origin (x = 0, z = 0) is no sample, as world_snap.lua's readers (f256bf29:
+-- the guest's copy of 25606 read it once and logged a 1949.5 m jump, the distance to the origin).
+local function pose(id)
+  local x, y, z, yaw = S.pose(id)
+  if x and (x ~= 0 or z ~= 0) then return x, y, z, yaw end
+end
 -- NPC riders of `id`: count, gids, and "r1=hash:x:z;..." (a line of its own: W.log keeps 160 chars).
 local function riders(id)
   local r, n, gids, s = send(id, {id = "GetRiderId"}), 0, {}, ""
@@ -87,7 +96,7 @@ local function crewLog(id, rec, t, n, gids, rh)
   if not rec.chgAt or t - rec.chgAt > 60000 or t - (rec.crewAt or -1e9) < 1000 then return end
   rec.crewAt = t
   for v in pairs(rec.crew) do
-    local x, _, z = S.pose(v)
+    local x, _, z = pose(v)
     L("event=lrrp;step=crew;id=%d;ent=%s;x=%s;z=%s;in=%d;rl=%d", id, ent(v), x and fmt("%.1f", x / 1000) or "?", x and fmt("%.1f", z / 1000) or "?",
       seated[v] and 1 or 0, n)
   end
@@ -117,7 +126,7 @@ function LF.hostTick(t)
     local h = LF.hs[id] or {sent = -1e9, v = 0, logAt = -1e9}
     LF.hs[id] = h
     local x, y, z, yaw
-    if S.alive(id) and not ridden(id) then x, y, z, yaw = S.pose(id) end
+    if S.alive(id) and not ridden(id) then x, y, z, yaw = pose(id) end
     h.x, h.y, h.z, h.yaw = x, y, z, yaw
     if x then
       if not h.pt or t - h.pt >= 250 then
@@ -171,7 +180,9 @@ H[LF.OP] = function(...)
   if not ok then lfail(err) end
 end
 -- The crew follows the host's count (rh = b.n): this copy's extra riders get out 2 s after the host's did (at rest);
--- one command per guard per 5 s.
+-- one command per guard per 5 s. Enemy harden (design 7.30): at most UNSEAT_TRIES per guard and rest spell, then
+-- step=unseat_hold once (f256bf29 / fc141dc1: 4-5 rounds; each run's far crews all got out at one moment, 18-28 s after
+-- the start, 1.5-5.4 s after their last command whatever their count).
 local function crew(id, tr, t, b, moving, n, gids)
   for _, v in ipairs(gids) do tr.crew[v] = true end
   -- The host's count rose at the stop (its crew boards again): no unseat until its truck drives (801cd90b).
@@ -180,15 +191,22 @@ local function crew(id, tr, t, b, moving, n, gids)
   -- Round 10 B: the host's travel steps arrive for this crew: the step gets it out (never UnsetRelativeVehicle).
   local stepped = t - (LF.stepAt[id] or -1e9) <= LF.TS_LIVE_MS
   tr.outAt = (not moving and b.n < n and not tr.boarding and not stepped) and (tr.outAt or t) or nil
+  if not tr.outAt then tr.tries = nil end
   if tr.outAt and t - tr.outAt >= LF.UNSEAT_MS then
     local extra = n - b.n
+    tr.tries = tr.tries or {}
     for _, v in ipairs(gids) do
       if extra <= 0 then break end
       extra = extra - 1
-      if t - (tr.cmd[v] or -1e9) >= LF.CMD_MS then
-        tr.cmd[v], tr.outs = t, tr.outs + 1
-        send(v, {id = "UnsetRelativeVehicle"})
-        L("event=lrrp;step=unseat;id=%d;ent=%s;k=%d;rh=%d;rl=%d", id, ent(v), tr.outs, b.n, n)
+      local k = tr.tries[v] or 0
+      if t - (tr.cmd[v] or -1e9) >= LF.CMD_MS and k <= LF.UNSEAT_TRIES then
+        tr.cmd[v], tr.tries[v] = t, k + 1
+        if k == LF.UNSEAT_TRIES then L("event=lrrp;step=unseat_hold;id=%d;ent=%s;k=%d;rh=%d;rl=%d", id, ent(v), k, b.n, n)
+        else
+          tr.outs = tr.outs + 1
+          send(v, {id = "UnsetRelativeVehicle"})
+          L("event=lrrp;step=unseat;id=%d;ent=%s;k=%d;rh=%d;rl=%d", id, ent(v), tr.outs, b.n, n)
+        end
       end
     end
   end
@@ -212,7 +230,7 @@ function LF.frame(t)
       end
       local follow = moving or b.n > 0
       tr.restAt = not follow and (tr.restAt or t) or nil
-      local x, _, z = S.pose(id)
+      local x, _, z = pose(id)
       local d = x and hdist(x, z, tx, tz) or -1
       -- How near this player is to either end (mm); a jump there would be seen.
       local near = x and mx and math.min(hdist(x, z, mx, mz), hdist(tx, tz, mx, mz)) or 1e12
@@ -231,18 +249,32 @@ function LF.frame(t)
         wait = true
       else
         force(id, tr, true, follow and (b.n > 0 and "riders" or "moving") or "rest")
-        if not follow and d > LF.SETTLE_MM then L("event=lrrp;step=settle;id=%d;d_m=%.1f", id, d / 1000) end
         local rp = W.ridePose
         local catch = d > LF.JUMP_MM and near < LF.NEAR_MM
         local px, pz = tx, tz
+        -- Enemy harden (design 7.30): at rest, a truck 1 m+ off again after its placement was moved by this copy's own AI
+        -- (f256bf29 / fc141dc1: 77-89 placements in ~20 s, ForceStop sent once): ForceStop again (at most once a second);
+        -- 400 m+ from this player it is put back at most once a second, nearer at once as before.
+        if follow then tr.pinAt = nil end
+        local again = not follow and tr.pinAt and x and d >= 1000
+        local hold = again and near >= LF.NEAR_MM and t - tr.pinAt < LF.REST_MS
+        if again and t - (tr.restopAt or -1e9) >= LF.REST_MS then
+          tr.restopAt, tr.restops = t, (tr.restops or 0) + 1
+          send(id, {id = "ForceStop", enabled = true})
+          if tr.restops <= 5 or tr.restops % 20 == 0 then
+            L("event=lrrp;step=restop;id=%d;d_m=%.1f;near_m=%.0f;k=%d;n=%d", id, d / 1000, near / 1000, tr.restops, tr.n)
+          end
+        end
+        if not follow and not hold and d > LF.SETTLE_MM then L("event=lrrp;step=settle;id=%d;d_m=%.1f", id, d / 1000) end
         if catch then
           px, pz = x + (tx - x) * LF.STEP_MM / d, z + (tz - z) * LF.STEP_MM / d
           if not tr.catching then tr.catching = true; L("event=lrrp;step=catch;id=%d;d_m=%.1f;near_m=%.1f", id, d / 1000, near / 1000) end
         else
           tr.catching = nil
         end
-        if x and (follow and d >= 1 or d >= 1000) and type(rp) == "table" and rp.place and rp.place(id, floor(px), floor(ty), floor(pz), b.yaw) then
+        if x and not hold and (follow and d >= 1 or d >= 1000) and type(rp) == "table" and rp.place and rp.place(id, floor(px), floor(ty), floor(pz), b.yaw) then
           tr.n = tr.n + 1
+          if not follow then tr.pinAt = t end
           if d > LF.JUMP_MM and not catch then
             tr.jumps = tr.jumps + 1
             L("event=lrrp;step=jump;id=%d;d_m=%.1f;mode=%s;jumps=%d;near_m=%.1f", id, d / 1000, follow and "follow" or "rest", tr.jumps, near / 1000)
@@ -258,7 +290,7 @@ function LF.frame(t)
         crewLog(id, tr, t, n, gids, b.n)
         if logs then
           tr.logAt = t
-          local x2, y2, z2 = S.pose(id)
+          local x2, y2, z2 = pose(id)
           L("event=lrrp;step=follow;id=%d;mode=%s;x=%.2f;y=%.2f;z=%.2f;d_m=%.2f;v=%d;rh=%d;rl=%d;jumps=%d;n=%d", id,
             wait and "wait" or follow and "follow" or "rest", (x2 or 0) / 1000, (y2 or 0) / 1000, (z2 or 0) / 1000, d / 1000, b.v, b.n, n, tr.jumps, tr.n)
           if n > 0 then L("event=lrrp;step=riders;id=%d;n=%d%s", id, n, list) end
