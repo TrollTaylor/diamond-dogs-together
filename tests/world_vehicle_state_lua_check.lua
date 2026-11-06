@@ -994,7 +994,7 @@ do
         return tonumber(last:match(';ah=(%-?%d+);')), tonumber(last:match(';ah0=(%-?%d+)'))
     end
     local ol, rise, lag0 = offLine(g)
-    check(ol and ol ~= 'twice' and rise == 1000 and lag0 and lag0 >= 500, 'offset: the step up is logged once (step=off; rise_ms=1000, the 0.15.3 filter lagging 500 ms+) (' .. tostring(ol) .. ')')
+    check(ol and ol ~= 'twice' and rise == 1200 and lag0 and lag0 >= 500, 'offset: the step up is logged once (step=off; rise_ms=1200: the step sample first dips the offset 200 ms, host +300 for guest +100; the 0.15.3 filter lagging 500 ms+) (' .. tostring(ol) .. ')')
     local ah, ah0 = lastAhead(g)
     check(ah and ah <= 300 and ah0 == 400, 'offset: the follow line carries the lead used (ah) and the 0.15.3 filter\'s (ah0, still at its 400 ms cap 3 s after the step) (' .. tostring(ah) .. ', ' .. tostring(ah0) .. ')')
 
@@ -1027,6 +1027,6 @@ do
     local d1 = p[#p].x - tr.b.x
     check(d0 >= 1700 and d0 <= 2300 and math.abs(d1 - d0) <= 300, 'offset: at the defaults (30010, the gun profile) the window too: 3 s after the step the lead is back (' .. d0 .. ' then ' .. d1 .. ' mm)')
     ol, rise = offLine(g)
-    check(ol and ol ~= 'twice' and rise == 1000, 'offset: at the defaults the step up is logged once (step=off) (' .. tostring(ol) .. ')')
+    check(ol and ol ~= 'twice' and rise == 1200, 'offset: at the defaults the step up is logged once (step=off) (' .. tostring(ol) .. ')')
 end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')

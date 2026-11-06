@@ -217,17 +217,22 @@ H[LF.OP] = function(...)
   if b and ((v[1] - b.tick) % 4294967296 >= 2147483648 or v[1] == b.tick) then return end
   -- Enemy round 11 B (design 7.32): the clock offset is the lowest of the last second's samples (it was the lowest ever,
   -- rising 2 % a sample: after a step up, ahead sat at its 400 ms cap for seconds and the copy led; 86d6045f's 25606).
-  -- Land fix (review): the window only with lrrp_follow named (cfg 1); at the defaults the 0.15.3 filter (no game run of
-  -- the window yet).
+  -- Round 12 B: the window whenever lrrp_follow is on (the land fix had it named-only). off0 is the 0.15.3 filter, kept
+  -- only for the lines: step=off at a step up of 100 ms+ (rise_ms; lag0_ms = how far off0 lags), ah0 on the follow line.
   local off = t - v[1]
-  if not tr.off or off < tr.off or off - tr.off > 10000 then tr.off = off
-  elseif LF.cfg ~= 1 then tr.off = tr.off + (off - tr.off) * 0.02 end
-  if LF.cfg == 1 then
-    tr.wmin = math.min(tr.wmin or off, off)
-    if t - (tr.wAt or -1e9) >= LF.OFF_WIN_MS then
-      if tr.wAt then tr.off = tr.wmin end
-      tr.wAt, tr.wmin = t, nil
+  if not tr.off0 or off < tr.off0 or off - tr.off0 > 10000 then tr.off0 = off else tr.off0 = tr.off0 + (off - tr.off0) * 0.02 end
+  if not tr.off or off < tr.off or off - tr.off > 10000 then tr.off = off end
+  tr.wmin = math.min(tr.wmin or off, off)
+  if t - (tr.wAt or -1e9) >= LF.OFF_WIN_MS then
+    if tr.wAt then
+      local rise = tr.wmin - tr.off
+      tr.off = tr.wmin
+      if rise >= 100 and t - (tr.offAt or -1e9) >= 2000 then
+        tr.offAt = t
+        L("event=lrrp;step=off;id=%d;rise_ms=%d;lag0_ms=%d", id, floor(rise), floor(tr.off - tr.off0))
+      end
     end
+    tr.wAt, tr.wmin = t, nil
   end
   tr.a, tr.b, tr.at = b, {tick = v[1], x = v[3], y = v[4], z = v[5], yaw = v[6], v = v[7], n = v[8], f = v[9]}, t
   end, ...)
@@ -349,8 +354,9 @@ function LF.frame(t)
         if logs or key ~= tr.fkey then
           tr.logAt, tr.fkey = t, key
           local x2, y2, z2 = pose(id)
-          L("event=lrrp;step=follow;id=%d;mode=%s;x=%.2f;y=%.2f;z=%.2f;d_m=%.2f;v=%d;rh=%d;rl=%d;jumps=%d;n=%d", id,
-            mode, (x2 or 0) / 1000, (y2 or 0) / 1000, (z2 or 0) / 1000, d / 1000, b.v, b.n, n, tr.jumps, tr.n)
+          L("event=lrrp;step=follow;id=%d;mode=%s;x=%.2f;y=%.2f;z=%.2f;d_m=%.2f;v=%d;rh=%d;rl=%d;jumps=%d;n=%d;ah=%d;ah0=%d", id,
+            mode, (x2 or 0) / 1000, (y2 or 0) / 1000, (z2 or 0) / 1000, d / 1000, b.v, b.n, n, tr.jumps, tr.n, floor(ahead),
+            floor(math.min(t - (b.tick + (tr.off0 or tr.off)) + LF.AHEAD_MS, LF.MAX_AHEAD_MS)))
           ridersLog(id, tr, t, moving, n, gids, list)
         end
       end
