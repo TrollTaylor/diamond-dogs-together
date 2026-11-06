@@ -1123,6 +1123,57 @@ Round `wp/horse` step S2 (no horse key named in any run: `pillion_status` `key=1
   and the mounts there, the rider's godmode off just before the guard turns hostile; then the forced get-off by the ride
   record (`+0x11 = 3`, the state table getter's vtable to find the instance).
 
+## 17. M2i round: the revive after the take-down (late-status drain), the boot-spot route, the load pose (A0 once)
+
+Round `wp/horse` M2i (world_horse_cargo named, off unless named; markers [O] / [I] / [U]; slim archives with the full
+session observer logs `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).
+- **Why the lab revive failed** (`107977cb` host log, the carrier reviving): `step=revive_near` read `held=1; mask=1`
+  at t 381682646 / 381683646 / 381684996, then `age_ms=517; mask=0; held=0` at 381685766 and no grant [O]. Two causes:
+  the scenarios' E (four `hold e 1500 nowait` 850 ms apart, released 3.4 s after the first) barely covered the 3 s
+  hold, and world_downed's host gate (`not fresh -> resetHold()`) zeroed a hold under way when one status came over
+  500 ms late. Also [I from code]: the MGO drain (`releaseHold`) survived one host tick only, and world_revive_input's
+  own 500 ms gate (not editable) drops the reviver's held while the target's record is late, so a guest reviver's late
+  view (its status naming no target) restarted the hold too. `990d2530` logged nothing then (no `revive_near` yet): the
+  same E length; that run's cause stays [U].
+- **Late-status drain** (`2bb390c3` red / `390b1984` green, world_downed only): a record past FRESH (still ready, time
+  not reversed) or the actor's status naming no target marks `D.lateAt`; the host's stale branch now releases the hold
+  as a brief release does (the MGO drain at the fill rate) and `releaseHold` keeps that drain within 1 s of a late
+  mark, so the same reviver resumes from what is left. Unchanged: not-ready records, a time reversal and a loop gap
+  still reset; a multi-tick release with fresh statuses still restarts (guard check). Lines `step=revive_late`
+  (progress, age) and `step=revive_resume` (the resumed progress). Lua checks: downed 174662, revive input 728.
+- **Scenarios** (`69141e5c`): all five cargo parts teleport both players to the boot spot facing -60 and run
+  `horse_here` on both copies (the recall left the horse elsewhere in 3 of 6 (b) runs; (a) rode 37-44 m into rock
+  walls); the rides take step S2's (b) route (walk, a left trot, four straight gallops, two left gallops; 129-140 m
+  there) without the right turn; before the revive the reviver's copy moves its horse 4 m away (`horse_here`, no mount
+  on E after the revive) and E is held about 5.5 s without a gap (overlapping `nowait` holds); the victim's camera
+  `mouse 600 150` before the load frame; (c) also waits for the victim's own `why=stream_lost` unload and frames the
+  drop from the side.
+- **The load pose** (`13f76dec` red / `d602df54` green): `2a41c416` host log: body 1 `act=5; s=3` with the readback
+  yaw equal to the hold's (`byaw` 1354) from the load through the ride and after the dismount [O], yet frame
+  `host-h2-loaded` shows it along the horse with its upper body raised and `host-h2-stays` across the rump [O]. With
+  world_horse_cargo the hold1 receipt now adds Warp's A0 reset (`A0.vt+0x80`, which re-applies the stance) once per
+  hold1 run, on its first hold1 1 s or more in, only under the A0 class guard (else skipped); line
+  `horse_drive=a0_once; body=1; applied=..`.
+- **The 2 m drop** [I]: one `victim_pin` window in six cargo sessions (`2a41c416` guest, t 381970693, `drop_cm=203`, 63
+  samples), never in a frame; that window holds M1's last anchored track placements while body 1 (the carrier) still
+  played its get-off act on the victim's copy (act 122 until about 1 s after the final), and the anchor may move the
+  horse up to 1.5 m (`kAnchorMaxM`). M1's tracking is on by default; not changed this round.
+- **Hidden runs: none finished this round.** From 21:36 to 22:20 C: fell to 0 bytes free (an Unreal Engine build was
+  writing to it), then the queue's floors (C: 6 GB, commit free 15 GB) held the enemy jobs ahead of this round's; the
+  attempt-1 jobs were queued at 22:21 at the code head `d602df54` (lab `20261106-042115-789-d89b21`: `horse-cargo.txt`,
+  `horse-cargo-b.txt`, `horse-cargo-drop.txt`; play `20261106-042116-245-e164ac`: `horse-cargo-play.txt`,
+  `horse-cargo-play-b.txt`; `-WanSim bad`, gun profile, research build, afgh-ledge) and neither had started by 23:07 (C: 4.2 GB free again and falling, three enemy jobs ahead); the queue runs them when the floors allow, on the worktree as it is then.
+- **Gate not passed** (not run): nothing above is seen live yet - the late-status drain, the boot-spot route in (a)
+  and (b), the 5.5 s revive, the A0 reset at the load and the victim's stream_lost unload in (c) are [I] until a run
+  shows them on both copies. world_horse_cargo stays off unless named; no default change.
+- **Next:** read those two queued jobs' results if they ran (the queue runs a job's repo at run time: it tests the
+  worktree as it is then), else run them: per part both observer logs (`step=revive_late` / `revive_resume` /
+  `event=downed; step=grant`, `final_sent path_cm` over 5000 in (a) and (b), `horse_drive=a0_once; applied=1`, the
+  victim's `why=stream_lost; side=cargo`, 0 `partner_recon=place` inside the cargo hold, no `Unconscious` / fall line)
+  and the frames (load, walk, trot, gallop, gallop4, stop, stays, stays2 on both screens with the horse in view; the
+  A0 load frame on the carrier's screen; `h2c-dropped` / `-side`); then the play pair; on a pass the flip
+  (Settings default with the gun profile, red / green) and one lab + play run with the key not named.
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed

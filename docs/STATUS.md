@@ -1,3 +1,29 @@
+## November 5, 2026: horse step M2i - a downed partner on the horse: the revive no longer restarts on one late update, every test order starts on open ground, the load pose tried with a stance reset; not run (the PC's disk was full) (`wp/horse`)
+
+**Players get:** nothing new to see yet; putting a downed partner on the horse stays off by default. One fix that
+reaches every revive (in the code, not yet seen in a game): with a bad connection, one late update from the other PC
+no longer restarts a revive that is under way; it loses a little progress instead and finishes if you keep holding E.
+docs/mounts.md section 17.
+
+- **Code:** merge `9e1d34c8` (dev `28c7e487`). `2bb390c3` red / `390b1984` green: world_downed's host gate drains a
+  held revive through a late status (a record over 500 ms old, or the reviver's status naming no target) and keeps
+  that drain 1 s, instead of zeroing it (lab `107977cb`: a revive about 3 s in was reset by one status 517 ms late);
+  not-ready records, a time reversal and a loop gap still reset, and a multi-tick release with fresh statuses still
+  restarts; lines `step=revive_late` / `revive_resume`. `69141e5c` scenarios: every cargo order from the boot spot with
+  `horse_here` on both copies, step S2's route without the right turn, the reviver's horse 4 m away and E about 5.5 s,
+  (c) waits for the victim's own `stream_lost` unload. `13f76dec` red / `d602df54` green: with world_horse_cargo the
+  carrier's hold1 adds Warp's A0 reset (re-applies the stance) once, 1 s into the hold, for the load pose (body 1 along
+  the horse with its upper body raised at the load in `2a41c416`, across the rump after the ride, act and yaw
+  unchanged). Full build -Jobs 4 at `d602df54`: CTest 355/355; every `--check` passes but the base four.
+- **Runs: none finished.** From 21:36 to 22:20 C: fell to 0 bytes free (an Unreal Engine build was writing to it),
+  then the queue's floors (C: 6 GB, commit free 15 GB) held the three enemy jobs ahead. Queued at 22:21 at `d602df54`:
+  lab `20261106-042115-789-d89b21` (`horse-cargo.txt`, `-b`, `-drop`) and play `20261106-042116-245-e164ac`
+  (`horse-cargo-play.txt`, `-play-b`); neither had started by 23:07 (C: 4.2 GB free again and falling, three enemy jobs ahead); the queue runs them when the floors allow, on the worktree as it is then.
+- **Never seen live:** the late-status drain (and that every other revive still works with it), the boot-spot start
+  and > 50 m rides in (a), the 5.5 s revive, the A0 reset at the load, the victim's `stream_lost` unload in (c). The 2 m
+  drop (one log window in six sessions, never in a frame) is [I]: M1's anchored track placements during the carrier's
+  get-off on the victim's copy; not changed (M1 is on by default).
+- **Gate not passed** (not run). world_horse_cargo stays off unless named; no default change. Nothing pushed.
 ## November 5, 2026: horse step S2 - riding behind your partner: order (b) from open ground, the standing pose reproduced (cause not found), the downed rider not reproduced; horse log lines kept (`wp/horse`)
 
 **Players get:** nothing new in play; riding behind your partner works as in 0.15.3 (on by default). One fix for logs
