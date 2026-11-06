@@ -321,6 +321,27 @@ WatchStep WatchChoose(bool freeze, std::uint64_t freeze_ms, std::uint64_t age_ms
 //   with fewer than 2 points or when that point lies within kPlanEndM (3D) of `dest`.
 inline constexpr float kCornerM = 2.0f;
 bool CornerTarget(const float (*points)[3], unsigned count, const float (&self)[3], const float (&dest)[3], float (&target)[3]) noexcept;
+// Enemy round 13 track C (design 7.33 round 13; the user's decision D-FM3 (b)): a far-mirror walk may open with the
+// unpack's 15 m warp onto the owner copy's spot (no glide) only while both this copy's and the owner copy's spots are
+// outside the guest's view. Lua stamps that per puppet with ACT_V1 w after his m (the M-series 100-degree camera cone of
+// world_place_guest.lua with no distance cut: binoculars and scopes look along the camera's yaw); the stamp lapses
+// kOffViewMs after the last w. GlideOn: with act_plan a walk (wire +0x61 == 1) with this copy's position known glides
+// (GlideEntry) unless the stamp is fresh.
+inline constexpr std::uint64_t kOffViewMs = 1000;
+bool OffViewFresh(std::uint64_t stamp_ms, std::uint64_t now_ms) noexcept;
+bool GlideOn(bool plan, bool walk, bool have_self, bool off_view) noexcept;
+// Round 13 C (run 1fb060aa: guard 18's host copy stood 44.8 m from his guest copy at pairing, so his take waited on
+// near_wait and came 11 s later in the guest's view as a 35.9 m glide): TakeNoWarp - a take that would open with the
+// unpack's warp (TakeWarps) is allowed while the off-view stamp is fresh (Lua sends ACT_V1 w for a candidate too, from the
+// q reply's owner position, then asks q again).
+bool TakeNoWarp(bool take_warps, bool off_view) noexcept;
+// Round 13 C (1fb060aa: guard 246's host copy stood 78 s with a walk request and a follower path while his puppet walked
+// the corner target 12.7 m ahead and waited there; the place error counted 12.7 -> 0.7 m as the host copy then walked up):
+// with act_plan the host sends a walk's destination as the host copy's own position while he has stayed within
+// kOwnerStillM (flat) of one spot for kOwnerStillMs. OwnerStill keeps that spot and its time per guard (ref, ref_at).
+inline constexpr float kOwnerStillM = 0.5f;
+inline constexpr std::uint64_t kOwnerStillMs = 2000;
+bool OwnerStill(const float (&self)[3], float (&ref)[3], std::uint64_t& ref_at, std::uint64_t now_ms) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
@@ -354,6 +375,8 @@ unsigned SendStaged(std::uint64_t now_ms) noexcept;
 // Puppet side: mirror guard `idx` (roster `slot`) or release him. On, pulls the newest SOLDIER_ACT of the slot into the
 // hook's mailbox; true when the request is fresh (kActFreshMs). Off clears his mailbox and the fire-drop bit.
 bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) noexcept;
+// Round 13 C (D-FM3 (b)): ACT_V1 w - puppet `idx`'s and his owner copy's spots are outside the guest's view now (OffViewFresh).
+void SetOffView(unsigned idx, std::uint64_t now_ms) noexcept;
 void ReleaseAll() noexcept;
 // Candidate side: whether the slot's newest SOLDIER_ACT request is fresh (kActFreshMs); arms nothing (no mailbox, no
 // hook apply, no fire drop). Lua sends m only once the guard is a puppet (run 3bc7280b: m on candidates armed the fire
@@ -397,6 +420,9 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
 bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm = nullptr) noexcept;
 // The owner copy's position (mm) in guard idx's mailbox (the order part, flag bit 0); false when none.
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept;
+// Round 13 C (D-FM3 (b)): the owner copy's position from the slot's newest SOLDIER_ACT order part, for the q reply (a
+// candidate: Lua's view check before an off-view take). False without a fresh-or-not order part with a position.
+bool QueryOwner(std::uint16_t slot, std::int32_t (&mm)[3]) noexcept;
 // Enemy round 9 (quiet_place, design 7.24): QuietChoose on the hook's newest rest view of guard idx (unknown before the
 // hook has made one). Runtime thread; read only. SetQuietRest turns the hook's rest views on (the guest with the key).
 QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept;

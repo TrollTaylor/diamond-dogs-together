@@ -1,0 +1,344 @@
+# Enemy round 13 track C (docs/world-sync-design.md 7.33 round 13): enemy-mirror10b-calm.txt with three changes.
+# (1) D-FM3 (b), the user's decision: a take may warp a far copy onto his owner copy's spot only while both spots are
+#     outside the guest's view. The mirror is paused (mirror off) from the pairing until both players stand at A / A'
+#     and the guest's camera looks at the host's character (aim_partner: about 140 degrees from the walkers 15 / 17 / 18,
+#     whose aim_ent yaws were -28..+2 in 4735fee5), then on: the takes see both spots off view (event=mirror_view
+#     view=off, soldier_act_warp15 off=1). The mid-run mirror off / on part looks the same way (so the off and on parts'
+#     frame times compare like with like), so its retakes are off view too, and so are the retakes 15 s after the shot
+#     (aim_partner after shot-5); every other take (apart, range) is whatever the camera shows then.
+# (2) A CALM first-notice distance: the caution part and the sneak are gone; right after the shot part (the CP calm on
+#     both copies in 4735fee5 until the commanded caution) the host walks from spot A toward walker 15 in steps; the first
+#     phase rise / a guard's destination on the host gives the calm first-notice distance (1.5 x d must be <= R(calm) 80 m).
+# (3) R(caution) is 90 m in the code (1.5 x 58.7 m, 4735fee5).
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo <built worktree> -Owner <track>
+#     -ScenarioPath tools/worker/scenarios/enemy-mirror13-calm.txt -Mode play -WanSim bad -PartnerProfile native
+#     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge [-LabSetting soldier_act=1,act_plan=1] -TimeoutSec 600 -Wait
+labsetting act_census=1
+labsetting nametag=1
+titlemenu host 240
+title host 240
+waitgameplay host 150
+host debug godmode 1
+host debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+wait 6000
+host run teleport 421.16 269.2 2084.42 0
+wait 8000
+host run world_status
+logmark both
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+guest run mirror off
+guest debug godmode 1
+guest debug infinite_ammo 1
+guest run teleport 423.736 270.367 2026.057 0
+wait 3000
+host run teleport 424.627 271.559 2025.110 0
+wait 4000
+host run position
+guest run position
+guest run aim_partner 1.1
+wait 800
+guest run mirror on
+wait 5000
+host run act_status
+guest run act_status
+logmark both
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w17-0-a
+wait 450
+both capture w17-0-b
+wait 3500
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-0-a
+wait 450
+both capture w15-0-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-0-a
+wait 450
+both capture w18-0-b
+wait 3500
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w17-1-a
+wait 450
+both capture w17-1-b
+wait 3500
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-1-a
+wait 450
+both capture w15-1-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-1-a
+wait 450
+both capture w18-1-b
+wait 3500
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w17-2-a
+wait 450
+both capture w17-2-b
+wait 3500
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-2-a
+wait 450
+both capture w15-2-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-2-a
+wait 450
+both capture w18-2-b
+wait 3500
+host run act_status
+guest run act_status
+logmark both
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w17-3-a
+wait 450
+both capture w17-3-b
+wait 3500
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-3-a
+wait 450
+both capture w15-3-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-3-a
+wait 450
+both capture w18-3-b
+wait 3500
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w17-4-a
+wait 450
+both capture w17-4-b
+wait 3500
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-4-a
+wait 450
+both capture w15-4-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-4-a
+wait 450
+both capture w18-4-b
+wait 3500
+guest run act_status
+guest run aim_partner 1.1
+wait 800
+logmark both
+guest run mirror off
+wait 2500
+logmark both
+wait 20000
+logmark both
+guest run mirror on
+wait 2500
+logmark both
+wait 20000
+logmark both
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture on-0-a
+wait 450
+both capture on-0-b
+wait 3500
+guest run act_status
+logmark both
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 400
+both capture shot-0
+guest run act_status
+wait 4000
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture shot-5-a
+wait 450
+both capture shot-5-b
+wait 3500
+guest run aim_partner 1.1
+host run position
+host run act_status
+logmark both
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+host run aim_ent 1740692850 1.1
+wait 300
+host hold w 1000
+wait 2500
+host run position
+logmark both
+host run world_status
+guest run world_status

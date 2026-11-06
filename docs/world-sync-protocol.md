@@ -2688,3 +2688,14 @@ under `act_plan`.
   corner-targeted walks wait on `LegMatch` (above). With caps bit 2 (the calm limit) any CP at EVASION / ALERT
   (localPhase >= 2) on the guest releases every puppet and stops takes (`why=phase_limit`), not only the guard's own
   CP. No new op; Lua only.
+- Round 13 (enemy round 13 track C; the user's decision D-FM3 (b)): a new local receipt op, not on the wire: ACT_V1
+  `w <slot> <goId>` (guest only; refused "role" on the host, "paused" while paused). Lua sends it after a puppet's m
+  while both his own spot and his owner copy's spot (the m reply's ox / oz) lie outside the guest's camera cone (the
+  M-series 100-degree cone of `P.seen` with no distance cut, so binoculars and scopes count: they look along the same
+  yaw). For 1 s after it (`kOffViewMs`) native skips the glide for that guard's walk applies (take or re-apply) and
+  does not hold a re-apply that would warp, so the unpack's own 15 m warp puts a copy more than 15 m off on his owner
+  copy's spot; under 15 m he walks / waits as before. `soldier_act_warp15` adds `off` (1: an off-view warp). New Lua
+  lines (guest): `event=mirror_view;ent;view=on|off;apart_m;yaw` when a puppet's verdict changes, and
+  `event=mirror_cam;x;z;yaw` every 2 s while a puppet lives (the jump row's "could a player see it"). R(caution) is 90 m
+  (1.5 x the 58.7 m first notice in caution, run `4735fee5`). No wire change, no CFG bit, no contract site; ACT_CAPS
+  stays revision 7 (only the guest decides; a revision 7 guest without it glides as before).
