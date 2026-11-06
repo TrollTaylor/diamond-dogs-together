@@ -2628,8 +2628,8 @@ No wire change. Inside `lrrp_follow` (on in 30010 at the defaults, named 1 any m
 - New lines: `step=origin; role; id` once per id when a pose read at x = 0, z = 0 is dropped; the host's
   `step=crew_out; id; ent` at each get-out it sees; `step=crew_hold; ent; after_ms; dh_m; dq_m` once per get-out when the
   hold answers the owner decision.
-- The crew hold (host, M3 `W.ownerOn`): for 10 s after a crew member's get-out on the host (`W.crewOutAt[ent]`), while the
+- The crew hold (host, M3 `W.ownerOn`; only with `lrrp_follow` named, cfg 1): for 10 s after a crew member's get-out on the host (`W.crewOutAt[ent]`), while the
   host owns him, `P.ownerOf` answers 0 (no OWNER 73 hand-over to the guest); one the guest already owns is left to the
   owner decision; after 10 s the owner decision as before.
-- The guest's clock offset per truck (LRRP_FAST 93's sender tick): the lowest of the last second's samples, a lower one at
-  once (was the lowest ever, rising 2 % a sample).
+- The guest's clock offset per truck (LRRP_FAST 93's sender tick), only with `lrrp_follow` named (cfg 1): the lowest of the
+  last second's samples, a lower one at once; at the defaults as before (the lowest ever, rising 2 % a sample).

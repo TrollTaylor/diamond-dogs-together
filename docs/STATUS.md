@@ -1,45 +1,44 @@
-## November 5, 2026: enemy round 11 track B - patrol trucks: the lrrp log flood cut, the crew hold, the truck lead, an origin line (inside `lrrp_follow`, on in 30010); built and tested, NOT yet run in a hidden session (the test queue held every job: C: under 1 GB free); Africa not run
+## November 5, 2026: enemy round 11 track B - patrol trucks: fewer lrrp log lines and an origin line at the defaults (log lines only); the crew hold and the clock-offset window named-only (`lrrp_follow=1`); no hidden session counted; players see no difference
 
 Design 7.32, protocol 48. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. After merging dev
-28c7e487 (261432af): red c788d65c (19 new checks failed, lua-red-all) / green 20509a91 (world_vehicle_state_lua_check
-201, world_align_lua_check 465). Full build at 20509a91: CTest 354/355, the one failure `partner_defer_pose_nested_foreign_tests`
-check 185, the known parallel-load timing flake (passes alone); every contract `--check` as before (known base failures
-only; horse_drive and vehicle_controller pass with `--executable`). No CFG bit, no wire op, no native change, no README change.
+28c7e487 (261432af): red c788d65c (19 of the 23 new checks failed; four controls passed at red: the guest count-change
+line, the seated hold, the off hold, the steady offset) / green 20509a91 (201). The green commit also loosened the 60 s
+total from <= 180 to <= 280 (green 260) and named the whole host line in the count-change check (not said before). Land
+fix after the review: red fdbfa39f (202, 203 failed) / green 72e883e0 (world_vehicle_state_lua_check 203; without the
+guard 199 and 202 fail, so 199 is no longer vacuous). world_align_lua_check (465) does not load world_lrrp.lua. No CFG
+bit, no wire op, no native change, no README change.
 
-- **What players get**: nothing proven yet. The changes act at the defaults in Afghanistan free roam (inside
-  `lrrp_follow`), so they should not land before the crew10 session below has passed.
-- **Built** (world_lrrp.lua, Lua only):
-  1. The log flood (a defect at the shipped defaults: it cuts the logs players send): host `step=host` 2 Hz moving (was
-     4), 5 s manned at rest (1 s), 30 s empty (5 s), at once on a rider-count change; `step=riders` on a set change, else
-     2 s moving / 10 s (was with every host and follow line); `step=crew` one line per truck, members packed
-     (`c=ent:x:z:in,...`), every 2 s (was one line per member every second); the guest's `step=follow` 1 Hz moving, else
-     10 s (was 1 s manned, 5 s empty), at once on a mode or count change. Fixture minute with 3 trucks: 802 host lrrp lines
-     -> 260. Reference volumes [O]: `86d6045f` host lrrp 2320 of 2606 Lua lines, guest 2045 of 2794; `139a1440` host 3535
-     of 4555; horse `2a41c416`'s host 1468 `log_cap` lines, 1788 dropped (lrrp host 2389, riders 1071, crew 450). The gate
-     script reads the new form (lrrp_gate11.py: host interp gap 800 ms, riders 2600 ms, packed crew).
-  2. The crew hold (design 7.30 item 4): the host logs each get-out (`step=crew_out`) into `W.crewOutAt[ent]`;
-     world_lrrp.lua wraps `P.ownerOf` (world_place.lua has no room): for 10 s after it a crew member the host owns stays
-     the host's (`step=crew_hold` once); one the guest owns already, and every guard after 10 s, as before.
-  3. `step=origin; role; id` once per id when `pose()` drops an origin read (host and guest).
-  4. The truck lead (`86d6045f`'s 25606, 1.1-2.4 m ahead for 29 s, p90 1.38 m; earlier runs 0.32-0.56 m) [I]: the
-     guest extrapolated with `ahead = now - (tick + off) + 100 ms` (cap 400 ms) where `off` was the lowest clock offset
-     ever, rising 2 % a sample; after a step up of the offset `ahead` sits at its cap for seconds (a 2-2.4 m lead at
-     8 m/s). The step itself is not logged [U]. Now `off` is the lowest of the last second's samples (fixture: a 1 s step,
-     the lead back to its steady 2.0 m within 3 s; before 4.0 m).
-- **Item 5** (read-only RE): no stop that holds a far parked truck its own crew drives, and no get-out command that works,
-  is known. `ForceStop` (0x8a2177b1) calls the vehicle type controller's vt[0x1f8] / vt[0x200] and the game's scripts send
-  it only to the player's ridden vehicle; the soldier dispatcher's vehicle commands are `SetRelativeVehicle`,
-  `UnsetRelativeVehicle`, `SetInVehicle` (seats soldiers) and `GetVehicleGameObjectId`. An unnamed vehicle command
-  0x84692f8d reads `speed` into a component (type id 0x9fcfc16ce0ce) with a no-argument partner 0xe51e5c9b; its name is
-  unknown, so Lua cannot send it [U]. Design 7.32.
-- **Sessions**: none ran. Session 1 (join + crew10, no key, afgh-ledge; job 20261106-031927-511-f6787c) and session 2
-  (Africa, `lrrp_follow=1`, africa-jeep; job 20261106-031937-832-4e5282) were queued at 21:19-21:21 behind enemy11-C's job;
-  the queue runner held all of them on its resource floors (C: 6 GB, commit 15 GB) from 21:15: C: fell from 5.9 to
-  0.3-0.5 GB free and commit free stayed 8.6-14.6 GB. Nothing of this track built or ran after 21:19; nothing deleted.
-- **Africa (D-B10 covers 30010 only)**: not run; `lrrp_follow` stays off in Africa unless named.
-- **Next**: when the floors clear, run session 1 (gate: `139a1440`'s rows plus 0 `log_cap` drops on both roles, crews
-  within 5 m p90 20-40 s after the get-out, 0 origin jumps, the lead p90 under 1 m) and session 2 (Africa, the D-B10 rows
-  as a user decision); then land.
+- **What players get**: no gameplay change at the defaults. At the defaults (30010) the lrrp log lines are fewer
+  (fixture minute, 3 trucks: 802 host lines -> 260 [O fixture]); that the logs players send are no longer cut by
+  `log_cap` is [I]: crew10 runs had 0 caps at the old code too, so it needs a rerun of horse `2a41c416`'s scenario.
+- **At the defaults** (world_lrrp.lua): 1. the log cuts: host `step=host` 2 Hz moving / 5 s manned / 30 s empty / at
+  once on a rider-count change; `step=riders` on a set change else 2 s / 10 s (on the host only with a host line, so a
+  same-count change shows up to 5 s late at rest); `step=crew` one packed line per truck every 2 s (guest 10 s for a truck
+  the host never manned); guest `step=follow` 1 Hz moving else 10 s. Reference volumes [O]: `86d6045f` host lrrp 2320 of
+  2606 Lua lines, guest 2045 of 2794; `139a1440` host 3535 of 4555; `2a41c416` host 1468 `log_cap`, 1788 dropped.
+  3. `step=origin` once per id; the host's `step=crew_out` per get-out.
+- **Named only** (`lrrp_follow=1`, cfg 1): 2. the crew hold (10 s after a host get-out the host keeps a crew member it
+  owns). Off at the defaults because it could leave the guest less seen than 0.15.3 [I, PLAUSIBLE]: during the hold the
+  host's copy is the brain, host copies do not perceive the guest (`soldier_perceive` off), the guest's copy is corrected
+  toward the host's path, and the hold has no phase or combat exemption; `fc141dc1`'s 25605 crew got out 25-27 m from the
+  guest (118-124 m from the host) 3.2 s after a guest-requested phase rise, and 0.15.3 handed them to the guest at +3.4 s.
+  Turning it on at the defaults is the user's decision (D-B11 below). 4. the clock-offset window (lowest of the last
+  second's samples). Its cause is [I] and the step [U] (no line logs `off` or the delay); seen once (`86d6045f` 25606, p90
+  1.38 m; 0.32-0.56 m in `139a1440`, `f256bf29`, `fc141dc1`). Only a clean step at 10 Hz is tested: with one sample per
+  window `off` follows each sample's delay, about 0.3 m at 13 m/s under `-WanSim bad`'s 25 ms jitter [I]. Not a shown fix.
+- **Decision for the user (D-B11, not asked)**: the crew hold at the defaults in 30010, with the evidence above; it needs a
+  named run near a crew's get-out (only `fc141dc1` of four crew10 runs had a hand-over inside 10 s).
+- **Item 5** (read-only RE): no stop that holds a far parked truck its own crew drives, and no working get-out command, is
+  known (`ForceStop` 0x8a2177b1 reaches only the player's ridden vehicle; the unnamed speed command 0x84692f8d [U]).
+- **Sessions** (0 of 3 counted): session 1 (join + crew10, no key; job 20261106-031927-511-f6787c) waited on the queue's
+  floors from 21:19 and started at 22:35, then was VOID before the code ran (the audited CTest flake,
+  `partner_defer_pose_held_generation_tests` check 185). Session 2 (Africa, `lrrp_follow=1`; job 4e5282) waits in
+  `running/` on the floors (C: 1.1 GB free at 23:40; the queue has no withdraw). Floors [O] from 21:15: C: 0.0-5.9 GB
+  free, commit free 4.3-14.7 GB (not 8.6-14.6). At 22:26 C: had 7.8 GB and only the commit floor held session 1, so a
+  "C: full" ask was stale then; at 23:40 C: is under the floor again. Session 1 passing would not have proved these
+  changes: 0 `log_cap` and the lead p90 < 1 m passed at the old code in the crew10 runs.
+- **Next**: a named run (`lrrp_follow=1`) of the hold near a crew's get-out and of the offset under `-WanSim bad`, with
+  an `off` / delay line; horse `2a41c416`'s scenario for the log cut; Africa stays off unless named.
 
 ## November 5, 2026: enemy harden - inside the keys already on (`drive_vert`, `lrrp_follow` in 30010): the soft follow leaves a guard seated in a vehicle alone, a truck read at the map origin is no sample, a parked far truck that its own crew drives is put back at most once a second, and a seated crew is unseated at most 3 times; no default changed, no wire change, no README change (players see no difference)
 

@@ -1417,13 +1417,22 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   `raw_clock` held episode (385295930-385299552) came 2 s before the stretch but its `held_ms` exceeds the wall time by
   only ~85 ms [I] (every run has one at the join). Earlier runs had 0.53-0.63 m p90.
   Fix: `off` is the lowest of the last second's samples (a lower one at once), so a step up is followed within 2 s.
-- **Built** (red c788d65c: 19 new checks failed; green 20509a91: world_vehicle_state_lua_check 201):
+  Named only (`lrrp_follow=1`; the land fix): at the defaults the 0.15.3 filter. Only a clean 10 Hz step is tested; with
+  one sample per window `off` follows each sample's delay (about 0.3 m at 13 m/s under 25 ms jitter) [I].
+- **Built** (red c788d65c: 19 of 23 new checks failed, four controls passed; green 20509a91: 201, its 60 s total bound
+  loosened 180 -> 280 and the count-change pattern named in full; land fix red fdbfa39f / green 72e883e0: 203):
   - The lines (protocol 48): host 2 Hz moving / 5 s manned / 30 s empty / at once on a count change; riders on a set
     change else 2 s moving / 10 s; crew one line per truck (packed `c=ent:x:z:in,...`) every 2 s (guest 10 s for a truck
     the host never manned); guest follow 1 Hz moving else 10 s, at once on a mode or count change. The fixture's 3-truck
     minute: 802 host lrrp lines -> 260 (the crews' first 60 s included).
   - The crew hold: the host's get-outs (`step=crew_out`) go to `W.crewOutAt[ent]`; world_lrrp.lua wraps `P.ownerOf` (world_place.lua has
-    no room): within 10 s of his get-out a crew member the host owns stays the host's (`step=crew_hold` once).
+    no room): within 10 s of his get-out a crew member the host owns stays the host's (`step=crew_hold` once). Named only
+    (cfg 1; the land fix): the host's copy stays the brain and host copies do not perceive the guest (`soldier_perceive`
+    off), with no phase or combat exemption, so at the defaults it could leave the guest less seen than 0.15.3 [I]
+    (`fc141dc1`: 25605's crew got out 25-27 m from the guest, 3.2 s after a guest-requested phase rise; 0.15.3 handed
+    them over at +3.4 s). The user's decision (STATUS D-B11). Tested against a mock P only; the splice order
+    (bootstrap_patch.cpp: world_place before world_lrrp), the call site (world_place.lua `P.ownerOf`) and the clock
+    (`W.now`) agree by reading.
   - `step=origin; role; id` once per id when `pose()` drops an origin read.
   - The clock offset above.
 - **Item 5** (read-only RE, exe 085c2f82...bb45) [O unless marked]: Fox StrCode32 reproduced (tools in the round's notes:
@@ -1440,14 +1449,13 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   command is known.** Next: decompile *(this+0x1c8) vt[0x78] to learn whether speed 0 holds a crew-driven truck, then find
   its name (or reach it natively, a new contract site).
 
-- **Sessions**: none ran in the round. Session 1 (join + crew10 at 20509a91, no key) and session 2 (Africa, `lrrp_follow=1`)
-  were queued at 21:19-21:21; the queue runner held every job on its resource floors (C: 6 GB, commit 15 GB) while C: had
-  0.3-5.9 GB free (docs/STATUS.md). The changes act at the defaults in 30010, so they wait for session 1 before landing.
-- **Next**: session 1's gate: `139a1440`'s rows, 0 `log_cap` drops on both roles, crews within 5 m (p90) 20-40 s after
-  the host's get-out, 0 origin jumps, the moving-truck error and the along-track lead p90 under 1 m; whether `crew_hold`
-  shows depends on the guest's player being nearer a crew than the host's (none in `86d6045f`). Session 2: Africa's rows
-  as D-B10's (a user decision; `lrrp_follow` stays off there unless named). Item 5: decompile the 0x9fcfc16ce0ce
-  component's vt[0x78] and find the speed command's name.
+- **Sessions**: none counted. Session 1 (join + crew10 at 20509a91, no key) waited on the floors (C: 0.0-5.9 GB free,
+  commit free 4.3-14.7 GB) and was void at 22:35 (the audited CTest flake); session 2 (Africa, `lrrp_follow=1`) still
+  waits on the floors. At the defaults only log lines change; the hold and the offset window are named only.
+- **Next**: a named run (`lrrp_follow=1`): the hold near a crew's get-out (only `fc141dc1` of four crew10 runs had a
+  hand-over inside 10 s) and the offset under `-WanSim bad` with an `off` / delay line; horse `2a41c416`'s scenario for the
+  log cut (crew10 runs had 0 `log_cap` at the old code). The hold at the defaults is the user's decision (D-B11). Africa
+  stays off unless named. Item 5: decompile the 0x9fcfc16ce0ce component's vt[0x78] and find the speed command's name.
 
 ### 8. Soldier transforms (W6)
 
