@@ -281,7 +281,7 @@ int main() {
         // (3) the frame line prints the aim-swap counter payload_ids (RemapAimTarget) and the apply accounting.
         sa::Counters k{};
         k.payload_ids = 5; k.due = 9; k.applied = 8; k.reapply_moving = 4; k.frames = 61; k.frame_p95_us = 18950;
-        char line[512]{};
+        char line[1024]{};  // the hook's frame line buffer (round 10 C: 1024 bytes)
         Check(sa::FormatFrameLine(123, k, line, sizeof(line)) && std::strstr(line, "soldier_act_frame; t=123; frames=61; p95_ms=18.95;") &&
                   std::strstr(line, "; payload_ids=5;") && std::strstr(line, "; due=9;") && std::strstr(line, "; reapply=4") &&
                   std::strstr(line, "; applied=8;"), "the frame line prints payload_ids, due and reapply");

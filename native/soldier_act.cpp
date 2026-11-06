@@ -291,9 +291,10 @@ bool PlanHold(bool first, bool changed_far, bool plan_live, bool warp, unsigned 
     return !first && !changed_far && plan_live && !warp && gait_now == gait_want;
 }
 
-unsigned TakeWait(bool plan, bool leg_match, bool take_near) noexcept {
-    (void)take_near;  // round 10 C: no 10 m rule (TakeNear stays for the record)
-    if (plan) return 0u;  // the plan walks him onto the host copy's path; beyond 15 m the take opens with the unpack's warp
+unsigned TakeWait(bool plan, bool leg_match, bool no_warp) noexcept {
+    // Round 10 C: no 10 m rule (TakeNear stays for the record); with act_plan the plan walks him onto the host copy's path.
+    // Round 11 C: a take that would open with the unpack's warp waits (a walk glides, GlideEntry: never a warp).
+    if (plan) return no_warp ? 0u : 2u;
     return leg_match ? 0u : 1u;
 }
 
@@ -324,37 +325,58 @@ ReleaseWalk ReleaseWalkStep(bool ours_live, std::uint64_t near_ms, std::uint64_t
     return ReleaseWalk::walk;
 }
 
-// Round 11 C (red stubs: the old behaviour).
+// Round 11 track C (act_plan, design 7.33).
 std::uint64_t MirrorLease(bool fresh, std::uint64_t was_ms, std::uint64_t now_ms) noexcept {
-    (void)was_ms;
-    return fresh ? now_ms : 0;
+    return fresh ? now_ms : was_ms;
 }
 
 bool GlideEntry(const float (&self)[3], const float (&owner)[3], float (&entry)[3]) noexcept {
-    (void)self;
-    entry[0] = owner[0]; entry[1] = owner[1]; entry[2] = owner[2];
-    return false;
+    const float dx = owner[0] - self[0], dy = owner[1] - self[1], dz = owner[2] - self[2];
+    const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(d > kGlideM)) {  // within kGlideM (or NaN): the owner copy's own, as before
+        entry[0] = owner[0]; entry[1] = owner[1]; entry[2] = owner[2];
+        return false;
+    }
+    const float f = kGlideM / d;
+    entry[0] = self[0] + dx * f; entry[1] = self[1] + dy * f; entry[2] = self[2] + dz * f;
+    return true;
 }
 
 bool TakeWarps(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept {
-    (void)host_request; (void)self; (void)owner; (void)have;
-    return false;
+    if (host_request[0x61] == 1u || !have) return false;  // a walk glides; unknown positions: the unpack lends his own
+    return Warp15(self, owner);
 }
 
 bool ReleaseFreeze(unsigned dest_mode, std::uint16_t r19e, std::uint16_t r19c, std::uint64_t slot_hash, std::uint16_t slot_handle,
                    bool path, float d_dest_m) noexcept {
-    (void)dest_mode; (void)r19e; (void)r19c; (void)slot_hash; (void)slot_handle; (void)path; (void)d_dest_m;
-    return false;
+    return PlanGate(dest_mode, r19c, r19e, true) && PlanSlot(slot_hash, slot_handle) == SlotStep::plan && !path &&
+           d_dest_m > kReleaseArriveM;  // NaN / unknown (-1): no freeze
 }
 
 WatchStep WatchChoose(bool freeze, std::uint64_t freeze_ms, std::uint64_t age_ms, std::uint64_t slot_hash) noexcept {
-    (void)freeze; (void)freeze_ms; (void)age_ms; (void)slot_hash;
-    return WatchStep::end;
+    if (age_ms >= kWatchMs) return WatchStep::end;
+    const std::uint64_t h = slot_hash & 0xffffffffffffull;
+    if (h != 0 && h != kMoveHash) return WatchStep::end;  // his brain's own type: his brain walks again
+    return freeze && freeze_ms >= kWatchFreezeMs ? WatchStep::plan : WatchStep::wait;
 }
 
 bool CornerTarget(const float (*points)[3], unsigned count, const float (&self)[3], const float (&dest)[3], float (&target)[3]) noexcept {
-    (void)points; (void)count; (void)self; (void)dest; (void)target;
-    return false;
+    if (!points || count < 2) return false;
+    unsigned best = 0;
+    float bestD = 3.4e38f;
+    for (unsigned j = 0; j + 1 < count; ++j) {
+        const float ax = points[j][0], az = points[j][2], bx = points[j + 1][0] - ax, bz = points[j + 1][2] - az;
+        const float px = self[0] - ax, pz = self[2] - az, len = bx * bx + bz * bz;
+        float u = len > 0.0f ? (px * bx + pz * bz) / len : 0.0f;
+        u = u < 0.0f ? 0.0f : (u > 1.0f ? 1.0f : u);
+        const float ex = px - u * bx, ez = pz - u * bz, d = ex * ex + ez * ez;
+        if (d < bestD) { bestD = d; best = j; }  // NaN: never nearer
+    }
+    unsigned t = best + 1;
+    const float cx = points[t][0] - self[0], cz = points[t][2] - self[2];
+    if (cx * cx + cz * cz <= kCornerM * kCornerM && t + 1 < count) ++t;  // at the corner: the one after
+    target[0] = points[t][0]; target[1] = points[t][1]; target[2] = points[t][2];
+    return !PlanEndNear(target, dest);
 }
 
 bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
@@ -522,6 +544,16 @@ struct RelWalk {
 };
 RelWalk g_rel[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_cRelKeep{0}, g_cRelReplan{0}, g_cRelEnd{0}, g_cRecheck{0};
+// Round 11 track C (act_plan, design 7.33; hook thread): the release watch per guard (WatchChoose), the glide line's last
+// time per guard, the owner side's last corner per guard (a soldier_act_corner line when it changes).
+struct Watch {
+    bool on;
+    std::uint64_t at, freezeAt, tryAt;
+};
+Watch g_watch[kMaxSoldiers]{};
+std::uint64_t g_glideLogAt[kMaxSoldiers]{};
+float g_cornerLast[kMaxSoldiers][3]{};
+std::atomic<std::uint32_t> g_cGlide{0}, g_cRelWatch{0}, g_cCorner{0};
 std::atomic<float> g_ownPos[kMaxSoldiers][3]{};  // each realized non-puppet guard's own position (OwnDests), for TakeNear
 Shadow g_shadow{};
 bool g_shadowBuilt = false;
@@ -1025,6 +1057,51 @@ void ProbeStep(const View& v, std::uint64_t now) noexcept {
 }
 
 // FM1, the owner (hook thread): pack every registered guard; stage a changed record (rate-capped) for SendStaged.
+// Round 11 track C (act_plan, design 7.33): the follower's path points (up to kCornerPoints; more: none read).
+constexpr unsigned kCornerPoints = 32;
+int CornerSafe(const View& v, unsigned i, const float (&self)[3], unsigned char (&w)[0x70], std::uint64_t now) noexcept {
+    __try {
+        Follower f{};
+        if (!FollowerFor(v, i, f)) return 0;
+        std::uintptr_t vt = 0, fnHas = 0, fnPath = 0;
+        if (!Rd(f.obj, vt) || !vt || !Rd(vt + c::follower_has, fnHas) || !Rd(vt + c::follower_path, fnPath) || !InImage(fnHas) ||
+            !InImage(fnPath))
+            return 0;
+        if (!reinterpret_cast<FollowerHas>(fnHas)(reinterpret_cast<void*>(f.obj), f.key)) return 0;
+        const auto path = reinterpret_cast<std::uintptr_t>(reinterpret_cast<FollowerPathOf>(fnPath)(reinterpret_cast<void*>(f.obj), f.key));
+        std::uintptr_t points = 0;
+        std::uint32_t count = 0;
+        if (!path || !Rd(path + c::path_points, points) || !Rd(path + c::path_count, count) || !points || count < 2 || count > kCornerPoints)
+            return 0;
+        float pts[kCornerPoints][3];
+        for (std::uint32_t k = 0; k < count; ++k) {
+            const auto* e = reinterpret_cast<const float*>(points + static_cast<std::uintptr_t>(k) * 0x10);
+            pts[k][0] = e[0]; pts[k][1] = e[1]; pts[k][2] = e[2];
+        }
+        std::uint64_t packed = 0;
+        std::memcpy(&packed, w + 0x40, sizeof(packed));
+        float dest[3]{}, target[3]{};
+        DecodePacked(packed, dest);
+        if (!CornerTarget(pts, count, self, dest, target)) return 0;
+        const std::uint64_t np = EncodePacked(target);
+        std::memcpy(w + 0x40, &np, sizeof(np));
+        float (&last)[3] = g_cornerLast[i];
+        if (Dist(target, last) > 0.5f) {
+            last[0] = target[0]; last[1] = target[1]; last[2] = target[2];
+            char line[360]{};
+            const int n = std::snprintf(line, sizeof(line),
+                "soldier_act_corner; t=%llu; idx=%u; n=%u; target=%.2f,%.2f,%.2f; dest=%.2f,%.2f,%.2f; p=%.2f,%.2f,%.2f\r\n",
+                static_cast<unsigned long long>(now), i, count, target[0], target[1], target[2], dest[0], dest[1], dest[2], self[0],
+                self[1], self[2]);
+            if (n > 0) Emit(line);
+        }
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_cPlanFault.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+}
+
 void MirrorTx(const View& v, std::uint64_t now) noexcept {
     for (unsigned i = 0; i < v.count; ++i) {
         const std::uint64_t at = g_txAt[i].load(std::memory_order_relaxed);
@@ -1033,6 +1110,9 @@ void MirrorTx(const View& v, std::uint64_t now) noexcept {
         if (!PackSafe(v, i, w, o)) continue;
         float own[3]{};
         const bool havePos = Pos(v, i, own);
+        // Round 11 C (act_plan): a walk's destination is the host copy's next path point (CornerTarget), not the leg's end.
+        if (g_planOn.load(std::memory_order_relaxed) && w[0x61] == 1u && havePos && CornerSafe(v, i, own, w, now) == 1)
+            g_cCorner.fetch_add(1, std::memory_order_relaxed);
         AcquireSRWLockExclusive(&g_actLock);
         Stage& s = g_stage[i];
         s.slot = g_txSlot[i].load(std::memory_order_relaxed);
@@ -1087,9 +1167,13 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
     const bool haveSelf = Pos(v, i, self);
     if (haveSelf) ownYaw = reinterpret_cast<const float*>(v.pos + static_cast<std::uintptr_t>(i) * c::slots_pos_stride)[3];
     if (!std::isfinite(ownYaw)) ownYaw = 0.0f;
-    const bool warp = haveSelf && Warp15(self, at);
+    // Round 11 C (act_plan): a walk's entry lies within kGlideM of this copy (GlideEntry): the unpack's warp never moves him;
+    // the plan and the catch-up gait (from the owner copy's real position `at`) bring him onto the host copy's walk.
+    float lent[3] = {at[0], at[1], at[2]};
+    const bool glide = plan && w[0x61] == 1u && haveSelf && GlideEntry(self, at, lent);
+    const bool warp = haveSelf && Warp15(self, lent);
     unsigned char saved[0x18]{}, entry[0x18]{};
-    PrefillEntry(entry, at, plan ? EntryYaw(w, ownYaw) : 0.0f);
+    PrefillEntry(entry, lent, plan ? EntryYaw(w, ownYaw) : 0.0f);
     __try {
         if (covered) {
             const std::uintptr_t e = data + static_cast<std::uintptr_t>(i) * c::net_stride;
@@ -1133,6 +1217,19 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
         }
         *reinterpret_cast<volatile std::uint16_t*>(r + c::r_flags) |= 0x80u;
         if (plan && i < kMaxSoldiers) g_appliedNow[i] = true;
+        if (glide && i < kMaxSoldiers) {
+            g_cGlide.fetch_add(1, std::memory_order_relaxed);
+            const std::uint64_t t = NowMs();
+            if (first || t - g_glideLogAt[i] >= 2000) {
+                g_glideLogAt[i] = t;
+                char line[360]{};
+                const int n = std::snprintf(line, sizeof(line),
+                    "soldier_act_glide; t=%llu; idx=%u; first=%u; d_m=%.1f; p=%.2f,%.2f,%.2f; at=%.2f,%.2f,%.2f; lent=%.2f,%.2f,%.2f; gait=%u\r\n",
+                    static_cast<unsigned long long>(t), i, first ? 1u : 0u, Dist(self, at), self[0], self[1], self[2], at[0], at[1], at[2],
+                    lent[0], lent[1], lent[2], (bits >> 1) & 7u);
+                if (n > 0) Emit(line);
+            }
+        }
         if (warp) {
             float after[3]{};
             Pos(v, i, after);
@@ -1216,7 +1313,9 @@ bool HoldPlanned(const View& v, unsigned i, const unsigned char (&w)[0x70], cons
     if (!PartialHolds(g_planPartial[i], self, g_planEnd[i])) return false;  // round 10 C: near a partial path's end
     std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
     const unsigned now = (bits >> 1) & 7u, want = GaitCatchUp(AheadM(self, at, dest), g_wireGait[i]);
-    return PlanHold(false, RequestChangedFar(planned, w), live, Warp15(self, at), now, want);
+    float lent[3]{};
+    GlideEntry(self, at, lent);  // round 11 C: a walk's entry glides, so the unpack would not warp him
+    return PlanHold(false, RequestChangedFar(planned, w), live, Warp15(self, lent), now, want);
 }
 void MirrorRx(const View& v, std::uint64_t now) noexcept {
     // The fire-drop mask lapses with the apply's own lease (kActFreshMs without ACT_V1 m), whatever Lua forgot to release.
@@ -1467,6 +1566,50 @@ void ReleaseWalkOne(const View& v, unsigned i, std::uint64_t now) noexcept {
     ReleaseLine(v, i, step == ReleaseWalk::finish ? "finish" : (orphan ? "over_cancel" : "over"), w.handle, sl, now - w.at, now);
 }
 
+// Round 11 track C (act_plan, design 7.33): the release watch. A released copy (no released walk running) whose brain
+// re-targeted a walk with no path for kWatchFreezeMs is planned to R+0x80 (the released walk then runs as ReleaseOne's);
+// a failed plan is tried again at most every 2 s.
+void WatchOne(const View& v, unsigned i, std::uintptr_t slots, std::uint64_t now) noexcept {
+    Watch& w = g_watch[i];
+    const std::uintptr_t r = Record(v, i);
+    std::uint16_t h = 0xffff, r19e = 0;
+    std::uint32_t bits = 0;
+    Rd(r + c::r_handle, h);
+    Rd(r + c::r_flags, r19e);
+    Rd(r + c::r_bits, bits);
+    Follower f{};
+    Slot sl{0, 0xffff, 0xffff};
+    if (!slots || !FollowerFor(v, i, f) || !PlannerKnown(f.planner) || !PlannerSlot(f.planner, i, sl)) { w.on = false; return; }
+    bool has = false;
+    std::uint32_t count = 0;
+    float end[3]{}, p[3]{}, dest[3]{};
+    FollowerPath(f, has, count, end);
+    std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
+    float dd = -1.0f;
+    if (Pos(v, i, p)) {
+        const float dx = dest[0] - p[0], dz = dest[2] - p[2];
+        dd = std::sqrt(dx * dx + dz * dz);
+    }
+    const bool freeze = ReleaseFreeze((bits >> 9) & 0xfu, r19e, h, sl.hash, sl.handle, has && count, dd);
+    if (!freeze) w.freezeAt = 0;
+    else if (!w.freezeAt) w.freezeAt = now;
+    const WatchStep step = WatchChoose(freeze, w.freezeAt ? now - w.freezeAt : 0, now - w.at, sl.hash);
+    if (step == WatchStep::end) { w.on = false; return; }
+    if (step == WatchStep::wait || (w.tryAt && now - w.tryAt < 2000)) return;
+    w.tryAt = now;
+    bool started = false;
+    const std::uint16_t got = PlanShadow(v, i, r, bits, f, slots, now, started);
+    if (got != 0xffff) {
+        g_rel[i] = RelWalk{true, got, now, 0};
+        g_cRelWatch.fetch_add(1, std::memory_order_relaxed);
+        g_cPlan.fetch_add(1, std::memory_order_relaxed);
+    } else if (started) {
+        g_cPlanNone.fetch_add(1, std::memory_order_relaxed);
+    }
+    PlannerSlot(f.planner, i, sl);
+    ReleaseLine(v, i, got != 0xffff ? "watch" : "watch_none", got, sl, now - w.at, now);
+}
+
 // Round 8 track C (act_plan; hook thread, after the original manager update, so after the engine's own offline start of
 // each puppet's new request): 0x1413725f0 again with the shadow gate object, for the planner to plan from where he stands
 // to R+0x80 (finding 1: offline the start plans nothing and his follower keeps his brain's old path).
@@ -1484,14 +1627,18 @@ void PlanStep(std::uintptr_t m) noexcept {
             // ReleaseWalkOne ends it; otherwise our live handle is cancelled (his brain's next walk is not refused).
             const std::uint64_t mat = g_mirAt[i].load(std::memory_order_relaxed);
             const bool mirrored = mat && now - mat <= kActFreshMs;
-            if (mirrored) g_rel[i].on = false;  // the mirror has him again
+            if (mirrored) { g_rel[i].on = false; g_watch[i].on = false; }  // the mirror has him again
             if (g_planned[i] && !mirrored) {
                 g_planned[i] = false;
                 g_planHave[i] = false;
                 g_planPartial[i] = false;
                 ReleaseOne(v, i, slots, now);
+                g_watch[i] = Watch{true, now, 0, 0};  // round 11 C: the release watch
             } else if (g_rel[i].on && !mirrored) {
                 ReleaseWalkOne(v, i, now);
+                if (!g_rel[i].on) g_watch[i] = Watch{true, now, 0, 0};  // round 11 C: watched again from the walk's end
+            } else if (g_watch[i].on && !mirrored) {
+                WatchOne(v, i, slots, now);
             }
             if (!g_appliedNow[i]) continue;
             g_appliedNow[i] = false;
@@ -1863,8 +2010,12 @@ bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) 
     fresh = m.req_valid && now >= m.req_rx_ms && now - m.req_rx_ms <= kActFreshMs;
     ReleaseSRWLockExclusive(&g_actLock);
     if (!fresh) g_cStale.fetch_add(1, std::memory_order_relaxed);
-    g_mirAt[idx].store(fresh ? (now_ms ? now_ms : 1) : 0, std::memory_order_relaxed);
-    soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), fresh, now_ms ? now_ms : 1);  // the fire-drop lease
+    const std::uint64_t stamp = now_ms ? now_ms : 1;
+    // Round 11 C (act_plan): a stale m keeps the last fresh lease (MirrorLease); it lapses kActFreshMs after it.
+    const std::uint64_t lease = g_planOn.load(std::memory_order_relaxed) ? MirrorLease(fresh, g_mirAt[idx].load(std::memory_order_relaxed), stamp)
+                                                                        : (fresh ? stamp : 0);
+    g_mirAt[idx].store(lease, std::memory_order_relaxed);
+    soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), lease != 0, lease ? lease : stamp);  // the fire-drop lease
     return fresh;
 }
 
@@ -1887,9 +2038,18 @@ bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept {
     }
     unsigned char req[0x70];
     std::memcpy(req, act.req, sizeof(req));
+    // Round 11 C: this copy's own position (OwnDests) and the owner copy's (the order part) for TakeWarps.
+    float self[3]{}, owner[3]{};
+    bool haveOwner = false;
+    if (idx < kMaxSoldiers)
+        for (int k = 0; k < 3; ++k) self[k] = g_ownPos[idx][k].load(std::memory_order_relaxed);
+    std::uint32_t oflags = 0;
+    std::memcpy(&oflags, act.order + 0x24, sizeof(oflags));
+    if (act.order_valid && (oflags & 1u)) { std::memcpy(owner, act.order + 0x18, sizeof(owner)); haveOwner = true; }
     // Round 10 track C (TakeWait): with act_plan a walker is taken whatever his leg or distance (226fc789: 3 of 4 calm
-    // walkers waited on LegMatch and the 10 m rule and stayed 17-45 m off); without it LegMatch as round 6.
-    const unsigned wait = TakeWait(g_planOn.load(std::memory_order_relaxed), LegMatch(req, own, valid), true);
+    // walkers waited on LegMatch and the 10 m rule and stayed 17-45 m off); without it LegMatch as round 6. Round 11 C: no
+    // take that opens with the unpack's warp (a walk glides).
+    const unsigned wait = TakeWait(g_planOn.load(std::memory_order_relaxed), LegMatch(req, own, valid), !TakeWarps(req, self, owner, valid && haveOwner));
     if (wait == 1u) { g_cLegWait.fetch_add(1, std::memory_order_relaxed); return false; }
     if (wait == 2u) { g_cNearWait.fetch_add(1, std::memory_order_relaxed); return false; }
     return true;
@@ -1919,6 +2079,7 @@ Counters ReadCounters() noexcept {
     k.plan_none = g_cPlanNone.load(); k.plan_release = g_cPlanRelease.load();
     k.plan_hold = g_cPlanHold.load();
     k.rel_keep = g_cRelKeep.load(); k.rel_replan = g_cRelReplan.load(); k.rel_end = g_cRelEnd.load(); k.recheck = g_cRecheck.load();
+    k.glide = g_cGlide.load(); k.rel_watch = g_cRelWatch.load(); k.corner = g_cCorner.load();
     return k;
 }
 
@@ -1929,12 +2090,12 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
         "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u; payload_ids=%u; due=%u; reapply=%u; "
         "expired=%u; order_clear=%u; leg_wait=%u; plan=%u; plan_skip=%u; warp15=%u; plan_ok=%u; plan_far=%u; plan_nopath=%u; "
         "near_wait=%u; gait_up=%u; plan_fault=%u; plan_cancel=%u; plan_busy=%u; plan_none=%u; plan_release=%u; plan_hold=%u; "
-        "rel_keep=%u; rel_replan=%u; rel_end=%u; recheck=%u\r\n",
+        "rel_keep=%u; rel_replan=%u; rel_end=%u; recheck=%u; glide=%u; rel_watch=%u; corner=%u\r\n",
         static_cast<unsigned long long>(now), k.frames, k.frame_p95_us / 1000.0, k.mirrored, k.tx_parts, k.staged, k.rx, k.applied,
         k.orders, k.refuse_table, k.refuse_fault, k.remap_player, k.fire_dropped, k.noise_dropped, k.local_shots, k.same,
         k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear, k.leg_wait, k.plan, k.plan_skip, k.warp15,
         k.plan_ok, k.plan_far, k.plan_nopath, k.near_wait, k.gait_up, k.plan_fault, k.plan_cancel, k.plan_busy, k.plan_none,
-        k.plan_release, k.plan_hold, k.rel_keep, k.rel_replan, k.rel_end, k.recheck);
+        k.plan_release, k.plan_hold, k.rel_keep, k.rel_replan, k.rel_end, k.recheck, k.glide, k.rel_watch, k.corner);
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 
