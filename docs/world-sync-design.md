@@ -1444,6 +1444,13 @@ only); [I] inferred; [U] unknown.
 - **Gate** (named `quiet_place=1`): over >= 10 quiet moves including >= 3 of walkers, 0 radio / intruder reports and 0
   caution / alert phase changes caused by a mod move (each phase change attributed); moved walkers within 3 m of their
   owner copy at 2 s and 10 s (body read-backs); 0 latches / faults / game overs; guest p90 <= 2 m.
+- **Runs**: none in the time box: session 1 (job 20261106-032106-729-9dbd7d, `quiet_place=1, act_census=1`;
+  enemy8-quiet-calm + enemy11-quiet-walk) waited in the queue from 21:21 behind three jobs while the runner waited for
+  its floors (C: free 0.0-5.6 GB, then commit memory). Nothing is turned on. `quiet_place` stays off unless named.
+- **Next**: that session; if its gate passes, the flip with the gun profile (lab_config: `if (!c.quiet_place_given)
+  c.quiet_place = gun;`) and the no-key run of the same parts. Still on the message (and its post): the guest's
+  on-screen corrections, the host's M3 placements of guest-owned guards. The walkers' re-plan cancels the brain's live
+  planner slot; whether his brain then plans again by itself (and what 0xa6 does) is [U] until that run.
 
 ### 8. Soldier transforms (W6)
 
