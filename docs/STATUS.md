@@ -81,6 +81,91 @@ old world_readback.lua, green now); dev 1a9d7381 (the horse round) merged in, wh
   run where it is not refused `far`; exercise a guard within 60 m of the guest, `view=on` and the host's M3
   placements. Then the named run again, the flip, the no-key run.
 
+## November 5, 2026: horse fixland3 - the review's corrections before the land: the late-status revive fix is back to off unless the downed-partner horse option is named; notes corrected (`wp/horse`)
+
+**Players get:** nothing new; riding behind your partner works as in 0.15.3 (on by default). The README now also says
+that when the horse rears at a rock wall your partner may see you standing in the air beside it for a moment (seen
+twice in testing, with the guest steering). The revive fix of step M2i (a late update drains a revive instead of
+restarting it) is back to off unless world_horse_cargo is named, because no game ran it: every ordinary revive works
+exactly as in 0.15.3. docs/mounts.md section 18.
+
+- **Code:** `8b3147b0` red (world_downed_lua_check: at the defaults a 700 ms late spell must still restart the hold;
+  red on `390b1984`, progress 2100 kept) / `611a1195` green (world_downed marks the late status and drains the hold only
+  while `W.horseCargo.keyOn()` is true; 176304 downed checks). `horse-down-guard.txt`: every guard op names `nearest`
+  instead of the hardcoded 2164161801, and the first `enemy goto` (which dropped both players off a cliff) is gone
+  (validate lab / play ok; not run).
+- **Corrected** (the review): the 0.6 m `horse_here` root is not the shown fix for lab `41ae2b4c` part 3 (part 2 had the
+  same offset and fall and mounted; part 3 had a 2.4 s `a=0x1a` state at the press, cause [U]); the pillion stats
+  windows are not dy 0 (driver-copy windows reach xz 635 cm, `186c02d8` guest part 2 line 1292, and dy -173..+161 cm);
+  a seat hold logged acting once (`186c02d8` (b), `grace=2` in the first seated window) while `41ae2b4c`, `b228d163` and
+  `c1982534` stood with `grace=0`; `107977cb`'s revive cause is [I], not [O].
+- **Runs:** none this step. The no-key runs stay those of step S2 at `38c3c705` (lab `c1982534`, play `186c02d8`); every
+  later horse code change (`d602df54`, `390b1984` with `611a1195`) is behind world_horse_cargo [I from the diffs], so no
+  run is at the landed head itself.
+- **Never seen live:** a rider downed while riding (`stop(passenger_downed)`, the downed rider ending on the ground, a
+  revive on both copies; a downed rider can still stay on the horse, README), the late-status drain, the A0 reset at
+  the load. No default change. Nothing pushed.
+## November 5, 2026: horse step M2i - a downed partner on the horse: the revive no longer restarts on one late update, every test order starts on open ground, the load pose tried with a stance reset; not run (the PC's disk was full) (`wp/horse`)
+
+**Players get:** nothing new to see yet; putting a downed partner on the horse stays off by default. One fix that
+reaches every revive (in the code, not yet seen in a game): with a bad connection, one late update from the other PC
+no longer restarts a revive that is under way; it loses a little progress instead and finishes if you keep holding E.
+(Corrected in fixland3: that fix is now on only with world_horse_cargo named; at the defaults every revive works as
+before.) docs/mounts.md section 17.
+
+- **Code:** merge `9e1d34c8` (dev `28c7e487`). `2bb390c3` red / `390b1984` green: world_downed's host gate drains a
+  held revive through a late status (a record over 500 ms old, or the reviver's status naming no target) and keeps
+  that drain 1 s, instead of zeroing it (lab `107977cb`: a revive about 3 s in was reset by one status 517 ms late);
+  not-ready records, a time reversal and a loop gap still reset, and a multi-tick release with fresh statuses still
+  restarts; lines `step=revive_late` / `revive_resume`. `69141e5c` scenarios: every cargo order from the boot spot with
+  `horse_here` on both copies, step S2's route without the right turn, the reviver's horse 4 m away and E about 5.5 s,
+  (c) waits for the victim's own `stream_lost` unload. `13f76dec` red / `d602df54` green: with world_horse_cargo the
+  carrier's hold1 adds Warp's A0 reset (re-applies the stance) once, 1 s into the hold, for the load pose (body 1 along
+  the horse with its upper body raised at the load in `2a41c416`, across the rump after the ride, act and yaw
+  unchanged). Full build -Jobs 4 at `d602df54`: CTest 355/355; every `--check` passes but the base four.
+- **Runs: none finished.** From 21:36 to 22:20 C: fell to 0 bytes free (an Unreal Engine build was writing to it),
+  then the queue's floors (C: 6 GB, commit free 15 GB) held the three enemy jobs ahead. Queued at 22:21 at `d602df54`:
+  lab `20261106-042115-789-d89b21` (`horse-cargo.txt`, `-b`, `-drop`) and play `20261106-042116-245-e164ac`
+  (`horse-cargo-play.txt`, `-play-b`); neither had started by 23:07 (C: 4.2 GB free again and falling, three enemy jobs ahead); the queue runs them when the floors allow, on the worktree as it is then.
+- **Never seen live:** the late-status drain (and that every other revive still works with it), the boot-spot start
+  and > 50 m rides in (a), the 5.5 s revive, the A0 reset at the load, the victim's `stream_lost` unload in (c). The 2 m
+  drop (one log window in six sessions, never in a frame) is [I]: M1's anchored track placements during the carrier's
+  get-off on the victim's copy; not changed (M1 is on by default).
+- **Gate not passed** (not run). world_horse_cargo stays off unless named; no default change. Nothing pushed.
+## November 5, 2026: horse step S2 - riding behind your partner: order (b) from open ground, the standing pose reproduced (cause not found), the downed rider not reproduced; horse log lines kept (`wp/horse`)
+
+**Players get:** nothing new in play; riding behind your partner works as in 0.15.3 (on by default). One fix for logs
+only: the horse's diagnostic lines no longer drop out when the patrol trucks flood the log. Known limits now better
+measured: your partner can see you standing on the horse's back behind them instead of sitting - this round every time
+the guest steered (from the moment they sat down) and, with the host steering, after the horse ran into a rock; a rider
+downed while riding was not tested this round (the test scenes did not get a guard to shoot a rider).
+docs/mounts.md section 16.
+
+- **Code:** `866cce5c` red / `c8209630` green and `9b7afee6` red / `79d467da` green: debug `horse_here` (this copy's
+  unridden horse 4 m right of the player, root 0.6 m over the feet; `world_horse_share` `S.here`, the `place` verb) so
+  the seat scenarios' order (b) starts on the boot spot's open ground (the recall did not move a horse M1's final had
+  placed: 79287a27 / 1c2a6b0a); `partner_pillion=stats` + body 1's act / stance / upper act, overlay phase, DM record,
+  seat grace and pose flag (`228d598c` header fix); scenarios: a rock stop in each order, `horse-down-guard.txt`.
+  `0b4263d2` red / `38c3c705` green: `log_budget::HorseLine` lines from their own world-log bucket (play `b228d163`:
+  441 `world=log_cap` lines on the host took the horse's first_move / stall lines). Full build + CTest 355/355 at
+  `228d598c` and `38c3c705`; every `--check` passes but the base four (carry_info, sleep_plugin differ; native_ui,
+  teammate_targeting no local evidence).
+- **Runs** (no horse key named; `-WanSim bad`, gun profile, research build, afgh-ledge; two attempts): lab `41ae2b4c` /
+  play `b228d163` at `228d598c`, lab `c1982534` / play `186c02d8` at `38c3c705` (the final code head). Order (b) now
+  starts on the boot spot's open ground (`horse_here` placed=1 on both copies, all four runs); at the final head, both
+  orders, lab and play: every first E at an unridden horse mounted, the driver's E after the hop-off got them off
+  (2.6-3.4 s after the seat ended), the passenger's own seat windows 0/0 after the seating second but one 52 cm window in
+  each (a); on the driver's screen body 1 STANDS on the horse's back in (b) from the seating (all four (b) runs this
+  round) and in (a) once the horse is pushed into rock (frames looked at; mounts 16), while body 1's logged anim and DM
+  fields stay the same (not its place: driver-copy windows reach xz 6.35 m, dy -1.73..+1.61 m, and at a rock wall in (b)
+  body 1 stands in the air beside the rearing horse; corrected in fixland3). The guard part never reached a mount
+  (attempt 1: the nearest guard 354 m off was routed, and the host's E after `horse_here` did not mount - an `a=0x1a`
+  state at the press, cause [U]; attempt 2: both players fell from a cliff next to the guard). Archives
+  `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` with full observer logs.
+- **Gate not passed:** the standing pose (cause [U]: no logged anim or DM field changes with it) and the downed rider
+  (not reproduced: the guard part fell to scenario defects - a routed guard 354 m off, a host E that did not mount after
+  horse_here, then a hardcoded guard id that sent both players off a cliff). No default change. Nothing pushed.
+
 ## November 5, 2026: enemy round 11 track A - a likely cause of the false radio report found [I] (the set-transform handler posts action 0xa6 naming this PC's player for every normal guard; no run has tested it); `quiet_place` now moves walkers too and re-plans them; NO RUN: the queue waited on the C: floor, nothing turned on (`wp/enemy-m7`, not pushed)
 
 Design 7.31, protocol 47. Markers: [O] seen in a log line, a frame or the code (read-only disassembly / Ghidra), [I]
@@ -274,7 +359,8 @@ docs/mounts.md section 15.
 - **Runs** (three attempts; archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` with the full session observer
   logs): play `c62e2ce6` (b) and play `2a41c416` (a) passed every require; lab `990d2530` (a) / (b) and lab `107977cb`
   (a) ran load -> ride -> dismount -> take-down at one x,z on both copies, then no revive (`107977cb`: the revive held
-  about 3 s, then one victim status 517 ms old reset it [O]); the rest stopped on scenario checks or the stock pickup /
+  about 3 s, then one victim status 517 ms old reset it [I: the E release and that late sample fall in the same 1 Hz
+  sample]); the rest stopped on scenario checks or the stock pickup /
   aim / horse call (`ad7bbe2c`, `49a1c525`, (b) of `107977cb` / `2a41c416`). No Unconscious / horse_hit line in any.
 - **Gaps:** the lab revive (3 of 3 tries; `107977cb`'s reset is world_downed's generic 500 ms freshness gate, not
   horse-specific), rides under 50 m in (a), the load pose (the downed pose, act 5, at the hold's yaw),
