@@ -2612,3 +2612,23 @@ No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. N
 - New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
   planned puppet and at the end of a kept walk.
 - `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.
+
+## 47. Enemy round 11 track A: the quiet move for walkers too, then their re-plan (lab key `quiet_place`, native only; design 7.31)
+
+No new op, world note, receipt token or CFG bit; no wire change. The guest's Lua still names an off-screen correction
+quiet (` 1` on `WORLD_WARP_V1`, section 39).
+
+- Native `GuestWarpReceipt` with `quiet_place`: `soldier_act::QuietCheck` now answers `walk` for a walking guard (slot
+  speed over 0.5 m/s or unknown) or one whose follower path ends more than 2 m from both him and the target, and
+  `stance` for a stance nibble (S+0x98 records +0x34 & 0xf) of 3-4 or unread. `ok` and `walk` are staged for the quiet
+  warp (`walk` with a re-plan); every other answer sends the set-transform message as before. `world_place=warp` prints
+  `quiet=<ok|unknown|stale|unrealized|unlisted|walk|stance>` (`moving` / `path` are no longer given).
+- Hook thread, after the original manager update (`QuietPlanStep`): a quiet-moved walker whose request is a started walk
+  (dest mode 1, `R+0x19c` = 0xffff, `R+0x19e & 3` = 2) is planned with the shadow gate object through 0x1413725f0
+  (section 40) from his slot position to R+0x80; a live planner slot of another type is cancelled first (planner
+  vt[0x10]). One line per move: `world_place=quiet_plan; go; seq; idx; mode; r19c; r19e; slot; slot_h; fol; step=<none|busy|plan|cancel_plan>;
+  started; handle; p; dest`; kPlanCheckMs later one `soldier_act_plan` line (section 40) for a plan that started.
+- Lua `event=readback; src=quiet`: a fourth read-back at 10 s (`at=10000`); every quiet read-back adds `dho_m` (x/z from
+  the owner copy: the host's last sample of the guard moved on by its speed for at most 400 ms) and `oage_ms` (that
+  sample's age).
+- Contract: no new site (the stance nibble is the census's `rec_stance`, the plan calls are act_plan's sites).

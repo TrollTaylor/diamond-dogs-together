@@ -1401,6 +1401,50 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   ForceStop (a stop that holds, or a get-out that works: none of the commands did, the crews leave together 18-29 s after
   the start); the M3 crew hold above.
 
+#### 7.31 Enemy round 11 track A: no false alarm when the mod moves a guard (lab key `quiet_place`, native only)
+
+Markers: [O] seen in a log line, a frame or the code (Ghidra / capstone disassembly of the fingerprinted exe, read
+only); [I] inferred; [U] unknown.
+
+- **What raises the startle** (read-only RE, round 11):
+  - [O code] Every live guest correction goes by the typed dispatch (`leaf=typed`): the soldier handle's hop 0xbf5450
+    calls the type object's dispatcher 0x9e9ab0, which takes the soldier native subobject by hash 0x3fef1d0298aa and
+    calls its vt[0xa8] = the handler 0x1360f90 only (handled: `*out = 0`, no other component sees the message).
+    soldier_warp's stance refusal (stance 1-4) runs only on the pinned chain, so it never ran live.
+  - [O code] The set-transform branch 0x13615f5..0x13619ed: realized bit; the character controller T (vt[0xf0] ->
+    0x9e5dd0 -> the component's vt[0x388]); pos.y += T+0x160; the stance nibble `(*(this+0x98))[idx*0x70 + 0x34] & 0xf`.
+    Stance 1-2 (0x13616e8 `jbe 0x1361976`): it posts an action request {u16 0xa6, u16 = msg+0x30, byte +7 |= 4} through
+    this->vt[0x1f8] = 0x1365500, which forwards to (this+0x80)->vt[8](idx, req). msg+0x30 is a player index: the
+    player carry code (0x10557f3) puts the carrying player's there; the mod leaves it 0, this PC's own player. Stance
+    3-4: the pose is rotated, no post. Then T->vt[0x68](pos, quat), T->vt[0x70](quat) for all.
+  - [O code] The quiet warp 0x136ece0 makes the same controller calls (S vt[0x100] -> the same component table ->
+    vt[0x388]; vt+0x70, vt+0x68, y + T+0x160) and posts no action.
+  - [O census] Stance 1 is the normal one: in 0d801772's guest census `st=1` 6841 samples, `st=0` 1081, `st=2` 423;
+    guard 246 read `st=1` right after his warp in 0d801772, fbf3522a and f11fe8a1. In 0f020398 the message corrections
+    of stance 1-2 guards were followed by action kind 3 -> 15 within 0.5-2 s (2929558510: 1, 3, 15, 12, 27; 3970963356
+    and 2305481811: 18/1, 3, 15, 1, 27), the stance 4 guard's not (kind 4 only).
+  - [O code] 0xa6 is also one of the event ids the soldier's reaction classifier around 0x141455e60 sorts (it reads
+    the same S+0x98 records; `[event+0x28] == 0xa6` gives class 0x1d, next to other ids such as 0x3f/0x40 and 0x54);
+    what the classes mean is [U].
+  - So the one part of the default place warp the quiet warp lacks is the action 0xa6 post naming this PC's player for
+    every stance 1-2 guard [O]. [I] it is the startle (the post reads as a player handling him, as at a release from
+    a hold or a carry; he then reports "a possible intruder ... attacked me"). What 0xa6 does inside the action
+    component (this+0x80) is [U]. Not a flag on the message: the post depends only on the guard's stance nibble.
+- **Built** (`quiet_place`, native only, no CFG bit, no wire change):
+  - `QuietChoose`: the quiet warp for every off-screen correction of a realized, listed guard with stance 0-2,
+    walkers too (`quiet=walk`: speed over 0.5 m/s, unknown, or a path ending away from him and the target); stance 3-4
+    or an unread stance keeps the message (`quiet=stance`). The rest view reads the stance nibble.
+  - `QuietPlanOne` (hook thread, after the original manager update): a moved walker whose request is a started walk
+    (dest mode 1, `R+0x19c` 0xffff, `R+0x19e & 3` = 2) is re-planned from where he now stands to his own brain's
+    destination R+0x80 with act_plan's shadow plan 0x1413725f0; his brain's live planner slot of another type is
+    cancelled first (vt[0x10]). `world_place=quiet_plan; go; seq; idx; mode; r19c; r19e; slot; slot_h; fol; step;
+    started; handle; p; dest`, then the plan check (`soldier_act_plan`, kPlanCheckMs later).
+  - `world_readback.lua`: src=quiet at 0.5 / 2 / 5 / 10 s, with `dho_m` (x/z to the owner copy: the host's last
+    sample moved on by its speed for at most 400 ms) and `oage_ms`.
+- **Gate** (named `quiet_place=1`): over >= 10 quiet moves including >= 3 of walkers, 0 radio / intruder reports and 0
+  caution / alert phase changes caused by a mod move (each phase change attributed); moved walkers within 3 m of their
+  owner copy at 2 s and 10 s (body read-backs); 0 latches / faults / game overs; guest p90 <= 2 m.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
