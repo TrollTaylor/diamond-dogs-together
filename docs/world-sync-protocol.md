@@ -2440,8 +2440,10 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
 |---|---|---|---|---|---|
 | 0x5D | LRRP_FAST | host to guest | U (its own newest-value slot), level 3, play too | 26 | sender tick (u32 ms), truck id (u16, 25600..26111), x / y / z (i32 mm), yaw (i32 mrad, +-31416), speed (u16 mm/s), NPC riders (u8, 0..8), flags (u8: 1 moving) |
 
-- Sent only on a host with `lrrp_follow` (off unless named, the gun profile too, since 34b9f024; receipt `MGS_COOP_LRRP_CFG_V1` ->
-  `return 1`; `return 0` off; nil off the runtime thread, asked again in 5 s); never for a truck the host's player rides or one with a live RIDE_FAST track.
+- Sent only on a host with `lrrp_follow` (off unless named, the gun profile too, from 34b9f024 until the D-B10 flip e1bf27af:
+  since then on with the gun profile in Afghanistan free roam 30010 only; receipt `MGS_COOP_LRRP_CFG_V1` -> `return 1` named
+  on, `return 2` on by the gun profile's default (Lua runs it only while `W.mission` is 30010); `return 0` off; nil off the
+  runtime thread, asked again in 5 s); never for a truck the host's player rides or one with a live RIDE_FAST track.
   10 Hz moving, 1 Hz at rest, at most one per 50 ms (the receiver's one slot keeps the newest sender tick, so trucks take
   turns, and a newer datagram for one truck replaces an undelivered one for another: a design limit).
 - The guest applies it only with `lrrp_follow`, only for an id that is an authored LRRP truck on its copy (else
@@ -2600,3 +2602,13 @@ crews keep their own clock (as section 42).
 - Guest: while steps for a truck arrived in the last 15 s, its crew is not unseated (no `UnsetRelativeVehicle`).
 - Lines: the guest's `step=follow` (and its riders line) 1 Hz while followed, 5 s at rest (were 4 Hz / 2 s); the host's
   `step=host` 4 Hz while its truck moves, 1 Hz manned at rest, 5 s empty.
+
+## 46. Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`; design 7.29)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native only, the puppet side, under `act_plan`.
+
+- `ACT_V1 q` (QueryFresh) no longer waits on `LegMatch` or the 10 m rule with `act_plan` (`leg_wait` / `near_wait` stay 0).
+- `soldier_act_plan` adds `tries` (rechecks, up to 4 at 300 ms); `ms` counts from the plan.
+- New line `soldier_act_release; t; idx; step; handle; r19c; r19e; dm; psh; psl; ms; d_dest; p; r80` at each release of a
+  planned puppet and at the end of a kept walk.
+- `soldier_act_frame` adds `rel_keep`, `rel_replan`, `rel_end`, `recheck` after `plan_hold`.

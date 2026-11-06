@@ -2093,7 +2093,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
-    // Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow stays off unless named, the gun profile too. Its
+    // Enemy round 10 track B (docs/world-sync-design.md 7.28): lrrp_follow follows the gun profile when not named (the
+    // receipt answers 2: Afghanistan free roam 30010 only, the map its gate ran on); a named 0 is the off switch. Named run
+    // ffd0248d (lrrp_follow=1, code head a8c615a4); the no-key run at this flip is in docs/STATUS.md.
+    if (!c.lrrp_follow_given) c.lrrp_follow = gun;
+    // History (before the round 10 flip above). Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow stayed
+    // off unless named, the gun profile too. Its
     // truck rows passed (c784a5a7 / 0da27fc6), but the unseated near crew stayed 26-71 m off the host's copies for 80-100 s,
     // the unseat ends the guest's crew's LRRP plan (a re-boarding crew's truck drives empty on the guest's screen) and
     // Africa was not run. Round 9 B (7.25: 68491f7f / 801cd90b named, d7b3a81c not named): followed trucks within 0.6 m
@@ -2102,7 +2107,7 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Round 10 B (7.28: ffd0248d named): the crews the host saw seated (2 of 6 trucks) take the host's travel step
     // (StartTravel step; get-outs within 1 s, 0-1.75 m p90 20-40 s after, 0 log_cap); the other crews get no step and the
     // guest unseats them; a truck within 400 m of the guest at the pairing stays the guest's own
-    // (riders ~499 m off for 54 s): still off unless named; the flip is the user's decision (D-B10).
+    // (riders ~499 m off for 54 s). The user turned it on in 30010 with those limits (D-B10, 2026-11-05).
     // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place stays off unless named. Its named run bcd95b14
     // passed (guard 246 moved quietly, read back within 0.2 m, no kind 3 / 13, no guest-only phase change in calm), but
     // its no-key run 1befcef4 failed the place_sink row: guard 1904171355 walked 13-14 m back off each quiet move (22
@@ -2110,10 +2115,13 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
     // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
     // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.
-    // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert stays off unless named. Every vert snap seen (runs
-    // 617311eb, 025fbb28, 35d4074f) was of a copy 63-121 m from its receiver, so it needed place_reach's 60-160 m band and
-    // the 60 m band live at the defaults was never exercised; "landed" is h=1 with no position read-back, a second snap
-    // 1.4-1.7 s later shows at most 4 of 8 moves held, its 1 s snap masks the 2 s drive_sink detector, and no frame shows it.
+    // Enemy gaps 3 / round 10 A (docs/world-sync-design.md 7.18, 7.27): drive_vert follows the gun profile in lab and play
+    // since the user's decision D-A10 (2026-11-05). Its rest-gated snap (only while the owner copy has been level in y for
+    // 1 s, sw::OwnerYAtRest) held 3 of 3 within 0.02 m at 0.5 s and 2 s within 60 m (named runs c59ae699 / 948c978a; the
+    // guest on the wall top saw him on it); at the defaults the wall guard's copy stayed 4.54 m under (ef9584e4). While he
+    // climbs his copy still waits below about 3 s (the drive_sink row; D-A10 reads the gate as "left under after the
+    // owner's height has stayed level for 1 s"). A named 0 opts out.
+    if (!c.drive_vert_given) c.drive_vert = gun;
     // Enemy gaps 2 / 3 (docs/world-sync-design.md 7.17, 7.18): place_reach and body_dead stay off unless named. place_reach's
     // frames matched in runs 617311eb / 025fbb28 (the host's binoculars 108-109 m from guest-owned 1740692850: his body at
     // the crosshair beside the guest's character, copies 0.1-1.4 m apart; host place error p90 2.5 / 1.99 m), but its no-key

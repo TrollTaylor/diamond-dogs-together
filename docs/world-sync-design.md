@@ -1189,13 +1189,37 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     3.5 s) and nothing moved it until the guest became his owner 1.0 s later; then both copies were on the ground (the
     host's binoculars, the guest's aim). PASS 0 latches / faults / game overs, guest p90 1.17 m; FAIL `place_sink` 1
     (3268415846 with his owner 4.89 m lower too: down a ladder on both [I]); host M3 p90 6.94 m.
-- **Defaults**: `drive_vert` stays off unless named: the `drive_sink` row failed in both named runs (above), and a flip
+- **Defaults** (round 10; flipped on below): `drive_vert` stayed off unless named: the `drive_sink` row failed in both named runs (above), and a flip
   needs its named run to pass. User decision D-A10 (docs/STATUS.md): turn it on with that row read as "left under after
   his height has stayed level for 1 s" (the copy waits below about 3 s while he climbs, then jumps to his height; at the
   defaults nothing moves it until the other PC takes him over), or keep it off.
 - **Next**: if the user says on, the flip is one line (`if (!c.drive_vert_given) c.drive_vert = gun;`, the lab_config
   test red first) and the no-key run of this batch. Otherwise a `drive_sink` that counts only while the owner copy is at
   rest in y would measure the bug itself, not the climb (a detector change: needs the user's or the reviewer's yes).
+- **Flip (enemy flip A-vert, user decision D-A10, 2026-11-05)**: `drive_vert` follows the gun profile in lab and play
+  (`if (!c.drive_vert_given) c.drive_vert = gun;`; a named 0 opts out). fba2a7b8 red / 8937f6eb green (`lab_config_tests`).
+  The `drive_sink` gate row is read as D-A10 says: `tools/enemy_div_report.py` gates **vert left under 0** = a copy more
+  than 1.5 m under its owner copy for more than 2 s (drive_sink's own window) counted from the moment the owner copy had
+  been level in y for 1 s, per guard with the time, from the native lines (a vert snap up: `rest_ms` - 1000, capped by
+  the time he was known under; a `vert_stop` up: until his next snap or the log end; n/a when copies sank but no
+  `world_drive=vert` line gives the owner's rest); `drive_sink` stays in the report as information. ddabed29 red /
+  59c1b48d green (`tests/enemy_div_report_check.py`). On round 10's runs: `c59ae699` / `948c978a` PASS (the snaps came
+  58-178 ms after the owner had been level 1 s), `ef9584e4` n/a (drive_vert off).
+- **No-key run at the flipped head** `11b73082` (59c1b48d, 0.15.2+59c1b48; join, latch-quiet, integ-carry, vert-near,
+  latch-alert; lab settings `nametag=1` only) [O]: `drive_vert` on without being named (the guest's `world_drive=vert`;
+  stats `vert=1`; on the host only [I]: same loader and profile, but no host `vert` / `vert_wait` / `vert_stop` /
+  `drive_sink` line, as it drove no copy a storey off within 60 m of the host). One snap of 2929558510, the guest's copy 2.41 m under the host's (owner) copy, far 33 m, `rest_ms`
+  1352; read-backs 0.00 m at 0.52 s and 2.00 s; 0 `vert_wait`, 0 `vert_stop`, 0 `drive_sink`; vert left under 0. 7 s
+  later the guest teleported onto the wall top and took him over: the guest sees him standing on it about 12 m ahead
+  (aim 12.2 m, 3.3 deg), the host's binoculars at 31 m show his X-ray outline at the wall's top under his marker (v-a).
+  0 latches / faults / game overs / roster mismatches / overflow / `place_sink`; one `guard_fell` on the host
+  (1179373153 at 144 m, 11.9 m under, put back at once and held; the host logged no vert line); guest place error p90
+  2.89 m (FAIL against the rounds' 2 m p90 gate; the tool's own p90 <= 5 m row passes: reinforcements 3970963356 /
+  2305481811 arriving 374-397 m off, 1740692850 2.0-135.6 m apart (`why=far` rising 32.5 to 135.6 m over 28 s; his
+  135.6 m sample is in the tail) and one 12.7 m sample of 3268415846, none a vert move: the place error is x/z); host
+  M3 p90 6.57 m. The drive band is 60 m from the player whose screen shows the copy (`S.drive`,
+  `lua/coop/world_snap.lua`), so a guard within 60 m of only one player is not moved up on the other's screen.
+  `drive_vert` stays on.
 
 #### 7.28 Enemy round 10 track B: the LRRP crews on the host's travel step (lab key `lrrp_follow`, native only; op LRRP_STEP 0x5E)
 
@@ -1257,6 +1281,73 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   off unless named; turning it on in 30010 with that limit is the user's decision (docs/STATUS.md, D-B10).
 - **Next**: hold a copy that is one step ahead for up to 20 s instead of setting it back; leave a guard whose host step
   never changes (the driver) alone; a pairing jump hidden from the guest's camera if the no-jump row allows it; Africa.
+- **Flip (D-B10, 2026-11-05)**: `lrrp_follow` follows the gun profile when not named, Afghanistan free roam only: the
+  receipt `MGS_COOP_LRRP_CFG_V1` answers 2 for that default (1 named, 0 off) and `LF.on()` runs a 2 only while `W.mission`
+  is 30010, so Africa (never run) and Mother Base stay off unless named; a named 0 is the off switch (red 1db52182 /
+  green e1bf27af). The user accepted the limits above (the pairing deferral, only the trucks the host saw manned on the
+  host's step, the other crews unseated on the guest, re-boarding untested, reinforcements that may not reach the guest).
+  No-key run `139a1440` at e1bf27af [O]: `step=on` on both roles; moving truck p50 0.14 / p90 0.53 / max 2.12 m (317 `mode=follow` samples; every sample while the host's
+  truck moved: 348, p90 1.33 / max 452.9 m, the extra all 25605 in the pairing deferral);
+  crews 20-40 s after the host's get-out p90 1.79-4.83 m; get-outs and boardings in the same order on both copies (25605
+  2 -> 1 -> 0, 25606 2 -> 0 -> 1 -> 2; the guest's re-boarding 4.4 / 6.2 s after the host's, its 25605 get-outs 0.9 /
+  5.0 s before); 0 latches / faults / game overs (one host `drive_sink` of an outpost guard in ALERT, so
+  `enemy_div_report`'s combined row is FAIL); guest place error
+  p90 1.95 m; the pairing deferral 60.2 s (riders 400-450 m off, then p90 <= 0.86 m); 8 guards of 4 unmanned trucks
+  unseated (24 lines). The key-only defects listed under Gate are now open at the defaults in 30010 [I] (none was seen
+  in the run; no checkpoint restore or continue was run with the 1 Hz `StoreToSVars`) [U]. docs/STATUS.md.
+
+#### 7.29 Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`)
+
+- **Why** (round 9, 7.26): 3 of 4 calm walkers were never taken (`leg_wait` 775, `near_wait` 53 in `226fc789`): walking at
+  take time, their copies were on another leg or more than 10 m off, and stayed 17-45 m off; 77785f31's five released
+  walkers stood 34-48 s: the release cancelled our plan and left the host copy's walk in R (guard 18: R+0x80 the host
+  copy's new caution walk 190 m away, R+0x19c 0xffff, slot empty, fh 0); 2-4 plans a run had no path yet at 300 ms.
+  The path step 0x141372b70 (decompiled, read only) acts only with (R+0x19e & 3) in {2, 3} and a follower path
+  (vt[0x90], vt[0xa0]); with no path it issues nothing, so a walk in R with no path never ends; at the path's end it
+  sets R+0x19e bit 2.
+- **Built** (native only, no CFG bit, no wire, no new contract site; under `act_plan`):
+  - `TakeWait(plan, leg, near)`: with `act_plan` a walker is taken whatever his leg or distance (the plan walks him onto
+    the host copy's path; beyond 15 m the take opens with the unpack's warp, `soldier_act_warp15 first=1`); without it
+    `LegMatch` as round 6. `TakeNear` stays for the record.
+  - `PlanCheckVerdict(path, end_near, tries)`: 300 ms after a plan and then every 300 ms up to 4 more times while the path
+    is missing or ends beyond 1 m of R+0x80; the last verdict is counted (`plan_ok` / `plan_far` / `plan_nopath`,
+    `recheck`; the `soldier_act_plan` line prints `tries`, `ms` from the plan). Only no path at all stops the hold.
+  - `PartialHolds(partial, self, end)`: a path whose last check ended beyond 1 m is held while he is more than 3 m (flat)
+    from its end; nearer, the next due re-apply plans again from where he stands.
+  - `ReleaseChoose(dm, r19e, slot, r19c)` at a release: a walk (dest mode 1) with our live plan is kept (`keep`); with no
+    handle, (R+0x19e & 3) == 2 and a free or own slot it is planned again (`replan`, the same shadow plan); not a walk:
+    our live handle cancelled as before (`cancel`); his brain's type in the slot: left alone. `ReleaseWalkStep` ends a
+    kept walk: `over` once R+0x19c or his slot no longer holds our handle (the engine's start of his brain's next request
+    cancelled it; an orphan of ours in his slot is cancelled), `finish` (our handle cancelled, R+0x19c 0xffff) after 2 s
+    stood within 1.5 m of R+0x80 or 180 s. Each step logs `soldier_act_release; step=keep|replan|replan_none|cancel|none|
+    finish|over|over_cancel`.
+  - The frame line adds `rel_keep`, `rel_replan`, `rel_end`, `recheck`; its buffer is 1024 bytes.
+- **Gate** (scaled to what a player can see at 95-300 m: 7.23's p50 1.0 / p90 2.5 m became p50 1.5 / p90 3.0 m, the frame
+  p95 + 0.5 ms became + 1 ms on capture-free seconds against the mirror-off part of the same run; per mirrored calm
+  walker with >= 20 moving samples): place error p50 <= 1.5 / p90 <= 3.0 m; >= 3 of the calm walkers in range mirrored;
+  15 m warps while a puppet <= 1 a run; 0 released guards frozen > 5 s; plans with the path end within 1 m >= 90 %
+  (rechecked); a matched host / guest frame pair of one mirrored guard walking; no ChangePhase started by a puppet; 0
+  faults / latches / game overs.
+- **Seen** (`15aa58cb`; docs/STATUS.md 2026-11-05 enemy round 10 track C): 4 of 4 calm walkers mirrored; 17 and 18 within
+  the gate (p50 0.55 / 1.18 m); plans 97.6 % within 1 m; 28 released walks kept (0 `finish`, 20 taken again within
+  about 1.5 s), 0 with round 9's freeze signature. Not reached: 5 released stands > 5 s (guard 246 29.9 s straight
+  after a keep release and 11.0 s after the mirror off, in calm); guard 15 leads by p50 3 m (the host copy walks the
+  route's line, the plan the straight line to the leg's end), guard 246's guest copy stood at the spot his 27.1 m take
+  warp put him (he walked 15 m and 28 m once released; cause [U]) and drew 2 held warps, frame p95 + 1.52 ms with 12
+  puppets, no matched frame pair. 5 take warps of 18-49 m (round 9: 1): `TakeWait` takes walkers at any distance. `689e654c` (spot A): 17 and 18 within the gate again, 246 walked
+  (1.57 / 3.13 m), 15 1.99 / 6.56 m; held warps 1; frame p95 + 0.20 ms on 20 s off / 20 s on with no capture; a matched
+  frame pair of guard 17 walking (`w17-2`); but 6 released stands of 10.5-26.2 s, 5 with no path: at the end of the
+  kept walk his brain set a new R+0x80 without a new request and planned nothing (guard 15, R+0x1a0 unchanged, R+0x19c
+  and slot cleared); guard 18 stood 20.1 s straight from a release with no walk (`step=none`, dm 0); 5 take warps of
+  18-49 m in calm and 5 at once (15.8-45.2 m) at the caution retake; 27 of 36 kept releases taken again within about
+  1.5 s. Mirrored 42-89 % of the host-moving samples per walker in both runs.
+- **Nits** (not fixed; `act_plan` only): `g_rel[]` / `g_planned[]` are not cleared on a mission or level change (a
+  reused index within 180 s could have a stale handle cancelled); `TakeWait`'s `take_near` is unused.
+- **Next**: plan a released copy's brain re-target that has no path (until his brain's own type shows in his slot); the
+  host copy's path on the wire (or a plan through the owner positions); no take of a copy that cannot walk; no far
+  take that opens with a warp in calm and no retake within 1.5 s of a release; clear the per-guard state on a mission
+  change; then one
+  named run, the flip per D-FM1 (a) and the no-key run.
 
 ### 8. Soldier transforms (W6)
 
