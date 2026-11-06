@@ -26,13 +26,10 @@ for k, v in pairs(CAUSE) do CODE[v] = k end
 -- TAKE_MS 0.3 s (run a49c4d76: the coop pickup shouldered the body off the horse before a 0.5 s hold).
 local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 300, 1500, 6000, 1000, 3500, 1500, 1000
 local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 450, 1100
--- Heights (step=pin and frames): an unridden census root stands 0.5-1.3 m over the carrier's ground; body 1 goes 0.45 m
--- over an unridden census and, while this copy's player rides, 0.54 m behind and 0.15 m over the rider's own position (no
--- census lag; M2g: 0.4 drew its back at the rider's mid-back in 770368d0 / 4585cc5a). On foot within 3 m a point outside
--- 0.8-2.0 m over the carrier's ground is put 1.35 m over it (5a92c73f: a census root 0.52 m over it after a ride). The
--- victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose right
--- after each placement, else 0.9 m over the census. Both bodies lie along their yaw: each is held a quarter turn from the
--- horse's yaw, across its back (M2g: body 1 at the horse's yaw lay along it over the saddle, 770368d0 host-h2-loaded).
+-- Heights (docs/mounts.md 11): body 1 0.45 m over an unridden census; riding, 0.54 m behind and 0.15 m over the rider
+-- once the rider sits over the census root (M2h, 990d2530: 0.97 m under it right after the mount), else the census
+-- point; on foot within 3 m outside 0.8-2.0 m over the ground, 1.35 m over it. Body 0 1.3 m over the placed pose
+-- after each placement, else 0.9 m over the census. Both held a quarter turn from the horse's yaw (across its back).
 local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 150, 800, 2000, 1350, 3000, 2000
 local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
 -- Round 2 (83ac3950 / 547b431e: body 1 trailing low at a gallop, body 0 slipping off): a warped body is drawn after
@@ -348,12 +345,13 @@ end
 local function bodyPoint(h, rides)
  local x, y, z, a = cargoPoint(h)
  local px, py, pz = mine()
- if rides and px then
+ if rides and px and py >= h.y then
   local lx, lz = lead(C.lastMine, px, pz)
   C.lastMine = {px, pz}
   return px - RIDE_BACK_MM * sin(a) + lx, py + RIDE_RISE_MM, pz - RIDE_BACK_MM * cos(a) + lz, a, "rider"
  end
  C.lastMine = nil
+ if rides then return x, y, z, a, "unseated" end
  if px and sqrt((h.x - px) ^ 2 + (h.z - pz) ^ 2) <= NEAR_MM then
   if y > py + GROUND_HI_MM or y < py + GROUND_LO_MM then
    C.dyFix = py + GROUND_MM - h.y
@@ -403,9 +401,10 @@ local function carrierTick(now)
  hold1(bx, by, bz, ba)
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS
-  local _, py = mine()
-  capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d;hyaw=%d;byaw=%d", how, rides and 1 or 0, round(h.y / 10),
-   py and round(py / 10) or -1, round(by / 10), h.yaw, round((ba + pi / 2) * 1000)), 60)
+  local px, py, pz = mine()
+  capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d;hyaw=%d;byaw=%d;bx_cm=%d;bz_cm=%d;px_cm=%d;pz_cm=%d", how,
+   rides and 1 or 0, round(h.y / 10), py and round(py / 10) or -1, round(by / 10), h.yaw, round((ba + pi / 2) * 1000), round(bx / 10),
+   round(bz / 10), px and round(px / 10) or -1, pz and round(pz / 10) or -1), 60)
  end
  if now >= C.keepAt then C.keepAt = now + KEEP_MS; send(KEEP, 0, C.gen, h.x, h.y, h.z, h.yaw) end
  if not C.takeArmed and not held("R", now) and not held("E", now) then C.takeArmed = true end

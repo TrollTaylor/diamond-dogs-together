@@ -304,13 +304,24 @@ local function poll(now)
   -- M2h (lab a53a243a: no revive after the horse take-down and no line saying why): the raw E held near a downed
   -- teammate while the revive does not take it, at most once a second (carry role, the record's age, generation, xz mm).
   local o=D.records[3 - W.role]
-  if D.rawHeld and not r.held and o and o.down and now >= (D.waitAt or 0) then
-    D.waitAt=now + 1000
+  if o and o.down then
     local p,q,dm=r.pos,o.pos,-1
     if type(p) == "table" and type(q) == "table" and type(p[1]) == "number" and type(p[3]) == "number" and
       type(q[1]) == "number" and type(q[3]) == "number" then dm=math.sqrt((p[1] - q[1]) ^ 2 + (p[3] - q[3]) ^ 2) end
-    log(fmt("step=revive_wait;carry=%d;other=down;age_ms=%.0f;gen=%.0f;d_mm=%.0f;down=%d", valid(r.carry,0,4) and r.carry or -1,
-      type(o.at) == "number" and now - o.at or -1, o.generation or 0, dm, r.down and 1 or 0))
+    local age,carry=type(o.at) == "number" and now - o.at or -1,valid(r.carry,0,4) and r.carry or -1
+    if D.rawHeld and not r.held and now >= (D.waitAt or 0) then
+      D.waitAt=now + 1000
+      log(fmt("step=revive_wait;carry=%d;other=down;age_ms=%.0f;gen=%.0f;d_mm=%.0f;down=%d", carry, age, o.generation or 0, dm,
+        r.down and 1 or 0))
+    end
+    -- M2h (lab 990d2530 (a) / (b): four E holds by the downed teammate after the take-down, no revive, no revive_wait): on
+    -- foot within 5 m of a downed teammate, 1 Hz (120 a mission): the raw E, the revive's held, its mask, xz mm, age.
+    if D.nearMission ~= W.mission then D.nearMission, D.nearN = W.mission, 0 end
+    if carry <= 0 and not r.down and dm >= 0 and dm <= 5000 and now >= (D.nearAt or 0) and D.nearN < 120 then
+      D.nearAt,D.nearN=now + 1000,D.nearN + 1
+      log(fmt("step=revive_near;raw=%d;held=%d;mask=%d;d_mm=%.0f;age_ms=%.0f;gen=%.0f", D.rawHeld and 1 or 0, r.held and 1 or 0,
+        D.reviveMaskOwned and 1 or 0, dm, age, o.generation or 0))
+    end
   end
   D.refusalAt=nil
   D.nativeSleepActive=r.nativeSleepActive==true or nil
