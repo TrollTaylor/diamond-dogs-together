@@ -1432,7 +1432,9 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   on the record; the game's own scripts send it only to the player's ridden vehicle (s10050, s10260), so the AI driver is
   not reached [I] (the runs: ForceStop and `restop` did not stop a crew-driven truck). Two unnamed commands go to the
   component at *(this+0x1c8): 0x84692f8d reads `speed` into vt[0x78], 0xe51e5c9b (no argument) calls vt[0x80] - a drive
-  speed set / reset is a guess [U]; neither name is among the 190 command ids of the game's own Lua nor ~10^5 generated
+  speed set / reset is a guess [U]; that component is the one of type id 0x9fcfc16ce0ce the TppVehicle2 init (0x140b2e840)
+  takes from its factory (QueryInterface 0x1416f9550, in the vtables at 0x142440fe0 / 0x1424410e8 beside the vehicle
+  controller code that `partner_vehicle` reads), its own vtable not found statically [U]; neither name is among the 190 command ids of the game's own Lua nor ~10^5 generated
   names, so Lua cannot send them. Soldier side: `UnsetRelativeVehicle` (0x778af7be) and `StartTravel` are the commands
   known; neither got a seated far crew out before its own moment (7.30). **No stop that holds and no working get-out
   command is known.** Next: decompile *(this+0x1c8) vt[0x78] to learn whether speed 0 holds a crew-driven truck, then find
