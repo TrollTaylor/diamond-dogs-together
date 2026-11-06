@@ -44,8 +44,9 @@ do
         -- 1 s): a walker lagging a moving owner copy is the catch-up's (native re-applies his request every 1 s), not apart's.
         M.STILL_MM, M.STILL_MS = 500, 2000
         M.P_WAIT = 10000  -- ACT_V1 p refused "hook" (the defaults: no hook installed): offered again after 10 s
-        -- Round 6: ACT_CAPS (92 = 0x5C): caps bit 1 the far mirror on this PC, bit 2 its calm phase limit; FM1 revision 6.
-        M.CAPS, M.REV = 92, 6
+        -- Round 6: ACT_CAPS (92 = 0x5C): caps bit 1 the far mirror on this PC, bit 2 its calm phase limit. Round 12 (design
+        -- 7.33): FM1 revision 7 (act_plan with it by default); a partner's older revision mirrors nothing (why=peer).
+        M.CAPS, M.REV = 92, 7
         W.OP.ACT_CAPS = M.CAPS
         local function act(op, slot, id)
             local r = W.receipt(fmt("return 'MGS_COOP_WORLD_ACT_V1' -- %s %d %d", op, slot, id))
@@ -104,7 +105,7 @@ do
         end
         W.pairedHooks[#W.pairedHooks + 1] = function() M.capsTx, M.capsTry = nil, nil end
         W.startHooks[#W.startHooks + 1] = function() M.capsTx, M.capsTry = nil, nil end
-        function M.peerOn() return M.peer ~= nil and M.peer.caps % 2 == 1 end
+        function M.peerOn() return M.peer ~= nil and M.peer.caps % 2 == 1 and M.peer.rev >= M.REV end
         -- Round 6 (2): a rider (run adecad01: two LRRP riders of another CP puppeted at 297 m, apart 283-285 m off) is
         -- skipped: his vehicle carries him (the stock rider array), not his legs. [U] whether a gun emplacement answers too.
         function M.rides(en)
