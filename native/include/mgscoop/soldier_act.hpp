@@ -120,7 +120,8 @@ struct RestView {
 };
 // Round 11 (design 7.31): walk = a walking guard or one with a path ahead: the quiet move, then his re-plan (QuietPlan);
 // stance = stance 3-4 or unread: the message (its rotated pose; no action post there). moving / path are no longer given.
-enum class QuietWhy : std::uint8_t { ok, unknown, stale, unrealized, unlisted, moving, path, walk, stance };
+// Round 13 (design 7.31): fast = the owner copy moves over kQuietFastMps (a vehicle): the message, as the defaults.
+enum class QuietWhy : std::uint8_t { ok, unknown, stale, unrealized, unlisted, moving, path, walk, stance, fast };
 inline constexpr std::uint64_t kRestMs = 250, kRestStaleMs = 1500;
 inline constexpr float kRestSpeedMps = 0.5f, kRestPathM = 2.0f;
 // ok only when the view is at most kRestStaleMs old, realized, listed, his speed known and at most kRestSpeedMps, and no
@@ -131,7 +132,8 @@ const char* QuietWhyName(QuietWhy why) noexcept;
 // brain's destination R+0x80 (the shadow plan 0x1413725f0 of act_plan): only for a started walk (dest mode 1,
 // PlanGate); his brain's live slot of another type is cancelled first (PlanSlot); another type with no handle: busy.
 // slot_read: whether his planner slot was read at all (the review: an unread slot is no empty slot): none if not.
-enum class QuietPlan : std::uint8_t { none, busy, plan, cancel_then_plan };
+// Round 13: replan = our own live plan re-planned toward the owner copy (QuietPlanFollow).
+enum class QuietPlan : std::uint8_t { none, busy, plan, cancel_then_plan, replan };
 QuietPlan QuietPlanChoose(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
                           std::uint16_t slot_handle, bool slot_read) noexcept;
 const char* QuietPlanName(QuietPlan step) noexcept;
@@ -142,6 +144,45 @@ bool QuietAsk(bool quiet_place, bool off_screen, bool host, bool correction, std
 // Whether the request manager hook (and its rest views) runs the quiet moves on this role: lab key, soldier_follow, and
 // for a host soldier_owner (M3).
 bool QuietHook(bool quiet_place, bool soldier_follow, bool soldier_owner, bool host) noexcept;
+// Enemy round 13 track A (design 7.31): the owner copy's track from its two newest correction samples (world::Core::
+// EntGrants; metres, pop time). Rounds 11-12 re-planned a moved walker to his own brain's destination R+0x80: far walkers
+// then followed their host copies worse than the default move (2 s: 16/27 and 13/31 within 3 m), and a guard standing
+// on a ledge on the host walked off it on the guest. Now the re-plan goes where the owner copy walks.
+struct OwnerSample {
+    bool valid;
+    float pos[3];
+    std::uint64_t rx_ms;
+};
+// unknown: one sample, or two under kOwnerMinDtMs / over kOwnerMaxDtMs apart (to = the newest spot); stand: slower than
+// kQuietStandMps (to = its spot: he keeps standing there); walk: to = its spot moved on by its speed for its age +
+// kQuietLeadMs, at most kQuietLeadMaxMs (y its own); fast: over kQuietFastMps (to = its spot; QuietOwnerWhy: the message).
+enum class QuietLead : std::uint8_t { unknown, stand, walk, fast };
+inline constexpr std::uint64_t kOwnerMinDtMs = 250, kOwnerMaxDtMs = 4000, kQuietLeadMs = 3000, kQuietLeadMaxMs = 4500;
+inline constexpr float kQuietStandMps = 0.4f, kQuietFastMps = 4.5f;
+QuietLead QuietLeadFor(const OwnerSample& cur, const OwnerSample& prev, std::uint64_t now_ms, float (&to)[3], float& speed) noexcept;
+const char* QuietLeadName(QuietLead lead) noexcept;
+// ok / walk with a fast owner copy: fast (the set-transform message); any other reason as it is.
+QuietWhy QuietOwnerWhy(QuietWhy why, QuietLead lead) noexcept;
+// Whether a quiet move re-plans him: a walker (any lead), or a guard at rest whose owner copy walks.
+bool QuietReplan(QuietWhy why, QuietLead lead) noexcept;
+// QuietPlanChoose, else replan when our own live plan (`ours`: the handle his last quiet plan got) holds R+0x19c and his
+// planner slot (kMoveHash, the same handle) in a walk (dest mode 1): the planner replaces a plan of its own type. Round 12:
+// every later move gave step=none and he walked the rest of our first plan's path on.
+QuietPlan QuietPlanFollow(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle, bool slot_read, std::uint16_t ours) noexcept;
+// The follow after a quiet plan (hook thread): a newer owner sample re-plans him when the target moved more than
+// kQuietFollowMoveM or the lead changed, until kQuietFollowMs after his last quiet move.
+inline constexpr std::uint64_t kQuietFollowMs = 12000, kQuietFollowPollMs = 400;
+inline constexpr float kQuietFollowMoveM = 1.0f;
+struct QuietFollow {
+    bool on;
+    std::uint32_t ent, go;
+    std::uint16_t seq, ours;
+    std::uint64_t until, last_rx;
+    QuietLead lead;
+    float to[3];
+};
+bool QuietFollowDue(const QuietFollow& f, std::uint64_t rx_ms, QuietLead lead, const float (&to)[3], std::uint64_t now_ms) noexcept;
 // Whether idx is among the first count entries of the realized list.
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept;
 #ifdef _WIN32
@@ -362,7 +403,10 @@ QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept;
 void SetQuietRest(bool on) noexcept;
 // Stages a quiet move of guard idx (go: his GameObjectId, for the line) to pos / yaw: the hook runs 0x136ece0 in its next
 // update (before the engine's own) and logs world_place=quiet. False when the hook is not installed or idx is out of range.
-bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan = false) noexcept;
+// Round 13 (design 7.31): ent, the owner track's lead and target (to, metres) and its newest sample's pop time for the
+// re-plan and its follow (QuietPlanFollow / QuietFollowDue).
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan = false,
+                std::uint32_t ent = 0, QuietLead lead = QuietLead::unknown, const float* to = nullptr, std::uint64_t rx_ms = 0) noexcept;
 #endif
 
 } // namespace mgscoop::soldier_act

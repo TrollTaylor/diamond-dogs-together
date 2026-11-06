@@ -1612,6 +1612,17 @@ void SpawnSync() {
               g_guest.FindGrant(27, at, grant) && grant.serial == first_serial + 18 && !g_guest.FindGrant(26, at, grant) &&
               !g_guest.FindGrant(10, at, grant),
           "the oldest corrections are replaced; every recorded grant gets the next serial; a place-first keeps flag 4");
+    // Enemy round 13 track A (quiet_place, docs/world-sync-design.md 7.31): a guard's two newest correction samples (the
+    // owner copy's track: where he walks and how fast), by the pop time; none for an unknown guard or a warp only.
+    {
+        world::Grant cur{}, prev{};
+        Check(g_guest.EntGrants(9, at, cur, prev) && cur.seq == 89 && prev.valid && prev.seq == 88 && cur.rx_ms > prev.rx_ms &&
+                  cur.kind == world::place::correct && prev.kind == world::place::correct,
+              "ent grants: the newest two corrections of a guard");
+        Check(!g_guest.EntGrants(12345, at, cur, prev) && !cur.valid && !prev.valid, "ent grants: none for an unknown guard");
+        Check(!g_guest.EntGrants(0xF5A4F001u, at, cur, prev), "ent grants: a warp grant is no sample");
+        Check(!g_guest.EntGrants(9, at + world::kGrantLifeMs + 200, cur, prev), "ent grants: expired grants are none");
+    }
     // Resets: unpair (link session), local mission start/end, a new host epoch.
     g_guest.OnLinkState(true, 2, 200);
     Check(g_guest.grant_count() == 0 && !g_guest.FindGrant(19, 200, grant), "a link session change clears the grants");

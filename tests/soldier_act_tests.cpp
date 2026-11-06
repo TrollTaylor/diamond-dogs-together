@@ -654,6 +654,81 @@ int main() {
                   std::strcmp(sa::QuietWhyName(sa::QuietWhy::ok), "ok") == 0,
               "rest: the reason names");
         Check(c::slots_list == 0x28 && c::slots_list_count == 0x44, "the realized list the warp reads (u16, count +0x44)");
+        // Enemy round 13 track A (design 7.31): a moved walker is re-planned toward where his OWNER copy walks (its two
+        // newest samples: speed and heading, the newest moved on by its age + 3 s, at most 4.5 s), not his own brain's
+        // destination; an owner copy that stands keeps him standing on its spot (the ledge guard walked off his ledge);
+        // one in a vehicle (over 4.5 m/s) keeps the message (a patrol truck's crew); the follow re-plans our live plan.
+        {
+            sa::OwnerSample cur{true, {100.0f, 270.0f, 200.0f}, 10000}, prev{true, {100.0f, 270.0f, 198.5f}, 9000};
+            float to[3]{};
+            float speed = -1.0f;
+            Check(sa::QuietLeadFor(cur, prev, 10200, to, speed) == sa::QuietLead::walk && std::fabs(speed - 1.5f) < 0.01f &&
+                      std::fabs(to[0] - 100.0f) < 0.01f && std::fabs(to[2] - (200.0f + 1.5f * 3.2f)) < 0.02f && to[1] == 270.0f,
+                  "quiet lead: a walking owner copy: his spot moved on by its speed for its age + 3 s");
+            Check(sa::QuietLeadFor(cur, prev, 13000, to, speed) == sa::QuietLead::walk && std::fabs(to[2] - (200.0f + 1.5f * 4.5f)) < 0.02f,
+                  "quiet lead: at most 4.5 s ahead");
+            sa::OwnerSample still = prev;
+            still.pos[2] = 199.9f;
+            Check(sa::QuietLeadFor(cur, still, 10200, to, speed) == sa::QuietLead::stand && to[0] == 100.0f && to[1] == 270.0f &&
+                      to[2] == 200.0f,
+                  "quiet lead: a standing owner copy: his own spot (he keeps standing)");
+            sa::OwnerSample truck = prev;
+            truck.pos[2] = 190.0f;
+            Check(sa::QuietLeadFor(cur, truck, 10200, to, speed) == sa::QuietLead::fast && speed > 9.9f,
+                  "quiet lead: over 4.5 m/s (a vehicle): fast");
+            sa::OwnerSample none{};
+            Check(sa::QuietLeadFor(cur, none, 10200, to, speed) == sa::QuietLead::unknown && to[2] == 200.0f,
+                  "quiet lead: one sample only: unknown, his spot");
+            sa::OwnerSample close = prev;
+            close.rx_ms = 9900;
+            sa::OwnerSample old = prev;
+            old.rx_ms = 5000;
+            Check(sa::QuietLeadFor(cur, close, 10200, to, speed) == sa::QuietLead::unknown &&
+                      sa::QuietLeadFor(cur, old, 10200, to, speed) == sa::QuietLead::unknown,
+                  "quiet lead: samples under 250 ms or over 4 s apart: unknown");
+            Check(sa::QuietLeadFor(none, prev, 10200, to, speed) == sa::QuietLead::unknown, "quiet lead: no sample: unknown");
+            Check(std::strcmp(sa::QuietLeadName(sa::QuietLead::walk), "walk") == 0 &&
+                      std::strcmp(sa::QuietLeadName(sa::QuietLead::stand), "stand") == 0 &&
+                      std::strcmp(sa::QuietLeadName(sa::QuietLead::fast), "fast") == 0 &&
+                      std::strcmp(sa::QuietLeadName(sa::QuietLead::unknown), "unknown") == 0,
+                  "quiet lead: the names");
+            Check(sa::QuietOwnerWhy(sa::QuietWhy::walk, sa::QuietLead::fast) == sa::QuietWhy::fast &&
+                      sa::QuietOwnerWhy(sa::QuietWhy::ok, sa::QuietLead::fast) == sa::QuietWhy::fast &&
+                      sa::QuietOwnerWhy(sa::QuietWhy::walk, sa::QuietLead::walk) == sa::QuietWhy::walk &&
+                      sa::QuietOwnerWhy(sa::QuietWhy::stance, sa::QuietLead::fast) == sa::QuietWhy::stance &&
+                      std::strcmp(sa::QuietWhyName(sa::QuietWhy::fast), "fast") == 0,
+                  "quiet why: an owner copy in a vehicle keeps the message (fast)");
+            Check(sa::QuietReplan(sa::QuietWhy::walk, sa::QuietLead::stand) && sa::QuietReplan(sa::QuietWhy::walk, sa::QuietLead::unknown) &&
+                      sa::QuietReplan(sa::QuietWhy::ok, sa::QuietLead::walk) && !sa::QuietReplan(sa::QuietWhy::ok, sa::QuietLead::stand) &&
+                      !sa::QuietReplan(sa::QuietWhy::ok, sa::QuietLead::unknown) && !sa::QuietReplan(sa::QuietWhy::stance, sa::QuietLead::walk),
+                  "quiet re-plan: a walker, or a guard at rest whose owner copy walks; not two at rest");
+            // Our own live plan (round 12: later moves gave step=none and he walked our old path on): re-plan it.
+            Check(sa::QuietPlanFollow(1, 0x0006, 0x006e, sa::kMoveHash, 0x0006, true, 0x0006) == sa::QuietPlan::replan,
+                  "quiet follow: our live plan: re-plan it toward the owner copy");
+            Check(sa::QuietPlanFollow(1, 0xffff, 0x006e, 0xdf31ba77279eull, 0x0001, true, 0xffff) == sa::QuietPlan::cancel_then_plan,
+                  "quiet follow: his brain's live walk: as before (cancel, then plan)");
+            Check(sa::QuietPlanFollow(1, 0x0006, 0x006e, sa::kMoveHash, 0x0006, true, 0x0007) == sa::QuietPlan::none &&
+                      sa::QuietPlanFollow(0, 0x0006, 0x006c, sa::kMoveHash, 0x0006, true, 0x0006) == sa::QuietPlan::none &&
+                      sa::QuietPlanFollow(1, 0x0006, 0x006e, sa::kMoveHash, 0x0006, false, 0x0006) == sa::QuietPlan::none &&
+                      sa::QuietPlanFollow(1, 0x0006, 0x006e, 0xdf31ba77279eull, 0x0006, true, 0x0006) == sa::QuietPlan::none,
+                  "quiet follow: not ours, not a walk, an unread slot or another type in the slot: none");
+            Check(std::strcmp(sa::QuietPlanName(sa::QuietPlan::replan), "replan") == 0, "quiet follow: the step name");
+            sa::QuietFollow f{};
+            f.on = true;
+            f.until = 20000;
+            f.last_rx = 10000;
+            f.lead = sa::QuietLead::walk;
+            f.to[0] = 100.0f; f.to[1] = 270.0f; f.to[2] = 204.8f;
+            const float moved[3] = {100.0f, 270.0f, 206.5f}, same[3] = {100.0f, 270.0f, 205.3f};
+            Check(sa::QuietFollowDue(f, 11000, sa::QuietLead::walk, moved, 11000), "quiet follow: a newer sample, the target 1.7 m on: due");
+            Check(!sa::QuietFollowDue(f, 10000, sa::QuietLead::walk, moved, 11000), "quiet follow: the same sample: not due");
+            Check(!sa::QuietFollowDue(f, 11000, sa::QuietLead::walk, same, 11000), "quiet follow: the target under 1 m on: not due");
+            Check(sa::QuietFollowDue(f, 11000, sa::QuietLead::stand, same, 11000), "quiet follow: the owner copy stopped: due");
+            Check(!sa::QuietFollowDue(f, 21000, sa::QuietLead::walk, moved, 20000), "quiet follow: the window over: not due");
+            f.on = false;
+            Check(!sa::QuietFollowDue(f, 11000, sa::QuietLead::walk, moved, 11000), "quiet follow: off: not due");
+            Check(sa::kQuietFollowMs == 12000, "quiet follow: 12 s after a move (the 10 s read-back)");
+        }
     }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");

@@ -430,6 +430,7 @@ const char* QuietWhyName(QuietWhy why) noexcept {
     case QuietWhy::path: return "path";
     case QuietWhy::walk: return "walk";
     case QuietWhy::stance: return "stance";
+    case QuietWhy::fast: return "fast";
     }
     return "?";
 }
@@ -450,8 +451,66 @@ const char* QuietPlanName(QuietPlan step) noexcept {
     case QuietPlan::busy: return "busy";
     case QuietPlan::plan: return "plan";
     case QuietPlan::cancel_then_plan: return "cancel_plan";
+    case QuietPlan::replan: return "replan";
     }
     return "?";
+}
+
+// Enemy round 13 track A (design 7.31): where the owner copy walks, from its two newest correction samples.
+QuietLead QuietLeadFor(const OwnerSample& cur, const OwnerSample& prev, std::uint64_t now_ms, float (&to)[3], float& speed) noexcept {
+    speed = -1.0f;
+    to[0] = to[1] = to[2] = 0.0f;
+    if (!cur.valid) return QuietLead::unknown;
+    to[0] = cur.pos[0]; to[1] = cur.pos[1]; to[2] = cur.pos[2];
+    if (!prev.valid || cur.rx_ms < prev.rx_ms) return QuietLead::unknown;
+    const std::uint64_t dt = cur.rx_ms - prev.rx_ms;
+    if (dt < kOwnerMinDtMs || dt > kOwnerMaxDtMs) return QuietLead::unknown;
+    const float s = static_cast<float>(dt) * 0.001f;
+    const float vx = (cur.pos[0] - prev.pos[0]) / s, vz = (cur.pos[2] - prev.pos[2]) / s;
+    speed = std::sqrt(vx * vx + vz * vz);
+    if (!std::isfinite(speed)) { speed = -1.0f; return QuietLead::unknown; }
+    if (speed < kQuietStandMps) return QuietLead::stand;
+    if (speed > kQuietFastMps) return QuietLead::fast;
+    const std::uint64_t age = now_ms > cur.rx_ms ? now_ms - cur.rx_ms : 0;
+    const std::uint64_t lead = age + kQuietLeadMs > kQuietLeadMaxMs ? kQuietLeadMaxMs : age + kQuietLeadMs;
+    const float ls = static_cast<float>(lead) * 0.001f;
+    to[0] = cur.pos[0] + vx * ls;
+    to[2] = cur.pos[2] + vz * ls;
+    return QuietLead::walk;
+}
+
+const char* QuietLeadName(QuietLead lead) noexcept {
+    switch (lead) {
+    case QuietLead::unknown: return "unknown";
+    case QuietLead::stand: return "stand";
+    case QuietLead::walk: return "walk";
+    case QuietLead::fast: return "fast";
+    }
+    return "?";
+}
+
+QuietWhy QuietOwnerWhy(QuietWhy why, QuietLead lead) noexcept {
+    return (why == QuietWhy::ok || why == QuietWhy::walk) && lead == QuietLead::fast ? QuietWhy::fast : why;
+}
+
+bool QuietReplan(QuietWhy why, QuietLead lead) noexcept {
+    if (lead == QuietLead::fast) return false;
+    return why == QuietWhy::walk || (why == QuietWhy::ok && lead == QuietLead::walk);
+}
+
+QuietPlan QuietPlanFollow(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, std::uint64_t slot_hash,
+                          std::uint16_t slot_handle, bool slot_read, std::uint16_t ours) noexcept {
+    const QuietPlan first = QuietPlanChoose(dest_mode, r19c, r19e, slot_hash, slot_handle, slot_read);
+    if (first != QuietPlan::none) return first;
+    if (!slot_read || dest_mode != 1) return QuietPlan::none;
+    return PlanLiveFor(ours, r19c, slot_hash, slot_handle, false) ? QuietPlan::replan : QuietPlan::none;
+}
+
+bool QuietFollowDue(const QuietFollow& f, std::uint64_t rx_ms, QuietLead lead, const float (&to)[3], std::uint64_t now_ms) noexcept {
+    if (!f.on || now_ms >= f.until || rx_ms <= f.last_rx) return false;
+    if (lead != f.lead) return true;
+    const float dx = to[0] - f.to[0], dz = to[2] - f.to[2];
+    return !(dx * dx + dz * dz <= kQuietFollowMoveM * kQuietFollowMoveM);
 }
 
 bool QuietAsk(bool quiet_place, bool off_screen, bool host, bool correction, std::uint32_t go) noexcept {
@@ -633,11 +692,40 @@ Probe g_probe{};
 std::atomic<std::uint32_t> g_probeRuns{0};
 
 // Enemy round 8 (quiet_place): staged quiet moves (the runtime thread writes under g_quietLock, the hook runs them).
-struct QuietMove { bool due; std::uint32_t go; std::uint16_t seq; float pos[3]; float yaw; bool replan; };
+// Round 13 (design 7.31): with the owner track's lead, target and newest sample time for the re-plan and its follow.
+struct QuietMove {
+    bool due;
+    std::uint32_t go;
+    std::uint16_t seq;
+    float pos[3];
+    float yaw;
+    bool replan;
+    std::uint32_t ent;
+    QuietLead lead;
+    float to[3];
+    bool have_to;
+    std::uint64_t rx;
+};
 // Enemy round 11 (quiet_place, design 7.31; hook thread only): a quiet-moved walker's re-plan, run after the original
 // manager update (QuietPlanStep), and the plan checks it arms (PlanCheckStep, kPlanCheckMs after).
-struct QuietPlanAsk { bool due; std::uint32_t go; std::uint16_t seq; };
+struct QuietPlanAsk {
+    bool due;
+    std::uint32_t go;
+    std::uint16_t seq;
+    std::uint32_t ent;
+    QuietLead lead;
+    float to[3];
+    bool have_to;
+    std::uint64_t rx;
+    bool follow;  // round 13: from the follow (a newer owner sample), not a move
+};
 QuietPlanAsk g_qplan[kMaxSoldiers]{};
+// Round 13 (design 7.31; hook thread only): the handle our last quiet plan of each guard got (0xffff none), the follow
+// after it (QuietFollowDue) and its last poll.
+std::uint16_t g_qours[kMaxSoldiers];
+bool g_qoursInit = false;
+QuietFollow g_qfol[kMaxSoldiers]{};
+std::uint64_t g_qfolPoll[kMaxSoldiers]{};
 bool g_qwatch[kMaxSoldiers]{};
 unsigned g_qplanLive = 0;
 QuietMove g_quiet[kMaxSoldiers]{};
@@ -1776,7 +1864,10 @@ void QuietOne(const View& v, unsigned i, const QuietMove& q) noexcept {
     // Round 11 (design 7.31): a moved walker is re-planned after this update's original (QuietPlanStep).
     if (moved && q.replan && i < kMaxSoldiers) {
         if (!g_qplan[i].due) ++g_qplanLive;
-        g_qplan[i] = QuietPlanAsk{true, q.go, q.seq};
+        g_qplan[i] = QuietPlanAsk{true, q.go, q.seq, q.ent, q.lead, {q.to[0], q.to[1], q.to[2]}, q.have_to, q.rx, false};
+    } else if (moved && i < kMaxSoldiers && g_qfol[i].on) {
+        // Round 13: a quiet move without a re-plan (both copies at rest) ends his follow.
+        g_qfol[i].on = false;
     }
 }
 void QuietStep(std::uintptr_t m) noexcept {
@@ -1800,6 +1891,7 @@ void QuietStep(std::uintptr_t m) noexcept {
 // walked him back (1befcef4: 9.4-14.1 m on). One world_place=quiet_plan line per move; the plan check follows
 // kPlanCheckMs after (soldier_act_plan line, read only).
 void QuietPlanOne(const View& v, unsigned i, const QuietPlanAsk& a, std::uintptr_t slots, std::uint64_t now) noexcept {
+    if (!g_qoursInit) { for (auto& h : g_qours) h = 0xffff; g_qoursInit = true; }
     const std::uintptr_t r = Record(v, i);
     std::uint32_t bits = 0;
     std::uint16_t r19c = 0xffff, r19e = 0;
@@ -1811,25 +1903,75 @@ void QuietPlanOne(const View& v, unsigned i, const QuietPlanAsk& a, std::uintptr
     Slot sl{0, 0xffff, 0xffff};
     const bool fol = slots && FollowerFor(v, i, f) && PlannerKnown(f.planner);
     const bool slot_read = fol && PlannerSlot(f.planner, i, sl);
-    const QuietPlan step = fol ? QuietPlanChoose(mode, r19c, r19e, sl.hash, sl.handle, slot_read) : QuietPlan::none;
+    // Round 13 (design 7.31): our own live plan is re-planned too (round 12: every later move gave step=none).
+    const QuietPlan step = fol ? QuietPlanFollow(mode, r19c, r19e, sl.hash, sl.handle, slot_read, g_qours[i]) : QuietPlan::none;
     bool started = false;
     std::uint16_t got = 0xffff;
     if (step == QuietPlan::cancel_then_plan) CancelSlot(f.planner, i, sl.handle);
-    if (step == QuietPlan::plan || step == QuietPlan::cancel_then_plan) {
+    if (step == QuietPlan::plan || step == QuietPlan::cancel_then_plan || step == QuietPlan::replan) {
         if (!g_shadowBuilt) { BuildShadow(g_shadow); g_shadowBuilt = true; }
-        got = PlanShadow(v, i, r, bits, f, slots, now, started);
-        if (started && got != 0xffff) g_qwatch[i] = true;
+        // Round 13: toward the owner copy's track (a.to), not his own brain's R+0x80. The start (0x1413725f0, decompiled
+        // read only) builds the move from R+0x80 and, for bits & 1, the request's waypoint R+0xa4 first; so R+0x80 holds
+        // a.to for the call (no waypoint) and his brain's own destination again after it (the path query copied the point).
+        float keep[3]{};
+        std::memcpy(keep, reinterpret_cast<const void*>(r + c::r_dest), sizeof(keep));
+        if (a.have_to) std::memcpy(reinterpret_cast<void*>(r + c::r_dest), a.to, sizeof(a.to));
+        got = PlanShadow(v, i, r, a.have_to ? (bits & ~1u) : bits, f, slots, now, started);
+        if (a.have_to) std::memcpy(reinterpret_cast<void*>(r + c::r_dest), keep, sizeof(keep));
+        if (started && got != 0xffff) {
+            g_qwatch[i] = true;
+            g_qours[i] = got;
+        }
+    }
+    // The follow: from a started plan of a move (or a follow re-plan) until kQuietFollowMs after the move.
+    QuietFollow& fw = g_qfol[i];
+    if (started && got != 0xffff && a.have_to && a.ent) {
+        if (!a.follow) {
+            fw.until = now + kQuietFollowMs;
+            fw.ent = a.ent;
+            fw.go = a.go;
+            fw.seq = a.seq;
+        }
+        fw.on = true;
+        fw.ours = got;
+        fw.last_rx = a.rx;
+        fw.lead = a.lead;
+        std::memcpy(fw.to, a.to, sizeof(fw.to));
+    } else if (!a.follow || step == QuietPlan::none) {
+        fw.on = false;
+    } else {
+        fw.last_rx = a.rx;  // a follow re-plan that did not start: not again for the same sample
     }
     float p[3]{}, dest[3]{};
     Pos(v, i, p);
     std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
-    char line[400]{};
+    char line[480]{};
     const int n = std::snprintf(line, sizeof(line),
         "world_place=quiet_plan; go=%u; seq=%u; idx=%u; mode=%u; r19c=0x%04x; r19e=0x%04x; slot=0x%012llx; slot_h=0x%04x; "
-        "fol=%u; step=%s; started=%u; handle=0x%04x; p=%.2f,%.2f,%.2f; dest=%.2f,%.2f,%.2f\r\n",
+        "fol=%u; step=%s; started=%u; handle=0x%04x; p=%.2f,%.2f,%.2f; dest=%.2f,%.2f,%.2f; lead=%s; to=%.2f,%.2f,%.2f; src=%s\r\n",
         unsigned(a.go), unsigned(a.seq), i, mode, r19c, r19e, static_cast<unsigned long long>(sl.hash & 0xffffffffffffull),
-        sl.handle, fol ? 1u : 0u, QuietPlanName(step), started ? 1u : 0u, got, p[0], p[1], p[2], dest[0], dest[1], dest[2]);
+        sl.handle, fol ? 1u : 0u, QuietPlanName(step), started ? 1u : 0u, got, p[0], p[1], p[2], dest[0], dest[1], dest[2],
+        a.have_to ? QuietLeadName(a.lead) : "none", a.to[0], a.to[1], a.to[2], a.follow ? "follow" : "move");
     if (n > 0) Emit(line);
+}
+// Round 13 (design 7.31): a followed guard's newest owner sample (every kQuietFollowPollMs): a re-plan when it is due.
+void QuietFollowOne(const View& v, unsigned i, std::uintptr_t slots, std::uint64_t now) noexcept {
+    QuietFollow& fw = g_qfol[i];
+    if (now >= fw.until) { fw.on = false; return; }
+    if (now - g_qfolPoll[i] < kQuietFollowPollMs) return;
+    g_qfolPoll[i] = now;
+    world::Grant gc{}, gp{};
+    std::uint64_t gnow = 0;
+    if (!world_link::EntGrants(fw.ent, gnow, gc, gp)) return;
+    const OwnerSample oc{gc.valid, {gc.pos_mm[0] * 0.001f, gc.pos_mm[1] * 0.001f, gc.pos_mm[2] * 0.001f}, gc.rx_ms};
+    const OwnerSample op{gp.valid, {gp.pos_mm[0] * 0.001f, gp.pos_mm[1] * 0.001f, gp.pos_mm[2] * 0.001f}, gp.rx_ms};
+    float to[3]{};
+    float speed = -1.0f;
+    const QuietLead lead = QuietLeadFor(oc, op, gnow, to, speed);
+    if (lead == QuietLead::fast) { fw.on = false; return; }
+    if (!QuietFollowDue(fw, gc.rx_ms, lead, to, now)) return;
+    const QuietPlanAsk a{true, fw.go, fw.seq, fw.ent, lead, {to[0], to[1], to[2]}, true, gc.rx_ms, true};
+    QuietPlanOne(v, i, a, slots, now);
 }
 void QuietPlanStep(std::uintptr_t m) noexcept {
     __try {
@@ -1845,6 +1987,10 @@ void QuietPlanStep(std::uintptr_t m) noexcept {
                 g_qplan[i].due = false;
                 QuietPlanOne(v, i, a, slots, now);
             }
+            if (g_qfol[i].on) {
+                QuietFollowOne(v, i, slots, now);
+                if (g_qfol[i].on) ++live;
+            }
             if (g_qwatch[i]) {
                 PlanCheckStep(v, i, now);
                 if (!g_planCheck[i].pending) g_qwatch[i] = false;
@@ -1856,6 +2002,7 @@ void QuietPlanStep(std::uintptr_t m) noexcept {
         g_faults.fetch_add(1, std::memory_order_relaxed);
         std::memset(g_qplan, 0, sizeof(g_qplan));
         std::memset(g_qwatch, 0, sizeof(g_qwatch));
+        std::memset(g_qfol, 0, sizeof(g_qfol));
         g_qplanLive = 0;
     }
 }
@@ -2027,10 +2174,12 @@ QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept {
 }
 void SetQuietRest(bool on) noexcept { g_restOn.store(on); }
 
-bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan) noexcept {
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw, bool replan, std::uint32_t ent,
+                QuietLead lead, const float* to, std::uint64_t rx_ms) noexcept {
     if (!g_installed.load() || idx >= kMaxSoldiers) return false;
     AcquireSRWLockExclusive(&g_quietLock);
-    g_quiet[idx] = QuietMove{true, go, seq, {pos[0], pos[1], pos[2]}, yaw, replan};
+    g_quiet[idx] = QuietMove{true, go, seq, {pos[0], pos[1], pos[2]}, yaw, replan, ent, lead,
+                             {to ? to[0] : 0.0f, to ? to[1] : 0.0f, to ? to[2] : 0.0f}, to != nullptr, rx_ms};
     ReleaseSRWLockExclusive(&g_quietLock);
     g_quietPending.store(true, std::memory_order_release);
     return true;
