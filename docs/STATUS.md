@@ -20,9 +20,11 @@ no game ran. Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\86d6
   2. The 1949.5 m "jump" was the guest's copy of 25606 read at x = 0, z = 0 once (the distance from the origin to the
      host's truck) and placed [O]; world_lrrp.lua took it as a sample.
   3. The re-placement loop is this copy's own AI driving a parked far truck while its crew still sits, at random [I]: in
-     the joint runs 2 of 4 rest trucks were 1-3 m off again many times a second and placed 77-89 times until the crews left
-     (0 of 8 in `139a1440` / `ffd0248d`); ForceStop was sent once. The only code difference to `139a1440` is the
-     `drive_vert` default, which acts within 60 m (160 m with reach) of a player [O]. The 32 / 38 unseats (24 in the
+     the joint runs 3 of 4 rest trucks (`f256bf29`: 25603 / 25604 / 25607, 77-83 times) and 2 of 4 (`fc141dc1`: 25602 /
+     25603, 89 each) were 1-3 m off again many times a second and placed until the crews left; in the lrrp-only runs
+     `139a1440` / `ffd0248d` 0 of 8 (1-2 each), but in the older lrrp runs `801cd90b` / `68491f7f` 2 of 4 each (47-49);
+     ForceStop was sent once. The only code difference to `139a1440` is the `drive_vert` default, which acts within 60 m
+     (160 m with reach) of a player [O], so with the older runs it is not the cause [I]. The 32 / 38 unseats (24 in the
      lrrp-only runs) only track how long the crews sat: in all four runs every far crew got out at one moment (17.9-28.2 s
      after `step=on`), 1.5-5.4 s after its last command whatever the count [O]. Not a bug in the pin itself; bounded now.
   4. Report only: `fc141dc1`'s 25605 crew got out on the host at t=381257255; the host handed both to the guest 3.4 s
@@ -31,7 +33,9 @@ no game ran. Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\86d6
      LRRP crew member about 10 s after his get-out on the host.
 - **Built** (Lua only; no CFG bit, no wire change, no default changed): `S.drive` skips a guard seated in a vehicle on
   this copy (`GetVehicleGameObjectId`, the placements' `vehicle_local` read, every 250 ms per guard; `event=snap_seated`,
-  `seated=` in `snap_stats`), so neither the xz step nor the `drive_vert` snap reaches him. world_lrrp.lua: a pose at
+  `seated=` in `snap_stats`), so neither the xz step nor the `drive_vert` snap reaches him (any vehicle the game answers
+  for, so a walker gear's pilot too and perhaps a gun emplacement's user [U]; tested with trucks only; the same read as the
+  corrections' `vehicle_local` refusal). world_lrrp.lua: a pose at
   x = 0, z = 0 is no sample (host stream, guest frame, crew lines); a rest truck 1 m+ off again after its placement gets
   ForceStop again (`step=restop`, at most once a second) and, 400 m+ from this player, is put back at most once a second
   (nearer at once, as before); `UnsetRelativeVehicle` at most 3 times per guard and rest spell, then `step=unseat_hold`.
@@ -46,14 +50,17 @@ no game ran. Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\86d6
     25606 2 throughout on both; 0 trucks moving with the crews differing.
   - PASS unseats 24 (6 per rest truck, the lrrp-only runs' 24) and 8 `unseat_hold`. Rest-truck placements 17 / 17 / 2 / 1
     (25602 / 25603 / 25604 / 25607; joint runs 77-89, lrrp-only 1-2): 25602 and 25603 were driven by their own crews from
-    5 s after `step=on` until the crews left 25-26 s after it, 1-12 m between the once-a-second placements; ForceStop again did
+    5 s after `step=on` until the crews left 25-26 s after it, 1-12 m between the once-a-second placements (where the old
+    per-frame pin held them within 1-3 m they now travel 5.2-12.3 m and jump back: 11 `jump` lines, 843-1631 m from the
+    nearest player, in no frame); ForceStop again did
     not stop them (5 `restop` lines each, the first 5 logged); 25604 stopped after one.
   - PASS 0 origin jumps (0 jump / settle of 1 km+, 0 follow or host lines at 0,0).
   - PASS 0 latches / faults / game overs / roster mismatches (enemy_div_report, every row PASS).
   - Guest place error p50 0.71 / p90 1.98 m (437 samples), corrections 10/10.
   - PASS no drive or vert line on a seated guard: 25605's riders (ids 1200 / 1201) were within the guest's drive band
     and seated from t=385497078 until they got out (`snap_seated` on, then off at 385512661 / 385515852), 249 skips; the
-    guest's native drive steps in the two 10 s windows of that pass rose 7 and 0 (`f256bf29`: 86); 0 `world_drive=vert`,
+    guest's native drive steps (`world_drive=stats`, its own 10 s windows) rose 16 and 3 in that pass (`f256bf29`: 86), the
+    Lua `snap_stats` steps 7 and 0; 0 `world_drive=vert`,
     0 `drive_sink`, 0 drive relays in the run.
 - **Frames** [O]: the first frames of both copies are gameplay, connected, no modal. host-k-5 shows 25605 parked with
   its headlights on and a marked soldier beside it, 25 m off through the binoculars (its riders still seated then); the guest's k-5 faces a rock and barricades
@@ -61,7 +68,7 @@ no game ran. Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\86d6
   outpost.
 - **Seen besides** [O]: the host stopped streaming 25606 at t=385419975 (137 s, parked manned at -1687.5, 976.3, the spot
   where `f256bf29`'s guest copy read the origin at 136 s); its pose then read nothing usable or the origin, the log does
-  not say which [U]; the guest's track went stale and released it as designed. 0 `log_cap`; `step=cost` avg <= 0.034 ms.
+  not say which (`pose()` drops an origin read without a line; a one-shot line would settle it) [U]; the guest's track went stale and released it as designed. 0 `log_cap`; `step=cost` avg <= 0.034 ms.
 - **Checks**: `world_align_lua_check` 465, `world_vehicle_state_lua_check` 180; full build and CTest 355/355 at 6e54593a (code as 3ae7a6aa; an earlier CTest at 86f997d9 was
   354/355, its one failure this round's red settle check, committed while it ran); every
   contract `--check` as before (known base failures only; horse_drive and vehicle_controller pass with `--executable`).

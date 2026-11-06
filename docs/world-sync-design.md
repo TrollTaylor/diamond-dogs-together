@@ -1366,8 +1366,9 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
      off again many times a second (one `settle` line each, so never 3 m+) while its crew sat (the placements stopped when
      the crew left), ForceStop having been sent once, at the first frame. The only code difference between `139a1440` and
      the joint runs is the `drive_vert` default, which acts within 60 m (160 m with reach) of a player, so the moving trucks
-     are this copy's own AI driving against ForceStop at random times [I] (2 of 4 rest trucks per joint run, 0 of 8 in the
-     two lrrp-only runs). The unseat counts (32 / 38 vs 24) follow how long the crews sat: in all four runs every far crew
+     are this copy's own AI driving against ForceStop at random times [I] (3 of 4 and 2 of 4 rest trucks in the two joint runs, 0 of 8 in
+     the lrrp-only runs `139a1440` / `ffd0248d`, but 2 of 4 each, 47-49 placements, in the older lrrp runs `801cd90b` /
+     `68491f7f`). The unseat counts (32 / 38 vs 24) follow how long the crews sat: in all four runs every far crew
      got out at one moment (17.9 / 21.7 / 25.2 / 28.2 s after `step=on`), 1.5-5.4 s after its last command whatever the
      number of commands [O], so the commands did not set that clock [I].
   4. `fc141dc1`'s 25605 crew: the host's got out at t=381257255, the host handed both to the guest 3.4 s later
@@ -1377,7 +1378,9 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   - `world_snap.lua` `S.drive`: a guard seated in a vehicle on this copy (`GetVehicleGameObjectId`, the placements'
     `vehicle_local` read, at most every 250 ms per guard: `S.seatedHere`, kept in world_snap.lua because world_place.lua
     has 157 bytes left of the 32000-byte chunk limit) is never driven: no xz step and no `drive_vert` snap reaches him.
-    `event=snap_seated;ent;id;on` per change; `seated=` counts the skips in `snap_stats`.
+    `event=snap_seated;ent;id;on` per change; `seated=` counts the skips in `snap_stats`. It covers any vehicle the game
+    answers for (walker-gear pilots too, gun emplacements [U]), as the corrections' `vehicle_local` refusal does; the
+    tests use trucks only.
   - `world_lrrp.lua` `pose()`: an x = 0, z = 0 pose is no sample on the host's stream, the guest's frame and the crew lines.
   - `world_lrrp.lua` rest pin: a rest truck 1 m+ off again after its placement gets ForceStop again (`step=restop`, at
     most once a second; logged 5 times, then every 20th); 400 m+ from this player it is put back at most once a second,
@@ -1389,8 +1392,8 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   world_place.lua has 157 bytes left of the chunk limit, so the hold would be a hook from world_lrrp.lua (a `W.crewOutAt` map
   read by a wrapped `P.ownerOf`).
 - **Seen** (`86d6045f`, no key; docs/STATUS.md 2026-11-05 enemy harden): 25605's riders (ids 1200 / 1201) were seated in
-  the guest's drive band for 15-19 s, 249 skips, native drive steps +7 / +0 in the two 10 s windows of the pass (`f256bf29`
-  +86), 0 vert / sink / relay lines; 0 origin jumps; unseats 24 + 8 holds (the lrrp-only runs' 24); 25602 and 25603 were
+  the guest's drive band for 15-19 s, 249 skips, native drive steps +16 / +3 in its own 10 s windows of the pass
+  (`world_drive=stats`; Lua `snap_stats` +7 / +0; `f256bf29` +86), 0 vert / sink / relay lines; 0 origin jumps; unseats 24 + 8 holds (the lrrp-only runs' 24); 25602 and 25603 were
   again driven by their own crews (1-12 m between the once-a-second placements, 17 each; `restop` did not stop them),
   25604 / 25607 2 / 1. Crews 20-40 s after the get-out p90 2.46 / 2.67 m; get-outs matched. Moving truck p90 1.10 m
   (25606 1.38 m, the copy ahead along its track) fails the 1 m row; the moving path is unchanged but for the origin check.

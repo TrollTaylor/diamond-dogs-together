@@ -801,7 +801,8 @@ do
     for i = 1, 20 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
     check(h.S.lf.on() and #h:sent(93) >= 5, 'named 1: on in Africa too')
 end
--- Enemy harden (design 7.30). Red first: every check below failed before the fix.
+-- Enemy harden (design 7.30). Red first: the checks below failed before the fix, but for three controls that passed
+-- then too ('read off the origin it is streamed', 'the first settle places it', 'rest near: placed back each time').
 do
     local function forces(t, id, on) local n = 0 for _, f in ipairs(t.force) do if f.id == id and f.on == on then n = n + 1 end end return n end
     local function placedOf(t, id) local r = {} for _, p in ipairs(t.placed) do if p.id == id then r[#r + 1] = p end end return r end
