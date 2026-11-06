@@ -1189,13 +1189,32 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     3.5 s) and nothing moved it until the guest became his owner 1.0 s later; then both copies were on the ground (the
     host's binoculars, the guest's aim). PASS 0 latches / faults / game overs, guest p90 1.17 m; FAIL `place_sink` 1
     (3268415846 with his owner 4.89 m lower too: down a ladder on both [I]); host M3 p90 6.94 m.
-- **Defaults**: `drive_vert` stays off unless named: the `drive_sink` row failed in both named runs (above), and a flip
+- **Defaults** (round 10; flipped on below): `drive_vert` stayed off unless named: the `drive_sink` row failed in both named runs (above), and a flip
   needs its named run to pass. User decision D-A10 (docs/STATUS.md): turn it on with that row read as "left under after
   his height has stayed level for 1 s" (the copy waits below about 3 s while he climbs, then jumps to his height; at the
   defaults nothing moves it until the other PC takes him over), or keep it off.
 - **Next**: if the user says on, the flip is one line (`if (!c.drive_vert_given) c.drive_vert = gun;`, the lab_config
   test red first) and the no-key run of this batch. Otherwise a `drive_sink` that counts only while the owner copy is at
   rest in y would measure the bug itself, not the climb (a detector change: needs the user's or the reviewer's yes).
+- **Flip (enemy flip A-vert, user decision D-A10, 2026-11-05)**: `drive_vert` follows the gun profile in lab and play
+  (`if (!c.drive_vert_given) c.drive_vert = gun;`; a named 0 opts out). fba2a7b8 red / 8937f6eb green (`lab_config_tests`).
+  The `drive_sink` gate row is read as D-A10 says: `tools/enemy_div_report.py` gates **vert left under 0** = a copy more
+  than 1.5 m under its owner copy for more than 2 s (drive_sink's own window) counted from the moment the owner copy had
+  been level in y for 1 s, per guard with the time, from the native lines (a vert snap up: `rest_ms` - 1000, capped by
+  the time he was known under; a `vert_stop` up: until his next snap or the log end; n/a when copies sank but no
+  `world_drive=vert` line gives the owner's rest); `drive_sink` stays in the report as information. ddabed29 red /
+  59c1b48d green (`tests/enemy_div_report_check.py`). On round 10's runs: `c59ae699` / `948c978a` PASS (the snaps came
+  58-178 ms after the owner had been level 1 s), `ef9584e4` n/a (drive_vert off).
+- **No-key run at the flipped head** `11b73082` (59c1b48d, 0.15.2+59c1b48; join, latch-quiet, integ-carry, vert-near,
+  latch-alert; lab settings `nametag=1` only) [O]: `drive_vert` on without being named (the guest's `world_drive=vert`;
+  stats `vert=1`). One snap of 2929558510, the guest's copy 2.41 m under the host's (owner) copy, far 33 m, `rest_ms`
+  1352; read-backs 0.00 m at 0.52 s and 2.00 s; 0 `vert_wait`, 0 `vert_stop`, 0 `drive_sink`; vert left under 0. 7 s
+  later the guest teleported onto the wall top and took him over: the guest sees him standing on it about 12 m ahead
+  (aim 12.2 m, 3.3 deg), the host's binoculars at 31 m show his X-ray outline at the wall's top under his marker (v-a).
+  0 latches / faults / game overs / roster mismatches / overflow / `place_sink`; one `guard_fell` on the host
+  (1179373153 at 144 m, 11.9 m under, put back at once and held; the host logged no vert line); guest place error p90
+  2.89 m (FAIL, gate 2 m: reinforcements 3970963356 / 2305481811 arriving 374-397 m off and 1740692850 drifting 5-72 m
+  `why=far`, none a vert move); host M3 p90 6.57 m. `drive_vert` stays on.
 
 #### 7.28 Enemy round 10 track B: the LRRP crews on the host's travel step (lab key `lrrp_follow`, native only; op LRRP_STEP 0x5E)
 
