@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Two-player online co-op for Metal Gear Solid V: The Phantom Pain</b><br>
-  Windows · Steam · version 0.15.2 (development build)
+  Windows · Steam · version 0.15.3 (development build)
 </p>
 
 <p align="center">
