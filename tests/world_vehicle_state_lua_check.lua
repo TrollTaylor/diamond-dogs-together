@@ -847,6 +847,7 @@ do
     for _ = 1, 30 do creep(); s7(-775800, -1341860) end
     local np = #placedOf(g, 25607) - 1
     check(np >= 2 and np <= 4, 'rest far: a truck that keeps moving is placed back at most once a second (' .. np .. ' in 3 s)')
+    check(g:count('event=lrrp;step=settle;id=25607') <= np + 1, 'rest far: a settle line only with a placement, never each held frame (' .. g:count('event=lrrp;step=settle;id=25607') .. ')')
     check(forces(g, 25607, true) >= 3 and g:has('event=lrrp;step=restop;id=25607;'), 'rest: ForceStop again with each re-placement (step=restop)')
     for _ = 1, 300 do s7(-775800, -1341860) end
     check(#cmdsOf(g, 4005, 'UnsetRelativeVehicle') == 3 and #cmdsOf(g, 2280, 'UnsetRelativeVehicle') == 3 and
