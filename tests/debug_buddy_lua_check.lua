@@ -166,6 +166,18 @@ do
  g=F();refused=nil;g.W.host=true;g.W.companion={live=function()return true end,refuse=function(p)refused=p end}
  ok2,msg2=g:run("horse_spawn");check(refused==nil,"the host summons")
 end
+-- Step S2: horse_here places this copy's unridden horse 4 m right of the player through world_horse_share's S.here.
+do
+ local h=F();local got;h.pose={805,340.5,1636.5,-60}
+ h.W.horseShare={here=function(x,y,z,yaw)got={x,y,z,yaw};return true,"ok" end}
+ local ok2,msg2=h:run("horse_here")
+ local r=-60*math.pi/180
+ check(ok2 and msg2=="horse_here;ok" and got and math.abs(got[1]-(805+4*math.cos(r))*1000)<1 and math.abs(got[2]-340500)<1 and
+  math.abs(got[3]-(1636.5-4*math.sin(r))*1000)<1 and math.abs(got[4]+1047.2)<0.1 and h.calls==0,"S2: horse_here places 4 m right, no recall")
+ h.W.horseShare={here=function()return false,"ridden" end}
+ ok2,msg2=h:run("horse_here");check(not ok2 and msg2=="horse_here;ridden","S2: horse_here passes the refusal")
+ h.W.horseShare=nil;ok2,msg2=h:run("horse_here");check(not ok2 and msg2=="horse_here_unavailable","S2: no share module: refused")
+end
 local raw=slurp(menu)
 check(raw:find('{"player", "spawn", "buddy", "vehicle"}',1,true)and raw:find('a[1] == "horse_status"',1,true),"normal debug route and read-only mounted exception composed")
 check(raw:find('{"enemy", "player", "spawn", "buddy", "vehicle"}',1,true),"stop clears new helper metadata")

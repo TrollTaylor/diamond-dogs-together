@@ -261,4 +261,29 @@ f.fast(5500, p.x, 2000, p.z, 100)
 f.tick(50)
 check(#seen == 1 and seen[1][3] == 100, "M3: world_horse_pillion hears the placement")
 check(f.S.busy(), "M3: a pillion seated or driving: busy")
+-- Step S2 (scenarios, debug horse_here): the unridden horse placed at x,y,z mm / yaw mrad (not anchored); refused while
+-- either player rides it, and with the key off.
+do
+ local g = fixture()
+ local ok, why = g.S.here(805000, 340500, 1636500, -1047)
+ local q = g.places[#g.places]
+ check(ok == true and why == "ok" and q and q.x == 805000 and q.y == 340500 and q.z == 1636500 and q.yaw == -1047 and q.anchor == 0,
+  "S2: here places the unridden horse (not anchored)")
+ check(g.logged("event=horse_share;step=here;placed=1;reason=ok;x=80500;y=34050;z=163650"), "S2: here logs the placement")
+ local n = #g.places
+ g.rides = true
+ ok, why = g.S.here(1, 2, 3, 0)
+ check(not ok and why == "ridden" and #g.places == n, "S2: refused while this copy's player rides")
+ g.rides = false
+ for i = 0, 6 do g.fast(9000 + i * 50, 10000 + i * 200, 2000, 30000, 100); g.tick(50) end
+ n = #g.places
+ ok, why = g.S.here(1, 2, 3, 0)
+ check(not ok and why == "ridden" and #g.places == n, "S2: refused while the partner's ride track is live")
+ local k = fixture({key = false})
+ ok, why = k.S.here(1, 2, 3, 0)
+ check(not ok and why == "off" and #k.places == 0, "S2: key off: refused")
+ g = fixture(); g.placeOk = false
+ ok, why = g.S.here(1, 2, 3, 0)
+ check(not ok and why == "pins" and g.logged("step=here;placed=0;reason=pins"), "S2: a native refusal is returned and logged")
+end
 print("world_horse_share_lua_check: " .. checks .. " checks passed")
