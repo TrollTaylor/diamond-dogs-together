@@ -1064,9 +1064,13 @@ Round `wp/horse` step S2 (no horse key named in any run: `pillion_status` `key=1
   4 m right of the player with its census root 0.6 m over the player's feet (the `place` verb, not anchored; refused while
   either player rides it or with the key off; line `event=horse_share; step=here; placed=..`). Why: in `79287a27` /
   `1c2a6b0a` both copies answered `horse_spawn` with `submitted_horse_recall` + `horse_selected`, yet the horse stayed
-  where (a) ended (0.3 m) [O]. Placed at the feet (`c8209630`), the root read 0.67 m higher a moment later and the host's
-  `goto_horse` then warped them into a fall (`coop_carry=watch a=19`, E did not mount) [O lab `41ae2b4c` part 3]; hence
-  the 0.6 m (`2a41c416`: the root 0.54 m over a player beside it). `horse-seat-b.txt` now teleports both players to the
+  where (a) ended (0.3 m) [O]. Placed at the feet (`c8209630`), the root read 0.67 m higher a moment later (placed y
+  339.09, census 339.76) [O]; the 0.6 m (`2a41c416`: the root 0.54 m over a player beside it) matches what the census
+  reads. Corrected by the review (fixland3): that offset is not shown to be why the host's E did not mount in lab
+  `41ae2b4c` part 3. Part 2 of the same run had the same 0.66-0.80 m census offsets and the same `a=0x19` fall after
+  `goto_horse`'s warp, and both mounts worked (the guest reached `a=0x79`); what differed in part 3 was a 2.4 s `a=0x1a`
+  state when E was pressed 2.5 s after the warp [O]. Why E did not mount there is [U]; the 0.6 m root was never tried in
+  that part (attempt 2's part 3 ended in the cliff fall). `horse-seat-b.txt` now teleports both players to the
   boot spot facing -60 and runs `horse_here` on both copies: (b) began on open ground in all four runs (the driver's
   `goto_horse` census 803.4 / 1642.1 against the boot spot 805.0 / 1636.5; `step=here; placed=1` on both copies) and rode
   129-140 m (`final_sent path_cm` 13998 / 12908 / 13232 / 13168) [O].
@@ -1084,16 +1088,26 @@ Round `wp/horse` step S2 (no horse key named in any run: `pillion_status` `key=1
     `host-h3-stopped-side-host`), standing from the rock push on (lab `41ae2b4c` `host-s2a-rock1-host-01`, 2.7 s after the
     seated stopped frame, `host-s2a-rock-side-host`; play `b228d163` `host-s2a-rock-side-host`: a boot planted on the
     rump) [O].
-  Nothing logged changes with it: every stats window of those seats reads `act=139; st=1; sp=0; q28=0; qd8=65535; up=0;
-  ov=playing; dm=1; q18=0x79,0x8b; ps2d8=5; rec10=1; rec11=0; rec18=0xf241f3bcf60b; rec1a0=0; rec248=0x02; pose=1`, dy 0,
-  grace 0-2 a window, no overlay stop or replay, and the capture telemetry differs only in position / yaw / facing snaps
-  [O logs lab `41ae2b4c` host part 1 lines 2416-2887 and guest part 2]. So it is none of the DM record, the act, the
-  stance, the upper act, the overlay's phase, the seat holds or the pose flag; that the DM ride pose stops showing on a
+  Body 1's anim and DM fields do not change with it: the stats windows of those seats read `act=139; st=1; sp=0; q28=0;
+  qd8=65535; up=0; ov=playing; dm=1; q18=0x79,0x8b; ps2d8=5; rec10=1; rec11=0; rec18=0xf241f3bcf60b; rec1a0=0;
+  rec248=0x02; pose=1` [O logs lab `41ae2b4c` host part 1 lines 2416-2887 and guest part 2]. Corrected by the review
+  (fixland3): the windows are not dy 0. The stats line is written only for a window with seat error, and on the driver's
+  copy ride windows at the final head reach xz 635 cm (`186c02d8` guest part 2 line 1292), 564 cm (`186c02d8` host part 1
+  line 4586), 535 cm with dy 161 (`c1982534` guest part 2 line 924) and 391 cm with dy -109 (`c1982534` host part 1 line 3036); the first seated windows read
+  dy -167 / -173; one window, at the (b) seating in `186c02d8` (line 860), has `rec248=0x12` with `grace=2`; there are
+  also `ov=idle` and `stop_sent` windows [O logs]. In the frame from the 635 cm second (`186c02d8`
+  `guest-h3b-gallop2-guest-02`, t 388077296) and in `c1982534` `guest-h3b-gallop2-guest-03`, body 1 stands in the air
+  beside and behind the rearing horse at the rock wall, legs straight, not on the horse [O, looked at in fixland3]. So
+  the standing on the rump is none of the DM record, the act, the stance, the upper act or the pose flag; that the DM
+  ride pose stops showing on a
   body whose DM act stays 139 is [I]; why is [U] (0xf241f3bcf60b is also a RideHorse motion code: FUN_141236940 state 9).
-  The holds stay on (none acted at the change by the logs).
+  The holds stay on. Corrected by the review (fixland3): in `186c02d8` (b) the first seated window, where the standing
+  began, logged `grace=2` (the 2-tick lease grace kept a lapsed lease), so a hold did act there - the first logged sign
+  of one acting; but `41ae2b4c`, `b228d163` and `c1982534` stood from the same window with `grace=0`, so the standing is
+  not the holds' doing [O logs]; what the hold changed on screen in `186c02d8` is [U].
 - **The downed rider: not reproduced** (two attempts; `horse-down-guard.txt`, (c2) passenger then (c1) driver, guards
   not friendly fire). Attempt 1 (lab `41ae2b4c`, play `b228d163`): seat-a's `clear_enemies 100` left the nearest guard
-  354 m away, so `spawn_enemy here come` routed him (`mode=route; why=far`), and the host's mount fell (above). Attempt 2
+  354 m away, so `spawn_enemy here come` routed him (`mode=route; why=far`), and the host's E did not mount (above). Attempt 2
   (lab `c1982534`, play `186c02d8`): `spawn_enemy here` warped another guard beside the host (d 5.1 m), and `enemy goto
   2164161801 10` took both players to a cliff where both fell (`downed_damage=lethal_capture; damage=10000`, parts 8 /
   10; `step=both_downed`; `horse_here` y 150.9 / 214.7 m lab, -48.7 / -79.1 m play) before any mount [O]. Static (Ghidra comment at `0x14122EB30`, [I]): the RideHorse state table
@@ -1119,7 +1133,8 @@ Round `wp/horse` step S2 (no horse key named in any run: `pillion_status` `key=1
   instance 0 only) between a seated and a standing frame, and try once a DM replay of stateRideOnIdle while standing (the
   overlay's own `lost` path); compare (b)'s seat entry with 79287a27's (that one sat: the guest faced 119 there, and the
   horse stood where (a) ended); the downed rider - where (b) ends `spawn_enemy here come` already warps a guard 5 m from
-  the host (attempt 2: d 5.1 / 5.4 m), so drop the `enemy goto` (it sent both players off a cliff) and run `horse_here`
+  the host (attempt 2: d 5.1 / 5.4 m), so drop the `enemy goto` (it sent both players off a cliff; done in fixland3: every
+  guard op names `nearest`, not run yet) and run `horse_here`
   and the mounts there, the rider's godmode off just before the guard turns hostile; then the forced get-off by the ride
   record (`+0x11 = 3`, the state table getter's vtable to find the instance).
 
@@ -1128,7 +1143,9 @@ Round `wp/horse` step S2 (no horse key named in any run: `pillion_status` `key=1
 Round `wp/horse` M2i (world_horse_cargo named, off unless named; markers [O] / [I] / [U]; slim archives with the full
 session observer logs `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).
 - **Why the lab revive failed** (`107977cb` host log, the carrier reviving): `step=revive_near` read `held=1; mask=1`
-  at t 381682646 / 381683646 / 381684996, then `age_ms=517; mask=0; held=0` at 381685766 and no grant [O]. Two causes:
+  at t 381682646 / 381683646 / 381684996, then `age_ms=517; mask=0; held=0` at 381685766 and no grant [O: the lines].
+  Corrected by the review (fixland3): the cause is [I], not [O] - the end of the 3.4 s E and the 517 ms-late sample fall
+  in the same 1 Hz sample, so the samples cannot tell the player's release from the stale reset. Two candidate causes:
   the scenarios' E (four `hold e 1500 nowait` 850 ms apart, released 3.4 s after the first) barely covered the 3 s
   hold, and world_downed's host gate (`not fresh -> resetHold()`) zeroed a hold under way when one status came over
   500 ms late. Also [I from code]: the MGO drain (`releaseHold`) survived one host tick only, and world_revive_input's
@@ -1141,6 +1158,9 @@ session observer logs `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).
   mark, so the same reviver resumes from what is left. Unchanged: not-ready records, a time reversal and a loop gap
   still reset; a multi-tick release with fresh statuses still restarts (guard check). Lines `step=revive_late`
   (progress, age) and `step=revive_resume` (the resumed progress). Lua checks: downed 174662, revive input 728.
+  fixland3 (the review: it changed every revive at the defaults and no game ran it): `8b3147b0` red / `611a1195` green -
+  the drain is on only while `W.horseCargo.keyOn()` is true (world_horse_pillion's share key with world_horse_cargo
+  named); at the defaults a late status resets every revive exactly as before `390b1984` (downed checks 176304).
 - **Scenarios** (`69141e5c`): all five cargo parts teleport both players to the boot spot facing -60 and run
   `horse_here` on both copies (the recall left the horse elsewhere in 3 of 6 (b) runs; (a) rode 37-44 m into rock
   walls); the rides take step S2's (b) route (walk, a left trot, four straight gallops, two left gallops; 129-140 m
@@ -1173,6 +1193,29 @@ session observer logs `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).
   and the frames (load, walk, trot, gallop, gallop4, stop, stays, stays2 on both screens with the horse in view; the
   A0 load frame on the carrier's screen; `h2c-dropped` / `-side`); then the play pair; on a pass the flip
   (Settings default with the gun profile, red / green) and one lab + play run with the key not named.
+
+## 18. fixland3: the review's corrections before the land
+
+Round `wp/horse` fixland3 (no hidden run; markers [O] / [I] / [U]).
+- **Turned back off unless named:** the late-status revive drain (`390b1984`) reached every revive at the defaults with
+  no game run; it now needs world_horse_cargo (section 17). The A0 reset at the load (`d602df54`) was already
+  world_horse_cargo only. At the defaults the horse code that runs is that of `38c3c705`, where lab `c1982534` / play
+  `186c02d8` ran with no horse key named [I from the diffs: every later horse code change is behind world_horse_cargo];
+  there is no run at the landed head itself.
+- **Corrected** (sections 16 and 17): the 0.6 m root is not the shown fix for `41ae2b4c` part 3 (an `a=0x1a` state at
+  the press, cause [U]); the pillion stats windows are not dy 0 (driver-copy windows to xz 6.35 m, dy -1.73..+1.61 m;
+  body 1 in the air beside the rearing horse at a rock wall in (b), README limit added); a seat hold logged acting once
+  (`186c02d8` (b), `grace=2`) where the standing began, while three other runs stood with `grace=0`; `107977cb`'s revive
+  cause is [I].
+- **Scenario:** `horse-down-guard.txt` names the nearest guard (`enemy <op> nearest`) instead of the hardcoded
+  2164161801 that `spawn_enemy here` no longer picks, and drops the first `enemy goto` (both validate ok; not run).
+- **Left as they are** (log or lab only): the stats line calls `pp::ReadUpper` directly, not `h.read_upper` (a guarded
+  read that only logs, so test fakes cannot drive it); `pillion_grace_n` carries over into the next seat when a seat ends
+  without an error window (the stats line only); the static `HoldRun` in `SelectHorseDriveReceipt` is not reset per
+  mission or load (world_horse_cargo only).
+- **Never seen live:** a rider downed while riding (`stop(passenger_downed)`, the downed rider ending on the ground, a
+  revive on both copies), the late-status drain, the A0 reset at the load, the cargo boot-spot route in (a). A rider
+  downed while riding can still stay on the horse (not fixed; README).
 
 ## Risks
 
