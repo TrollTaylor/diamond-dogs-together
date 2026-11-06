@@ -578,6 +578,23 @@ int main() {
         Check(std::strcmp(sa::QuietPlanName(sa::QuietPlan::cancel_then_plan), "cancel_plan") == 0 &&
                   std::strcmp(sa::QuietPlanName(sa::QuietPlan::none), "none") == 0,
               "quiet plan: the step names");
+        // Enemy round 12 track A (design 7.31): with quiet_place every correction of a soldier asks for the quiet move,
+        // the guest's on its player's screen too and the host's M3 placements (the message's handler posts action 0xa6
+        // for a stance 1-2 guard wherever he stands); never without the key, a placement of another kind or another type.
+        const std::uint32_t soldier = (2u << 9) | 15u, other = (3u << 9) | 15u;
+        Check(sa::QuietAsk(true, true, false, true, soldier), "quiet ask: the guest's off-screen correction");
+        Check(sa::QuietAsk(true, false, false, true, soldier), "quiet ask: the guest's on-screen correction (round 12)");
+        Check(sa::QuietAsk(true, false, true, true, soldier), "quiet ask: the host's M3 placement (round 12)");
+        Check(!sa::QuietAsk(false, true, false, true, soldier) && !sa::QuietAsk(false, false, true, true, soldier),
+              "quiet ask: never without quiet_place");
+        Check(!sa::QuietAsk(true, true, false, false, soldier) && !sa::QuietAsk(true, false, true, false, soldier),
+              "quiet ask: a spawn or route placement keeps the message");
+        Check(!sa::QuietAsk(true, true, false, true, other), "quiet ask: only a soldier");
+        Check(sa::QuietHook(true, true, false, false) && sa::QuietHook(true, true, true, true),
+              "quiet hook: the guest, and the host with soldier_owner (round 12)");
+        Check(!sa::QuietHook(true, true, false, true) && !sa::QuietHook(false, true, true, true) &&
+                  !sa::QuietHook(true, false, true, false),
+              "quiet hook: not a host without soldier_owner, nor without the key or soldier_follow");
         Check(std::strcmp(sa::QuietWhyName(sa::QuietWhy::moving), "moving") == 0 &&
                   std::strcmp(sa::QuietWhyName(sa::QuietWhy::unlisted), "unlisted") == 0 &&
                   std::strcmp(sa::QuietWhyName(sa::QuietWhy::ok), "ok") == 0,
