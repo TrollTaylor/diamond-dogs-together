@@ -1522,6 +1522,26 @@ only); [I] inferred; [U] unknown.
   per D-FM1 (a) (`soldier_act` calm / caution, a named 0 the off switch, the ACT_CAPS version gate unchanged; D-FM1 (a)
   names `soldier_act` only, so `act_plan` following the gun profile by default is the user's call) and the run with no
   key named. A puppet's restricted notice holds down to R = 80 m (taken beyond 95 m, released only within 80 m).
+- **Round 12** (enemy round 12 track C; run `516e3ef7`, the round 11 code; docs/STATUS.md 2026-11-06):
+  - Seen [O]: the glide removed every take warp (5 glide takes of 14.9-46.9 m, 0 `soldier_act_warp15` take lines in
+    calm), the lease held (15 / 17 / 18 mirrored 100 / 99 / 99 % outside the commanded off window and the 15 s after the
+    shot), plans 94 % within 1 m, frame p95 + 0.45 ms, 0 faults. The place error p90 failed for every walker (10.6-19.0
+    m): a far take leaves the copy 15-47 m behind for 7-18 s while the catch-up gait runs him (15, 18), or AHEAD of the
+    owner copy, where the catch-up cannot slow him, so he walks to the leg's end and waits there for the owner copy (17,
+    26.9 m, 7.4 s, then two more such waits 18-20 m off); and guard 18's copy stood about 9 s with a live plan (ka 1, a
+    follower path, gait raised 1 -> 3, planned again three times from one spot) while his host copy walked on [U].
+  - The two literal rows conflict for copies that start far apart: the place error needs the copy on the owner's spot
+    soon after the take, the jump row forbids the move that would put him there, and copies 17-45 m apart do not meet on
+    their own (round 9, `226fc789`). The M-series already moves such copies off screen ("off screen a hop is not seen",
+    world_place_guest.lua; 246's 56.5 m at pairing here). Which artefact the far mirror may have is the user's call: the
+    glide's run / wait (now), a take warp only while the copy's and the owner copy's spots are outside the guest's view
+    cone (scope included), or the place error judged from the end of a take's catch-up.
+  - Built: FM1 revision 7 (ACT_CAPS {caps, 7}; an older revision mirrors nothing, why=peer), the version gate for
+    `act_plan` by default (D-FM2); off unless `soldier_act` is named. The notice tail of `enemy-mirror10b-calm.txt`
+    teleported the host 10.6 m from guard 177 (ALERT at once: no range); it now walks the host from spot A.
+  - Next: the stuck copy with a live plan (what stops his legs: the action after the plan, the slot, a blocker) [U]; the
+    ahead case (hold the copy, or plan him toward the owner copy's spot); the take policy the user picks; a calm
+    first-notice distance from range; then one named run, the flip per D-FM1 (a) + D-FM2 and the run with no key named.
 
 ### 8. Soldier transforms (W6)
 

@@ -2651,3 +2651,6 @@ under `act_plan`.
 - New lines `soldier_act_glide; t; idx; first; d_m; p; at; lent; gait` (guest) and `soldier_act_corner; t; idx; n;
   target; dest; p` (host); `soldier_act_release` adds the steps `watch` / `watch_none`.
 - `soldier_act_frame` adds `glide`, `rel_watch`, `corner` after `recheck`.
+- Round 12 (enemy round 12 track C): ACT_CAPS (0x5C) carries FM1 revision 7 ({caps, 7}); a partner whose revision is
+  older (or who sends none) mirrors nothing (`why=peer`): `act_plan`'s walk destination is never read by a partner
+  without it. No new op; Lua only.
