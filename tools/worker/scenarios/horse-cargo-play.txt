@@ -141,6 +141,9 @@ host require localMounted=1
 waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 # M2i: the route of step S2's (b) (walk, a left trot, straight gallops, a left gallop; 129-140 m there), no right
 # turn into the rocks.
+# M2j (3a86c82f: the victim's walk frame showed the body only, no horse): the victim's camera a little further down.
+guest mouse 0 70
+wait 300
 host hold w 1500 nowait
 wait 300
 host capture h2-ride-walk
@@ -182,6 +185,8 @@ host run horse_status
 host require localMounted=0
 host run cargo_status
 host require cargo;state=carrier
+# M2j (play 7c1de731 (a): the carrier's stays frames cut off the horse's back): the carrier's camera a little up.
+host mouse 0 -80
 wait 1000
 both capture h2-stays
 guest run downed_status
