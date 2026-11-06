@@ -1207,14 +1207,19 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   58-178 ms after the owner had been level 1 s), `ef9584e4` n/a (drive_vert off).
 - **No-key run at the flipped head** `11b73082` (59c1b48d, 0.15.2+59c1b48; join, latch-quiet, integ-carry, vert-near,
   latch-alert; lab settings `nametag=1` only) [O]: `drive_vert` on without being named (the guest's `world_drive=vert`;
-  stats `vert=1`). One snap of 2929558510, the guest's copy 2.41 m under the host's (owner) copy, far 33 m, `rest_ms`
+  stats `vert=1`; on the host only [I]: same loader and profile, but no host `vert` / `vert_wait` / `vert_stop` /
+  `drive_sink` line, as it drove no copy a storey off within 60 m of the host). One snap of 2929558510, the guest's copy 2.41 m under the host's (owner) copy, far 33 m, `rest_ms`
   1352; read-backs 0.00 m at 0.52 s and 2.00 s; 0 `vert_wait`, 0 `vert_stop`, 0 `drive_sink`; vert left under 0. 7 s
   later the guest teleported onto the wall top and took him over: the guest sees him standing on it about 12 m ahead
   (aim 12.2 m, 3.3 deg), the host's binoculars at 31 m show his X-ray outline at the wall's top under his marker (v-a).
   0 latches / faults / game overs / roster mismatches / overflow / `place_sink`; one `guard_fell` on the host
   (1179373153 at 144 m, 11.9 m under, put back at once and held; the host logged no vert line); guest place error p90
-  2.89 m (FAIL, gate 2 m: reinforcements 3970963356 / 2305481811 arriving 374-397 m off and 1740692850 drifting 5-72 m
-  `why=far`, none a vert move); host M3 p90 6.57 m. `drive_vert` stays on.
+  2.89 m (FAIL against the rounds' 2 m p90 gate; the tool's own p90 <= 5 m row passes: reinforcements 3970963356 /
+  2305481811 arriving 374-397 m off, 1740692850 2.0-135.6 m apart (`why=far` rising 32.5 to 135.6 m over 28 s; his
+  135.6 m sample is in the tail) and one 12.7 m sample of 3268415846, none a vert move: the place error is x/z); host
+  M3 p90 6.57 m. The drive band is 60 m from the player whose screen shows the copy (`S.drive`,
+  `lua/coop/world_snap.lua`), so a guard within 60 m of only one player is not moved up on the other's screen.
+  `drive_vert` stays on.
 
 #### 7.28 Enemy round 10 track B: the LRRP crews on the host's travel step (lab key `lrrp_follow`, native only; op LRRP_STEP 0x5E)
 
