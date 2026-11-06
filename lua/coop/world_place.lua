@@ -45,6 +45,11 @@ do
             return floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5)
         end
         function P.flat(ax, az, bx, bz) return sqrt((ax - bx) ^ 2 + (az - bz) ^ 2) end
+        -- This copy's guard sits in a vehicle (GetVehicleGameObjectId): the placements' vehicle_local, the soft follow's skip.
+        function P.seated(id)
+            local ok, v = pcall(W.api.send, id, {id = "GetVehicleGameObjectId"})
+            return ok and type(v) == "number" and v ~= W.api.null
+        end
         local pos, flat = P.pos, P.flat
         -- One debug menu history row (MGS_COOP_DEBUG_REMOTE_V1, id 0, never a command).
         function P.remote(ok, text)

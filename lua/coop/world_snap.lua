@@ -43,9 +43,9 @@ do
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
         function S.reset()
-            S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt, S.bd, S.br, S.hu = nil, {}, {}, 0, 0, nil, {}, 0, {}
+            S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt, S.bd, S.br, S.hu, S.seat = nil, {}, {}, 0, 0, nil, {}, 0, {}, {}
             S.rt = {names = nil, i = 0, cur = {}, want = {}}
-            S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, sink = 0}
+            S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, sink = 0, seated = 0}
         end
         S.reset()
         W.startHooks[#W.startHooks + 1] = S.reset
@@ -114,6 +114,22 @@ do
         end
         -- Receiver: one DRIVE_V1 for each of up to 8 NORMAL guards the other side owns within 60 m of this player, not
         -- being placed; a stale stream backs a guard off 500 ms, a refusal 2 s.
+        -- Enemy harden (docs/world-sync-design.md 7.30): never a guard seated in a vehicle on this copy (P.seated, the
+        -- placements' vehicle_local; read at most every 250 ms per guard): neither the xz step nor drive_vert's snap pulls a
+        -- rider out of his seat (f256bf29: 25605's riders drove past the guest 12 m off while the owner streamed them).
+        function S.seatedHere(h, id, now)
+            local s = S.seat[h]
+            if not s then s = {at = -1e9}; S.seat[h] = s end
+            if now - s.at >= 250 then
+                s.at = now
+                local on = P.seated(id)
+                if on ~= (s.on == true) then
+                    s.on = on or nil
+                    L("event=snap_seated;ent=%.0f;id=%d;on=%d", h, id, on and 1 or 0)
+                end
+            end
+            return s.on == true
+        end
         function S.drive(now)
             local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
             local list = W.entOrder
@@ -128,7 +144,12 @@ do
                     not (dv and dv.back and now < dv.back) and P.state(en) == 0 then
                     local x, y, z = pos(en.id)
                     local slot = S.slotOf(h)
-                    if slot and x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= (W.reachOn and 160000 or 60000) then
+                    local near = slot and x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= (W.reachOn and 160000 or 60000)
+                    if near and S.seatedHere(h, en.id, now) then
+                        near = false
+                        S.n.seated = S.n.seated + 1
+                    end
+                    if near then
                         calls = calls + 1
                         S.n.calls = S.n.calls + 1
                         if not dv then dv = {}; S.dv[h] = dv end
@@ -498,8 +519,8 @@ do
             if not S.statAt or now - S.statAt >= 10000 then
                 S.statAt = now
                 local c = S.n
-                L("event=snap_stats;tx=%d;calls=%d;steps=%d;hard=%d;rest=%d;stale=%d;refused=%d;sink=%d", c.tx, c.calls, c.steps,
-                    c.hard, c.rest, c.stale, c.refused, c.sink)
+                L("event=snap_stats;tx=%d;calls=%d;steps=%d;hard=%d;rest=%d;stale=%d;refused=%d;sink=%d;seated=%d", c.tx, c.calls,
+                    c.steps, c.hard, c.rest, c.stale, c.refused, c.sink, c.seated)
             end
         end
     end
