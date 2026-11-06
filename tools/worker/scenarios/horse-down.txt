@@ -1,0 +1,81 @@
+# Step S part 3 (lab, after horse-seat-b.txt): the downed rider at the defaults (NO horse key named), a repro of play
+# 2b9552f6 (b) (the guest driver downed by guards kept localMounted=1 after E, downed_control=refused
+# controls_timeout_prone x3). From the boot spot the guest (godmode 0, set before the mount: debug commands are refused
+# while mounted) mounts the unridden horse with its first E; the host backs off from the horse and downs the mounted guest
+# with the rifle (friendly fire, as horse-cargo.txt (a)). Then: is the guest still mounted, does the cycle time out
+# (controls_timeout_prone ~6 s), does E get the guest off. Frames s-down-* on both screens.
+# Lines: downed_damage=..., world_lua=event=downed; step=..., downed_control=..., horse_status localMounted on the guest.
+logmark both
+both debug godmode 1
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 119
+wait 4000
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run pillion_status
+host require pillion;state=off;key=1;.*mode=6;.*shot=0
+# --- (c) the guest's first E at the unridden horse mounts it; the host downs the mounted guest.
+logmark both
+guest run goto_horse
+wait 1500
+stance guest stand
+guest debug godmode 0
+wait 500
+guest run status
+guest expect ^status;.*god=0;.*life=
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+host run goto_horse
+wait 1500
+host hold s 900
+host release
+wait 1500
+stance host stand
+host press 1 120
+wait 2000
+host mouse 0 -50
+wait 600
+both capture s-down-before
+logmark both
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 1500
+guest run downed_status
+guest expect down=1
+guest run horse_status
+guest expect localMounted=0
+both capture s-down-shot
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+both capture s-down-3s
+wait 5000
+guest run downed_status
+guest expect down=1
+guest run horse_status
+guest expect localMounted=0
+both capture s-down-8s
+logmark both
+guest press e 400
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+guest run downed_status
+guest expect down=1
+both capture s-down-after-e
+wait 2000

@@ -2357,14 +2357,16 @@ int main() {
             // MGS_COOP_LRRP_CFG_V1) parses in lab and play and is off unless named, the gun profile too: back off after the
             // review of runs c784a5a7 / 0da27fc6 (the unseated near crew 26-71 m off for 80-100 s; the unseat ends the guest's
             // crew's LRRP plan, so a re-boarding crew's truck drives empty on the guest's screen; Africa not run).
-            Check(!def.lrrp_follow && !gunDefault.lrrp_follow && !gunDefault.lrrp_follow_given &&
+            // Enemy round 10 B (docs/world-sync-design.md 7.28): on with the gun profile when not named (the receipt answers 2:
+            // Afghanistan free roam only), named 0 the off switch.
+            Check(!def.lrrp_follow && gunDefault.lrrp_follow && !gunDefault.lrrp_follow_given &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nlrrp_follow=0\n").lrrp_follow &&
                   Lab("enabled=1\nrole=host\npartner_native_profile=gun\nlrrp_follow=1\n").lrrp_follow &&
                   Lab("enabled=1\nrole=guest\nmode=play\nlrrp_follow=1\n").lrrp_follow &&
                   Lab("enabled=1\nrole=guest\nlrrp_follow=0\n").lrrp_follow_given &&
                   Lab("enabled=1\nrole=host\nlrrp_follow=2\n").invalid_values == 1 &&
                   !Lab("enabled=1\nrole=host\nlrrp_follow=2\n").lrrp_follow,
-                  "enemy round 8 B: lrrp_follow parses, off unless named");
+                  "enemy round 10 B: lrrp_follow parses, on with the gun profile unless named 0");
             // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place and range_flat (native only, no CFG bit)
             // parse in lab and play; off unless named until their runs (a named 0 records _given).
             // Both off unless named: quiet_place's no-key run 1befcef4 failed the place_sink row (design 7.22).
