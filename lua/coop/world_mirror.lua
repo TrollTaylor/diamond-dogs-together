@@ -152,13 +152,18 @@ do
             local a = (math.deg(math.atan2(dx, dz)) - yaw + 180) % 360 - 180
             return math.abs(a) <= M.CONE
         end
+        function M.unseen(x, z, ox, oz)
+            if type(P.view) ~= "function" then return false end
+            local px, pz, yaw = P.view()
+            if not px then return false end
+            return not M.cone(px, pz, yaw, x, z) and not M.cone(px, pz, yaw, ox, oz), yaw
+        end
         function M.view(h, p, en, r)
             if not p or M.pp[h] ~= p or type(r) ~= "table" or type(r.ox) ~= "number" or type(r.oz) ~= "number" then return end
-            local px, pz, yaw
-            if type(P.view) == "function" then px, pz, yaw = P.view() end
             local x, _, z = pos(en.id)
-            if not px or not x then return end
-            local off = not M.cone(px, pz, yaw, x, z) and not M.cone(px, pz, yaw, r.ox, r.oz)
+            if not x then return end
+            local off, yaw = M.unseen(x, z, r.ox, r.oz)
+            if yaw == nil then return end
             if off then act("w", p.slot or S.slotOf(h) or 0, en.id) end
             if off ~= p.off then
                 p.off = off
@@ -248,6 +253,14 @@ do
                         not (M.hold[h] and now < M.hold[h]) then
                         local r = act("q", slot, en.id)
                         M.shotCheck(r, now)
+                        -- Round 13 C (D-FM3 (b); 1fb060aa guard 18): a take that would open with the warp waits (native
+                        -- near_wait); both his spot and his owner copy's (the q reply's ox / oz) off view: w, then q again.
+                        if type(r) == "table" and r.f ~= 1 and not r.refused and type(r.ox) == "number" and type(r.oz) == "number" and
+                            M.unseen(x, z, r.ox, r.oz) then
+                            act("w", slot, en.id)
+                            r = act("q", slot, en.id)
+                            M.shotCheck(r, now)
+                        end
                         if type(r) == "table" and r.f == 1 and not (M.shotAt and now - M.shotAt < M.SHOT_MS) then
                             M.set(h, en, true, "far", d, R)
                             local r2 = act("m", slot, en.id)  -- arm the mailbox, the hook's apply and the fire drop now

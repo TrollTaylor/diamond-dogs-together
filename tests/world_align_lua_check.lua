@@ -2211,7 +2211,7 @@ if arg[7] and arg[8] then
             c.W.handlers[92]({1, 7})
             c.positions[1] = {0, 1.8, -120.0}
             c.actFn = function(src)
-                if src:find(' -- w ', 1, true) then c.wAt = #c.acts; return {f = 0, sh = 0} end
+                if src:find(' -- w ', 1, true) then c.wAt = c.wAt or #c.acts; return {f = 0, sh = 0} end
                 if src:find(' -- q ', 1, true) then return {f = c.wAt and 1 or 0, sh = 0, ox = 30000, oy = 1800, oz = oz} end
                 return {f = 1, sh = 0, ox = 30000, oy = 1800, oz = oz}
             end

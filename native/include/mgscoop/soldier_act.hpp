@@ -379,6 +379,9 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
 bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm = nullptr) noexcept;
 // The owner copy's position (mm) in guard idx's mailbox (the order part, flag bit 0); false when none.
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept;
+// Round 13 C (D-FM3 (b)): the owner copy's position from the slot's newest SOLDIER_ACT order part, for the q reply (a
+// candidate: Lua's view check before an off-view take). False without a fresh-or-not order part with a position.
+bool QueryOwner(std::uint16_t slot, std::int32_t (&mm)[3]) noexcept;
 // Enemy round 9 (quiet_place, design 7.24): QuietChoose on the hook's newest rest view of guard idx (unknown before the
 // hook has made one). Runtime thread; read only. SetQuietRest turns the hook's rest views on (the guest with the key).
 QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept;

@@ -3309,6 +3309,12 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
         if (host) return refuse("role");
         if (sa::Paused()) return refuse("paused");
         fresh = sa::QueryFresh(slot, go & 0x1ffu);
+        // Round 13 C (D-FM3 (b)): the owner copy's position for Lua's view check (a waiting far take may warp off view).
+        std::int32_t owner_mm[3]{};
+        if (sa::QueryOwner(slot, owner_mm)) {
+            if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply), owner_mm)) return refuse("format");
+            return debug_reply;
+        }
     }
     else if (op == 'm') {
         if (host) return refuse("role");
