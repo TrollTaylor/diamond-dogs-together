@@ -108,6 +108,14 @@ local function releaseHold(now)
   D.decay=decay
 end
 local function late(r,now) return r and r.ready and now >= r.at and now - r.at > FRESH end
+-- fixland3 (review): no game ran the drain, so it is on only with world_horse_cargo named (lab); at the defaults
+-- every revive keeps the reset on a late status as before.
+local function lateDrain()
+  local HC=W.horseCargo
+  if type(HC) ~= "table" or type(HC.keyOn) ~= "function" then return false end
+  local ok,yes=pcall(HC.keyOn)
+  return ok and yes == true
+end
 local function resumedProgress(now,targetRole,target,actor)
   local d=D.decay
   if not d or d.target ~= targetRole or d.generation ~= target.generation or d.actor ~= actor.generation or
@@ -397,7 +405,7 @@ local function hostTick(now)
   local a,b=D.records[1],D.records[2]
   local pairedClock=D.sleepClock and D.sleepClock.Tick(now) or false
   if not fresh(a, now) or not fresh(b, now) then
-    if (fresh(a, now) or late(a, now)) and (fresh(b, now) or late(b, now)) then
+    if (fresh(a, now) or late(a, now)) and (fresh(b, now) or late(b, now)) and lateDrain() then
       if D.holdAt and D.progress > 0 then
         log(fmt("step=revive_late;target=%d;progress=%d;age_ms=%.0f", D.target, D.progress, math.max(now - a.at, now - b.at)))
       end
@@ -434,7 +442,7 @@ local function hostTick(now)
   if targetRole == 0 then resetHold(); return end
   local target,actor=D.records[targetRole],D.records[3 - targetRole]
   if actor.down or not actor.held or actor.targetGeneration ~= target.generation or not distance(actor, target) then
-    if not actor.down and actor.targetGeneration == 0 then D.lateAt=now end
+    if not actor.down and actor.targetGeneration == 0 and lateDrain() then D.lateAt=now end
     -- M2h: a held revive the host does not count (the actor's target generation or the 3 m reach), once a second.
     if actor.held and not actor.down and now >= (D.waitHostAt or 0) then
       D.waitHostAt=now + 1000
