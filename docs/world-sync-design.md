@@ -1470,7 +1470,8 @@ only); [I] inferred; [U] unknown.
   - Run c66b10b6 (named; enemy8-quiet-calm + enemy11-quiet-walk): [O] 42 quiet moves (40 walkers, 5 guards, all off
     screen, 0 messages), [O census] no kind 13 / 3 / 15 after any; one ALERT on the host's own copies with no mod move
     there ([I] the host's player seen by 246 / 15 at 5.5-11 m). Gate FAIL: walkers at 2 s 15/35 within 3 m of the owner
-    copy (to 10.4 m; a truck rider 12.4 m), 10 s 1 read; `guard_sank` 1 (2929558510 5.8 m under at 5 s). [O] the
+    copy (to 10.4 m; a truck rider 12.4 m), 10 s 1 read; `guard_sank` 1 (2929558510 2.48 m under at 2 s, his owner
+    copy as much lower: `owner_dy_m=-2.48`, [I] walked down). [O] the
     re-plan goes to the guard's own brain destination (246: 444, 2137; his host copy walked south) and only a guard's
     first move re-plans (then `r19c` holds our plan's handle: `step=none`). Not exercised: the radio-spot correction
     (refused `far`), `view=on`, the host's M3 placements.

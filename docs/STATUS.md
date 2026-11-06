@@ -26,8 +26,9 @@ owner distance).
     truck rider 9.5-12.4 m); at 10 s 1 read (the next move re-arms within 10 s). [O] the re-plan sends a walker to his
     own brain's destination (246: 444, 2137 while the host's copy walked south to z 2090) and only a guard's first
     move re-plans (after it his slot holds our plan's handle: `step=none`).
-  - FAIL `guard_sank` 1: 2929558510 read back 5.8 m under 5 s after three of his moves (his owner copy stands on a
-    roof, y 276) [U: walked down or fell].
+  - FAIL `guard_sank` 1 (the report's count of `place_sink` lines): 2929558510 2.48 m under his target 2 s after
+    seq 42 with `owner_dy_m=-2.48`, his owner copy's newest sample as much lower ([I] he walked down as his owner did,
+    not a sink); his 5 s read-backs after three moves were 5.8 m under (no owner height in that line) [U].
   - n/a guest place error p90 (no guard within 60 m of the guest); part 1's radio-spot correction of 246 was refused
     `far` (not exercised); the on-screen and M3 quiet paths were not exercised (0 `view=on`, 0 host placements).
   - Passed: 0 latches / faults / Game Overs, `plans_lost` 0, 0 log_cap drops.
