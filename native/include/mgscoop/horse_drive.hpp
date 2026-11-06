@@ -98,6 +98,17 @@ struct BodyClass {
     std::uintptr_t t_vt{}, t68{}, t70{}, t58{}, c0_vt{}, c090{}, a0_vt{}, a080{};
 };
 bool CachedBody1Usable(const BodyClass& body0, const BodyClass& cached) noexcept;
+// M2i (frames 2a41c416 / c62e2ce6 h2-loaded: body 1 along the horse, upper body raised, at the load; across the back
+// only after the ride, act 5 and the readback yaw unchanged): with world_horse_cargo a hold1 run (no gap over
+// kHoldRunGapMs) adds Warp's A0 reset once, on its first hold1 kA0DelayMs or more into the run (run 144d99bb: Warp's A0
+// left body 0 prone), only while body 0's A0 class and slot equal body 1's (else skipped, never a refusal).
+inline constexpr std::uint64_t kHoldRunGapMs = 1000, kA0DelayMs = 1000;
+struct HoldRun {
+    std::uint64_t last{}, start{};
+    bool a0{};
+};
+bool HoldRunA0(HoldRun& run, std::uint64_t now) noexcept;
+bool A0Usable(const BodyClass& body0, const BodyClass& body1) noexcept;
 
 // Horse plan M3 (lab key world_horse_pillion): ride behind your partner. The prologue's rear rider sits about 0.4-0.5 m
 // behind the front rider at the same height (vehicles-companions-design 3.3); probe P2 put a guard 0.44 m behind the

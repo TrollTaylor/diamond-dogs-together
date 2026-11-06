@@ -60,4 +60,14 @@ Take TakeToken(Bucket& b, std::uint32_t capacity, std::uint32_t refill_per_s, st
     return t;
 }
 
+bool HorseLine(const char* line) noexcept {
+    if (!line) return false;
+    const auto starts = [line](const char* p) noexcept {
+        for (const char* l = line; *p; ++p, ++l)
+            if (*l != *p) return false;
+        return true;
+    };
+    return starts("world_lua=event=horse_") || starts("world_lua=horse_");
+}
+
 } // namespace mgscoop::log_budget

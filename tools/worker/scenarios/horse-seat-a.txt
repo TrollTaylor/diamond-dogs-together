@@ -112,6 +112,38 @@ host mouse -1200 0
 waitlog host 'world_lua=event=horse_pillion; step=first_move; ms=' 5
 waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
 waitlog host 'partner_pillion=stats;' 5
+# Step S2: a deliberate stop against rock (play 79287a27 (b): body 1 STANDING on the rump after the horse stalled at a
+# rock wall, the overlay still playing). The driver gallops on (rock walls stand west / north-west of this ride) until the
+# horse stalls (step=stall: ride keys held, under 0.3 m in 2 s); frames on both screens of the push and the stop, side on;
+# partner_pillion=stats now logs body 1's act / stance / upper act, the overlay phase, its DM record and the seat grace.
+logmark both
+host hold w+shift 1500 nowait
+guest burst s2a-rock1-guest 3 400
+host hold w+shift 1500 nowait
+host burst s2a-rock1-host 3 400
+host hold w+shift 1500 nowait
+guest burst s2a-rock2-guest 3 400
+host hold w+shift 1500 nowait
+host burst s2a-rock2-host 3 400
+host hold w 1500 nowait
+guest burst s2a-rock3-guest 3 400
+host hold w 1500 nowait
+host burst s2a-rock3-host 3 400
+waitlog host 'world_lua=event=horse_pillion; step=stall;' 3
+host release
+wait 1500
+guest capture s2a-rock-stop-guest
+host capture s2a-rock-stop-host
+guest mouse 1200 0
+host mouse 1200 0
+wait 600
+guest capture s2a-rock-side-guest
+host capture s2a-rock-side-host
+guest mouse -1200 0
+host mouse -1200 0
+wait 600
+host burst s2a-rock-after-host 3 500
+waitlog host 'partner_pillion=stats; xz_cm=[0-9]+; dy_cm=-?[0-9]+; n=[0-9]+; act=' 5
 # Step S: the passenger hops off with E held (after a release); the driver's E (held 400 ms, M4b's note on 1a7c5d0e)
 # then gets the driver off (step=driver_e / driver_e_off on the driver's copy).
 logmark both

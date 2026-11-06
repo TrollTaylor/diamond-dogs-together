@@ -50,6 +50,10 @@ std::uint64_t g_trigger_poll_ms = 0;
 // logged before the next admitted line.
 constexpr std::uint32_t kLogBurst = 600, kLogPerS = 20;
 log_budget::Bucket g_log_bucket{};
+// Horse step S2: the horse modules' lines from a bucket of their own (300 burst, 10/s), so another module's flood (play
+// b228d163: lrrp_follow, 441 log_cap lines on the host) cannot drop them; their own flood is capped as before.
+constexpr std::uint32_t kHorseLogBurst = 300, kHorseLogPerS = 10;
+log_budget::Bucket g_horse_log_bucket{};
 thread_local char g_reply[world::reply_capacity]{};
 std::uint8_t g_pump_buffer[world::kMaxReliableBundle];  // the single pumper only
 // Under g_world_lock: the published pair-wait code (different missions settle
@@ -364,7 +368,9 @@ const char* HandleLog(const char* source, std::size_t size) noexcept {
     const std::uint64_t now = partner_net::NowMs();
     char line[world::log_line_capacity]{};
     if (!world::FormatLogLine(source, size, now, line, sizeof(line))) return nullptr;
-    const log_budget::Take take = log_budget::TakeToken(g_log_bucket, kLogBurst, kLogPerS, now);
+    const bool horse = log_budget::HorseLine(line);
+    const log_budget::Take take = horse ? log_budget::TakeToken(g_horse_log_bucket, kHorseLogBurst, kHorseLogPerS, now)
+                                        : log_budget::TakeToken(g_log_bucket, kLogBurst, kLogPerS, now);
     if (!take.emit) return yes;
     if (take.report_dropped) {
         char cap[96]{};

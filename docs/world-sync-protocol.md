@@ -2632,6 +2632,11 @@ quiet (` 1` on `WORLD_WARP_V1`, section 39).
   the owner copy: the host's last sample of the guard moved on by its speed for at most 400 ms) and `oage_ms` (that
   sample's age).
 - Contract: no new site (the stance nibble is the census's `rec_stance`, the plan calls are act_plan's sites).
+- Round 12 (design 7.31): with `quiet_place` the native asks for the quiet move for every correction (` 1` or not); the
+  guest's `world_place=warp` line adds `; view=on|off` after `quiet=` (the Lua's flag). Native `HostWarpReceipt` does the
+  same for the host's M3 placements: reply `leaf="quiet"`; `world_place=host_warp` prints `leaf=quiet` and ends with
+  `; quiet=<why>` when asked; the hook logs `soldier_act_quiet=on; rest=on; role=<host|guest>`. Lua: a `src=place`
+  read-back carries `dho_m` / `oage_ms` as `src=quiet` does (log only; at the defaults too). No new op, note or site.
 
 ## 48. Enemy round 11 track B: the lrrp lines cut, the crew hold, the clock offset (no new op, CFG bit or contract site; design 7.32)
 

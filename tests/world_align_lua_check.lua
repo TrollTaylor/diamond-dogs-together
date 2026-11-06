@@ -1821,6 +1821,17 @@ if arg[7] and arg[8] then
     ticks(t, 80)
     check(logged(t, 'event=readback;ent=3000000001;src=place;at=500;') and not logged(t, 'event=readback_fix;'),
         'far without place_reach: read back and logged only')
+    -- Enemy round 12 track A (design 7.31): a far message correction's read-backs give the x/z distance to the owner copy
+    -- too (dho_m / oage_ms, as a quiet move's), so the default path's walkers can be compared with quiet_place's.
+    -- Round 12 review: dho_m / oage_ms on that 2 s src=place line itself, not on any line.
+    -- (An inner function: the main chunk is at Lua 5.1's 200-local limit.)
+    check((function(c)
+        for _, line in ipairs(c.logs) do
+            if line:find('event=readback;ent=3000000001;src=place;at=2000;', 1, true) and line:find(';dho_m=', 1, true) and
+                line:find(';oage_ms=', 1, true) then return true end
+        end
+        return false
+    end)(t), 'far: the message correction is read back against the owner copy too (dho_m on its 2 s read-back)')
     end
     end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
