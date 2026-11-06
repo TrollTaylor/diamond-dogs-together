@@ -98,6 +98,23 @@ q3 = r3['quiet']
 check(q3['why'] == {'moving': 1, 'ok': 1} and q3['readback_5s'] == 1 and q3['walk_on_within_2m_5s'] == 1 and
       q3['moves_both_within_1m'] == 0 and q3['moves_read'] == 1,
       'the quiet reasons, the 5 s walk-on read-back and the per-move read-back rows')
+# Enemy round 11 track A (design 7.31): a walker's quiet move (quiet=walk), his re-plan (world_place=quiet_plan) and the
+# owner rows: the 2 s and 10 s read-backs after it within 3 m of the owner copy (dho_m).
+guest5 = guest3 + [
+    'world_place=warp; seq=10; kind=3; ent=667680985; go=1060; age_ms=0; r=0; h=1; leaf=quiet; refused=none; quiet=walk',
+    'world_place=quiet; go=1060; seq=10; moved=1; bias=1; err_m=0.00; dy_m=0.00',
+    'world_place=quiet_plan; go=1060; seq=10; idx=36; mode=1; r19c=0xffff; r19e=0x006e; slot=0xdf31ba77279e; slot_h=0x0001; '
+    'fol=1; step=cancel_plan; started=1; handle=0x0004; p=1.00,2.00,3.00; dest=4.00,2.00,3.00',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=500; ms=500; dy_m=0.00; held=1; far_m=80; dxz_m=0.20; dho_m=0.30; oage_ms=200; t_ms=1500',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=2000; ms=2000; dy_m=0.00; held=1; far_m=80; dxz_m=2.10; dho_m=1.20; oage_ms=300; t_ms=3000',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=5000; ms=5000; dy_m=0.00; held=1; far_m=80; dxz_m=6.00; dho_m=2.50; oage_ms=400; t_ms=6000',
+    'world_lua=event=readback; ent=667680985; src=quiet; at=10000; ms=10000; dy_m=0.00; held=1; far_m=80; dxz_m=12.0; dho_m=4.10; oage_ms=900; t_ms=11000',
+]
+q5 = rep.analyse(host2, guest5)['quiet']
+check(q5['why'] == {'moving': 1, 'ok': 1, 'walk': 1} and q5['walk_moves'] == 1 and q5['plans'] == {'cancel_plan': 1} and
+      q5['plans_started'] == 1 and q5['walk_owner_2s'] == {'read': 1, 'within_3m': 1} and
+      q5['walk_owner_10s'] == {'read': 1, 'within_3m': 0},
+      'round 11: quiet moves of walkers, their re-plans and the owner rows at 2 s and 10 s')
 # Enemy flip A-vert (user decision D-A10, design 7.27): drive_sink is information only; the gate row is "vert left under":
 # a copy more than 1.5 m under its owner copy for more than 2 s after the owner copy was level in y for 1 s (per guard,
 # with the time), from the native world_drive lines (no t_ms: the last t_ms before each).
