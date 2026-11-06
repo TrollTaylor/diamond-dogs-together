@@ -2480,6 +2480,7 @@ void TestUpdater() {
     CHECK(IsVersionNewer("0.15.2", "0.15.1"));
     CHECK(IsVersionNewer("0.15.3", "0.15.2"));
     CHECK(IsVersionNewer("0.15.4", "0.15.3"));
+    CHECK(IsVersionNewer("0.15.5", "0.15.4"));
     CHECK(IsVersionNewer("v0.14.3", "0.14.1"));
     CHECK(IsVersionNewer("0.15.0", "0.14.1"));
     CHECK(IsVersionNewer("1.0.0", "0.14.1"));

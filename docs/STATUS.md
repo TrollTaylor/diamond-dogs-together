@@ -1,3 +1,21 @@
+## November 6, 2026: 0.15.4 package
+
+**Package (2026-11-06):** `dist/DiamondDogsTogether-0.15.4-20261106T124057Z-cd871876/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `36f7071` with Release receipt `20261106-123725-e819f77336094a128ffe15ea6dc236e7` (passed, 342 audited tests, 0 failures; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.4+36f7071` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.15.4.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,380,860 | `08270A18366400367B8C6A5F275FA9FAA209C2E70B24BB2ACCB32C646DFBB365` |
+| `DDT-source-0.15.4.zip` (1,726 source files plus `source-files.json`) | 10,250,241 | `BDA24AE9AE8810EFDAC2C80FBF5FF59BDF5508BBE6AEDFEB07411AFA778DB728` |
+| `DiamondDogsTogether.exe` | 2,387,456 | `4DD1B00594966F76857C646969615C454B08D72423C70F975259D36C57878D3E` |
+| `dinput8.dll` | 7,943,168 | `6850B2FD41295C9FBCD8967749CDBA1529EAC8DB58281C9B91A02BBE09021CEA` |
+
+- **Package checks:** the checks of `tools/package.ps1 -Friend` itself (a passing Release receipt with the Release flags; the staged exe and dll are the receipt's; each zip holds exactly its staged files with their hashes; only tracked source files). `package.json`: version 0.15.4, `source_commit` `36f7071`, `source_dirty` false. No separate zip audit.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.156.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** the tracked files at `dd60789` and every file in both zips: no Windows profile path (both slash styles), persona name or the user's e-mail. History was not rewritten.
+- **Version.** 0.15.4 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.15.4 and still 0.15.3; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.15.5", "0.15.4")`.
+- **Checks at the bump commit `36f7071`:** the Release receipt above is the only test run (342 audited tests); no other CTest run, hidden-game run, smoke run or review panel.
+- **To release:** upload **both** zips to the GitHub release `v0.15.4`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.15.4 -PackageDir dist/DiamondDogsTogether-0.15.4-20261106T124057Z-cd871876` before publishing. Nothing was pushed, tagged or released by the packaging.
+
 ## November 6, 2026: horse fixland4 - the review's corrections before the land: the S3 / M2j log-only additions are back to off unless named; the standing rear rider and the downed-partner notes corrected (`wp/horse`)
 
 **Players get:** nothing new and no default changed. The README now says what the runs show: your partner may see
