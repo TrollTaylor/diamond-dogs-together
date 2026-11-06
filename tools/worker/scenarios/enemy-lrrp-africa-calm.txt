@@ -1,0 +1,125 @@
+# Enemy round 13 track B (lrrp_follow in Africa 30020, D-B12; docs/world-sync-design.md 7.32 round 13 block):
+# enemy-lrrp-africa.txt, calm and with an lrrp_follow-off control in the same session. In 8be4db27 the host was seen at
+# the Masa Village jeep before the pairing (ALERT; guard_fell 3: the guest's place_div why=fall of three village guards at
+# +1 / +61 / +67 s after the pairing). Here the host leaves the jeep at once for the 30020 fail-safe boot spot
+# (-510.73, 5.09, 1183.02; docs/test-boot.md, ground known; ~290 m from the village guards logged near the jeep in
+# 8be4db27) and the guest is placed 3 m behind it. 8be4db27's truck 25601 (crew 1555077700 / 403243376) drove from
+# (-209, 994) and stopped at (-508.5, 1128.6), 55 m south of (and 18 m below) the boot spot; its crew got out ~220 s
+# after the pairing. CONTROL: the lever (debug vehicle_state_status lrrp 0) pauses lrrp_follow on both copies from the
+# pairing to ~75 s after it (the window that held 8be4db27's three guard_fell lines); then lrrp 1 on both (the named
+# window, -LabSetting lrrp_follow=1): the truck follows the host's, the get-out (waitlog of the host's crew_out line) in
+# view of both cameras (aim_ent on the crew; the waitlog starts ~175 s after the pairing), frames at about +2 / +12 /
+# +25 / +40 s after the host's first get-out line.
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy13-B-trucks -ScenarioPath
+#     tools/worker/scenarios/enemy-lrrp-africa-calm.txt -Mode play -WanSim bad -PartnerProfile native -NativeStage gun
+#     -BuildProfile research -SaveSeed africa-jeep -LabSetting lrrp_follow=1 -TimeoutSec 600 -Wait
+labsetting nametag=1
+titlemenu host 240
+title host 240
+waitgameplay host 150
+host run teleport -510.73 5.09 1183.02 180
+host run vehicle_state_status lrrp 0
+host debug godmode 1
+host debug infinite_ammo 1
+host debug time 72000
+host debug weather sunny
+wait 6000
+host run world_status
+host run position
+host capture f-q1
+logmark both
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+guest run vehicle_state_status lrrp 0
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+host run vehicle_state_status lrrp 0
+guest run vehicle_state_status lrrp 0
+guest debug godmode 1
+guest debug infinite_ammo 1
+placebehind guest host 3
+stance host crouch
+stance guest crouch
+host run world_status
+guest run world_status
+host run position
+guest run position
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 800
+both capture f-0
+logmark both
+wait 29000
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 800
+both capture f-1
+wait 29000
+host run world_status
+guest run world_status
+logmark both
+host run vehicle_state_status lrrp 1
+guest run vehicle_state_status lrrp 1
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 800
+both capture f-2
+wait 29000
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 800
+both capture f-3
+wait 29000
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 800
+both capture f-4
+wait 29000
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture f-6
+wait 13000
+logmark both
+waitlog host 'world_lua=event=lrrp; step=crew_out; id=25601; ent=' 120
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture g-2s
+wait 9000
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture g-12s
+wait 11000
+host run aim_ent 403243376 1.1
+guest run aim_ent 403243376 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture g-25s
+wait 13500
+host run aim_ent 1555077700 1.1
+guest run aim_ent 1555077700 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture g-40s
+host run world_status
+guest run world_status
+host run position
+guest run position
+host run enemy info 1555077700
+guest run enemy info 1555077700
